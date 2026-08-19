@@ -11,3 +11,4 @@ main,.page,.grid,.card,.hero-card,.hero-row,.section-head,.action-list,.action-i
 .page{width:100%}
 .page h1,.page h2,.page h3,.page p,.item-copy{overflow-wrap:anywhere}
 @media(max-width:760px){.app-shell,.page,.grid,.card,.hero-card,.hero-row,.section-head,.action-list,.action-item,.record-item,.result-item,.item-copy{max-width:100%}.section-head{flex-wrap:wrap}.section-head a{margin-left:0}.page-head h1{font-size:clamp(1.7rem,8vw,2.1rem)}}
+.connection-heading{display:flex;align-items:center;gap:14px}.connection-heading h2{margin-bottom:6px}.connection-card .status-strip{margin:16px 0 0}.privacy-note{margin-top:18px}
