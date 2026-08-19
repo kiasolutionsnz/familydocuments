@@ -38,3 +38,6 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+preview.stdout.log
+preview.stderr.log
+family-passport-preview*.tar.gz

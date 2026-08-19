@@ -24,18 +24,19 @@
         <a href="#review" data-route="review"><span aria-hidden="true">✓</span>Review</a>
         <a href="#records" data-route="records"><span aria-hidden="true">▤</span>Records</a>
         <a href="#search" data-route="search"><span aria-hidden="true">⌕</span>Search</a>
+        <a href="#household" data-route="household"><span aria-hidden="true">♙</span>Household</a>
       </nav>
       <button class="add-button" type="button" data-route-button="add"><span aria-hidden="true">＋</span>Add information</button>
       <div class="sidebar-foot">
         <button class="nav-button" type="button" data-route-button="connections"><span aria-hidden="true">↔</span>Connections</button>
         <button class="nav-button" type="button" data-help><span aria-hidden="true">?</span>Help</button>
-        <button class="nav-button" type="button" disabled title="Not part of this prototype"><span aria-hidden="true">⚙</span>Settings</button>
+        <button class="nav-button" type="button" data-route-button="household"><span aria-hidden="true">⚙</span>Access & categories</button>
       </div>
     </aside>
 
     <header class="mobile-header">
       <a class="brand" href="#home" data-route="home"><span class="brand-mark" aria-hidden="true">FP</span><span>Family Passport</span></a>
-      <button class="icon-button" type="button" data-help aria-label="Open help">?</button>
+      <div class="mobile-actions"><button class="icon-button" type="button" data-route-button="household" aria-label="Household access">♙</button><button class="icon-button" type="button" data-help aria-label="Open help">?</button></div>
     </header>
 
     <main id="main" tabindex="-1">
