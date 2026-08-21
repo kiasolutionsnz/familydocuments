@@ -1,0 +1,6 @@
+{
+  "name": "family-passport-fp030-connector-contract-spike",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test connector-contract.test.mjs" }
+}

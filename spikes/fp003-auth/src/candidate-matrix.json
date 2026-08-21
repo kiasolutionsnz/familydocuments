@@ -1,0 +1,56 @@
+{
+  "checked_at": "2026-08-19T00:00:00+12:00",
+  "legend": {
+    "DOCUMENTED": "Official documentation supports the capability but no candidate runtime was exercised.",
+    "UNSUPPORTED": "Official documentation establishes a conflict or absence relevant to the contract.",
+    "NOT_EVIDENCED": "No official evidence or executable trace establishes the clause.",
+    "LOCAL_CONTRACT_ONLY": "The disposable provider-neutral reference contract passes; this is not provider proof."
+  },
+  "candidates": [
+    {
+      "name": "Supabase Auth",
+      "statuses": {
+        "multiple_named_revocable_passkeys": "DOCUMENTED",
+        "exact_rp_id_origins": "DOCUMENTED",
+        "exact_redirect_state_nonce_pkce_csrf": "DOCUMENTED",
+        "owner_admin_aal2": "DOCUMENTED",
+        "phishing_resistant_action_bound_step_up_5m": "NOT_EVIDENCED",
+        "single_use_refresh_and_family_reuse_revocation": "UNSUPPORTED",
+        "individual_global_revoke_under_60s_concurrency": "NOT_EVIDENCED",
+        "recovery_codes_128bit_slow_hash_alerts": "NOT_EVIDENCED",
+        "recovery_72h_cancel_global_rotation": "NOT_EVIDENCED",
+        "lost_all_factor_support_fail_closed": "NOT_EVIDENCED"
+      }
+    },
+    {
+      "name": "Auth0",
+      "statuses": {
+        "multiple_named_revocable_passkeys": "NOT_EVIDENCED",
+        "exact_rp_id_origins": "NOT_EVIDENCED",
+        "exact_redirect_state_nonce_pkce_csrf": "DOCUMENTED",
+        "owner_admin_aal2": "DOCUMENTED",
+        "phishing_resistant_action_bound_step_up_5m": "NOT_EVIDENCED",
+        "single_use_refresh_and_family_reuse_revocation": "DOCUMENTED",
+        "individual_global_revoke_under_60s_concurrency": "UNSUPPORTED",
+        "recovery_codes_128bit_slow_hash_alerts": "NOT_EVIDENCED",
+        "recovery_72h_cancel_global_rotation": "NOT_EVIDENCED",
+        "lost_all_factor_support_fail_closed": "NOT_EVIDENCED"
+      }
+    },
+    {
+      "name": "Clerk",
+      "statuses": {
+        "multiple_named_revocable_passkeys": "NOT_EVIDENCED",
+        "exact_rp_id_origins": "NOT_EVIDENCED",
+        "exact_redirect_state_nonce_pkce_csrf": "NOT_EVIDENCED",
+        "owner_admin_aal2": "DOCUMENTED",
+        "phishing_resistant_action_bound_step_up_5m": "NOT_EVIDENCED",
+        "single_use_refresh_and_family_reuse_revocation": "NOT_EVIDENCED",
+        "individual_global_revoke_under_60s_concurrency": "NOT_EVIDENCED",
+        "recovery_codes_128bit_slow_hash_alerts": "NOT_EVIDENCED",
+        "recovery_72h_cancel_global_rotation": "NOT_EVIDENCED",
+        "lost_all_factor_support_fail_closed": "NOT_EVIDENCED"
+      }
+    }
+  ]
+}

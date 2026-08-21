@@ -1,0 +1,18 @@
+{
+  "provider": "Supabase Auth (GoTrue)",
+  "distribution": "official self-hosted image named by upstream Compose",
+  "version_or_digest": "supabase/gotrue:v2.189.0 (tag only; registry digest unresolved and not pulled)",
+  "deployment_mode": "planned disposable isolated self-hosted runtime; not executed",
+  "commercial_tier": "self-hosted MIT distribution; no hosted account or terms",
+  "configuration": {
+    "primary_sign_in": "verified email/password",
+    "mfa": "TOTP",
+    "magic_links": "invite, verification, reset initiation only",
+    "jwt_exp_seconds": 300,
+    "refresh_reuse_interval_seconds": 0,
+    "external_smtp": "required for AB-13/AB-15 but prohibited/unavailable in this spike"
+  },
+  "smtp_runtime": "UNAVAILABLE — deterministic receipt adapter only; not external acceptance proof",
+  "runtime_verdict": "UNSUPPORTED",
+  "reason": "No policy-approved exact image digest and no external SMTP runtime were available. This file freezes the next upstream stable candidate; it does not select or approve it."
+}

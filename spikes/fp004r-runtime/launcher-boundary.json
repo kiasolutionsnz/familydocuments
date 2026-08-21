@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "additional_fields_allowed": false,
+  "request_endpoint": "POST /v1/parser-jobs",
+  "delete_endpoint": "DELETE /v1/parser-jobs/{opaque_job_id}",
+  "network": "fp004r_launch_request",
+  "sole_client_identity": "spiffe://family-passport.test/fp_parser_controller",
+  "server_identity": "spiffe://family-passport.test/fp_parser_launcher",
+  "mtls": {"minimum_version": "TLS1.3", "client_certificate_required": true, "trust_bundle_sha256": null},
+  "signing_key": {"algorithm": "Ed25519", "public_key_fingerprint_sha256": null, "private_key_custody": "independent-security-reviewer-or-approved-offline-signing-service; unavailable to producer, launcher runtime and application identities"},
+  "launcher_image_digest": null,
+  "status": "BLOCKED_UNTIL_MTLS_TRUST_BUNDLE_SIGNING_KEY_AND_LAUNCHER_DIGEST_SELECTED"
+}

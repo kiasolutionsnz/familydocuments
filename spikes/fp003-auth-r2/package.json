@@ -1,0 +1,10 @@
+{
+  "name": "fp003-auth-assurance-spike-r2",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Revision-2 disposable executable contract tests for FP-003.",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "engines": { "node": ">=22" }
+}

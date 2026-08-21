@@ -1,0 +1,14 @@
+{
+  "status": "documented_stable_contract_fixture_runtime_unavailable",
+  "auth_version": "v2.194.0",
+  "postgres_pair": null,
+  "passkey": {
+    "options": {"method":"POST","path":"/passkeys/authentication/options","response_required":["challenge_id","options","expires_at"]},
+    "verify": {"method":"POST","path":"/passkeys/authentication/verify","request_required":["challenge_id","credential"],"response":"AccessTokenResponse"}
+  },
+  "access_token_claims": {"required":["iss","aud","sub","exp","aal","session_id"],"aal_type":"string","required_aal":"aal2"},
+  "credential_linkage": "credential.rawId is candidate only; authoritative linkage requires passkey list/API confirmation",
+  "browser_origin": "https://localhost:43117",
+  "rp_id": "localhost",
+  "redirect_allow_list": ["https://localhost:43117/auth/passkey/verify"]
+}

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Family Passport — UI prototype</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+  <div class="prototype-banner" role="note">
+    <strong>Local test</strong><span>Synthetic household data · accounts use isolated local authentication</span>
+    <button id="scenario-toggle" class="text-button" type="button" aria-expanded="false" aria-controls="scenario-panel">View states</button>
+  </div>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Family Passport">
+      <a class="brand" href="#home" data-route="home" aria-label="Family Passport home">
+        <span class="brand-mark" aria-hidden="true">FP</span><span>Family Passport<small>Harbour household</small></span>
+      </a>
+      <nav class="primary-nav" aria-label="Primary navigation">
+        <a href="#home" data-route="home"><span aria-hidden="true">⌂</span>Home</a>
+        <a href="#review" data-route="review"><span aria-hidden="true">✓</span>Review</a>
+        <a href="#records" data-route="records"><span aria-hidden="true">▤</span>Records</a>
+        <a href="#search" data-route="search"><span aria-hidden="true">⌕</span>Search</a>
+        <a href="#household" data-route="household"><span aria-hidden="true">♙</span>Household</a>
+      </nav>
+      <button class="add-button" type="button" data-route-button="add"><span aria-hidden="true">＋</span>Add information</button>
+      <div class="sidebar-foot">
+        <button class="nav-button" type="button" data-route-button="connections"><span aria-hidden="true">↔</span>Connections</button>
+        <button class="nav-button" type="button" data-help><span aria-hidden="true">?</span>Help</button>
+        <button class="nav-button" type="button" data-route-button="household"><span aria-hidden="true">⚙</span>Access & categories</button>
+      </div>
+    </aside>
+
+    <header class="mobile-header">
+      <a class="brand" href="#home" data-route="home"><span class="brand-mark" aria-hidden="true">FP</span><span>Family Passport</span></a>
+      <div class="mobile-actions"><button class="icon-button" type="button" data-route-button="household" aria-label="Household access">♙</button><button class="icon-button" type="button" data-help aria-label="Open help">?</button></div>
+    </header>
+
+    <main id="main" tabindex="-1">
+      <div id="screen"></div>
+      <p id="app-status" class="sr-only" aria-live="polite" aria-atomic="true"></p>
+    </main>
+
+    <nav class="mobile-nav" aria-label="Primary navigation">
+      <a href="#home" data-route="home"><span aria-hidden="true">⌂</span>Home</a>
+      <a href="#review" data-route="review"><span aria-hidden="true">✓</span>Review</a>
+      <a href="#records" data-route="records"><span aria-hidden="true">▤</span>Records</a>
+      <a href="#search" data-route="search"><span aria-hidden="true">⌕</span>Search</a>
+    </nav>
+    <button class="mobile-add" type="button" data-route-button="add" aria-label="Add information">＋</button>
+  </div>
+
+  <section id="scenario-panel" class="scenario-panel" aria-labelledby="scenario-title" hidden>
+    <div>
+      <p class="eyebrow">Prototype controls</p>
+      <h2 id="scenario-title">Preview a screen state</h2>
+      <p>These states are local visual examples. They do not connect to a service.</p>
+    </div>
+    <label for="scenario">State</label>
+    <select id="scenario">
+      <option value="default">Populated</option><option value="loading">Loading</option>
+      <option value="empty">Empty</option><option value="error">Error</option>
+      <option value="restricted">Restricted</option><option value="offline">Offline</option>
+      <option value="conflict">Conflict</option><option value="stale">Stale</option>
+    </select>
+    <button id="scenario-close" class="secondary-button" type="button">Close controls</button>
+  </section>
+
+  <dialog id="help-dialog" aria-labelledby="help-title">
+    <form method="dialog">
+      <div class="dialog-head"><div><p class="eyebrow">Help</p><h2 id="help-title">What can I do here?</h2></div><button class="icon-button" value="close" aria-label="Close help">×</button></div>
+      <div id="help-content"></div>
+      <button class="primary-button" value="close">Return to my task</button>
+    </form>
+  </dialog>
+
+  <script src="model.js"></script>
+  <script src="auth-client.js"></script>
+  <script src="data-client.js"></script>
+  <script src="ocr-client.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

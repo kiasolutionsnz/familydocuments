@@ -1,0 +1,11 @@
+{
+  "name": "fp003-auth-assurance-spike",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Disposable executable contract tests for the FP-003 feasibility gate.",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "evaluate": "node src/evaluate-candidates.js"
+  },
+  "engines": { "node": ">=22" }
+}

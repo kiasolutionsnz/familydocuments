@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request_id", "opaque_job_id", "profile_id", "input_capability_ref", "output_capability_ref", "expires_at"],
+  "properties": {
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{22,64}$"},
+    "opaque_job_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{22,64}$"},
+    "profile_id": {"const": "fp-parser-synthetic-v1"},
+    "input_capability_ref": {"type": "string", "pattern": "^[A-Za-z0-9_-]{22,128}$"},
+    "output_capability_ref": {"type": "string", "pattern": "^[A-Za-z0-9_-]{22,128}$"},
+    "expires_at": {"type": "string", "format": "date-time"}
+  }
+}

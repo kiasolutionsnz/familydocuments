@@ -1,0 +1,11 @@
+'use strict';
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+class GoTruePasskeyAdapter {
+  constructor({baseUrl,issuer,audience,tokenVerifier,now=()=>Date.now(),contractVersion='v2.194.0'}){this.baseUrl=baseUrl;this.issuer=issuer;this.audience=audience;this.tokenVerifier=tokenVerifier;this.now=now;this.contractVersion=contractVersion;}
+  optionsRequest(){return{method:'POST',url:`${this.baseUrl}/passkeys/authentication/options`,body:{}};}
+  parseOptionsResponse(body){if(!body||!UUID.test(body.challenge_id)||!body.options||typeof body.options.challenge!=='string'||!Number.isFinite(body.expires_at)||body.expires_at*1000<=this.now())throw Error('invalid GoTrue passkey options');return{challengeId:body.challenge_id,options:body.options,expiresAt:body.expires_at};}
+  verifyRequest({challengeId,credential}){if(!UUID.test(challengeId)||!credential||typeof credential!=='object')throw Error('invalid passkey verify input');return{method:'POST',url:`${this.baseUrl}/passkeys/authentication/verify`,body:{challenge_id:challengeId,credential}};}
+  verifyAuthenticationResponse({body,credential}){if(!body||body.token_type!=='bearer'||typeof body.access_token!=='string'||typeof body.refresh_token!=='string'||!Number.isFinite(body.expires_at)||body.expires_at*1000<=this.now())throw Error('invalid GoTrue token response');const claims=this.tokenVerifier.verify(body.access_token);if(claims.iss!==this.issuer||claims.aud!==this.audience||!UUID.test(claims.sub)||claims.aal!=='aal2'||!UUID.test(claims.session_id)||!Number.isFinite(claims.exp)||claims.exp*1000<=this.now())throw Error('invalid GoTrue access token claims');if(!credential||typeof credential.rawId!=='string'||credential.rawId.length===0)throw Error('credential linkage unavailable');return Object.freeze({subject:claims.sub,aal:claims.aal,sessionId:claims.session_id,credentialCandidateId:credential.rawId,credentialLinkage:'pending-provider-list-confirmation',accessToken:body.access_token,refreshToken:body.refresh_token});}
+}
+class FixtureTokenVerifier{constructor(tokens){this.tokens=tokens;}verify(token){const claims=this.tokens.get(token);if(!claims)throw Error('invalid token signature');return claims;}}
+module.exports={GoTruePasskeyAdapter,FixtureTokenVerifier};

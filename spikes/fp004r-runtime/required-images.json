@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "requirements": [
+    {
+      "component": "dedicated_database",
+      "required_reference": "kia-postgres:15.18-gosu1.19-go1.26.4@sha256:975758eb2d9c1c0ac2afd84511686aa37ab71667d110aebee89c26dd972f39a4",
+      "policy_status": "BLOCKED_MISSING_INDEPENDENT_DIGEST_BOUND_PROMOTION"
+    },
+    {
+      "component": "typed_https_egress_gateway",
+      "required_reference": null,
+      "policy_status": "BLOCKED_UNSELECTED_UNPROMOTED"
+    },
+    {
+      "component": "fixed_schema_launcher",
+      "required_reference": null,
+      "policy_status": "BLOCKED_UNSELECTED_UNPROMOTED"
+    },
+    {
+      "component": "restricted_container_control_proxy",
+      "required_reference": null,
+      "policy_status": "BLOCKED_UNSELECTED_UNPROMOTED"
+    },
+    {
+      "component": "fixed_profile_parser",
+      "required_reference": null,
+      "policy_status": "BLOCKED_UNSELECTED_UNPROMOTED"
+    },
+    {
+      "component": "application_control_runtime",
+      "required_reference": null,
+      "policy_status": "BLOCKED_UNSELECTED_UNPROMOTED"
+    }
+  ]
+}

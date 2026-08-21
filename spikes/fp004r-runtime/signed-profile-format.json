@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "additional_fields_allowed": false,
+  "profile_id": "fp-parser-synthetic-v1",
+  "signature_contract": {"algorithm": "Ed25519", "signed_fields": ["schema_version", "profile_id", "parser_image_digest", "entrypoint", "command", "mounts", "runtime", "ownership"], "producer_key_access": "forbidden", "public_key_fingerprint_sha256": null, "verification": "launcher-local trusted public key; fail closed before control-proxy request"},
+  "parser_image_digest": null,
+  "entrypoint": null,
+  "command": null,
+  "mounts": {"input": {"root": "/jobs/input", "container_path": "/input", "mode": "read-only", "job_scoped": true}, "output": {"root": "/jobs/output", "container_path": "/output", "mode": "write-only-contract", "job_scoped": true}, "host_or_shared_mounts_allowed": false},
+  "runtime": {"network_mode": "none", "read_only_root": true, "user": "random-non-root", "cap_drop": ["ALL"], "no_new_privileges": true, "tmpfs": "/tmp:rw,noexec,nosuid,nodev,size=32m", "seccomp_profile_sha256": null, "apparmor_profile_sha256": null, "caller_overrides": false, "bounds": {"pids": 64, "cpu_cores": 1, "memory_mib": 512, "deadline_seconds": 120, "input_file_mib": 40, "pages": 200, "pixels": 100000000, "decompression_ratio": 100, "output_mib": 16}},
+  "ownership": {"required_labels": {"com.kia.product": "family-passport-parser", "com.kia.run": "fp004r-runtime", "com.kia.job": "<opaque_job_id>"}, "ownership_nonce": "random-256-bit-single-job; stored by restricted control proxy; required for inspect/kill/remove", "replay_allowed": false},
+  "status": "BLOCKED_UNTIL_PARSER_DIGEST_ENTRYPOINT_COMMAND_PROFILES_AND_SIGNING_KEY_SELECTED"
+}

@@ -1,0 +1,58 @@
+name: fp003r2
+services:
+  db:
+    image: public.ecr.aws/supabase/postgres:17.6.1.156@sha256:ca7871b587ca2c401ac0f325df6249c9aa0d25647ded34631158efc51176767f
+    container_name: fp003r2-db
+    environment:
+      POSTGRES_PASSWORD: ${FP003R2_POSTGRES_PASSWORD:?ephemeral secret required}
+    networks: [fp003r2_private]
+    volumes:
+      - fp003r2-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    restart: "no"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
+  auth:
+    image: public.ecr.aws/supabase/gotrue:v2.194.0@sha256:2b352c02adf11a2025cd5993c246ef85db73743553c39194d2b1862d1cc4d1fd
+    container_name: fp003r2-auth
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:43118:9999"
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      PORT: 9999
+      API_EXTERNAL_URL: http://localhost:43118
+      GOTRUE_SITE_URL: https://localhost:43117
+      GOTRUE_URI_ALLOW_LIST: https://localhost:43117/auth/passkey/verify
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://postgres:${FP003R2_POSTGRES_PASSWORD}@db:5432/postgres?sslmode=disable
+      GOTRUE_JWT_SECRET: ${FP003R2_JWT_SECRET:?ephemeral secret required}
+      GOTRUE_JWT_EXP: 300
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_PASSKEY_ENABLED: "true"
+      GOTRUE_WEBAUTHN_RP_ID: localhost
+      GOTRUE_WEBAUTHN_RP_DISPLAY_NAME: Family Passport FP-003 synthetic
+      GOTRUE_WEBAUTHN_RP_ORIGINS: https://localhost:43117
+      GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: "true"
+      GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: "0"
+    networks: [fp003r2_private]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    restart: "no"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+networks:
+  fp003r2_private:
+    name: fp003r2-private
+    internal: true
+volumes:
+  fp003r2-db-data:
+    name: fp003r2-db-data

@@ -1,0 +1,4 @@
+# Only durable PostgreSQL state would be backed up in a deployed service.
+postgres-data
+# Never include: inbox, output, scratch, transient-capture, .work
+

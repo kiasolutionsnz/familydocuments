@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "reviewed_on": "2026-08-19",
+  "required_evidence_fields": ["component", "publisher", "tag", "digest", "licence_and_notices", "sbom_or_advisory_method", "scan_tool", "scan_date", "scan_result", "configuration_profile_sha256", "permitted_scope"],
+  "components": [
+    {
+      "component": "dedicated_database", "status": "blocked_missing_independent_digest_bound_promotion", "publisher": "Kia local hardened build derived from official PostgreSQL 15", "tag": "kia-postgres:15.18-gosu1.19-go1.26.4", "digest": "sha256:975758eb2d9c1c0ac2afd84511686aa37ab71667d110aebee89c26dd972f39a4", "licence_and_notices": null, "sbom_or_advisory_method": null, "scan_tool": null, "scan_date": null, "scan_result": null, "configuration_profile_sha256": null, "permitted_scope": null, "independent_approval": null,
+      "evidence": [
+        {"path": "platform/ente/image-assessment.md", "sha256": "C121499EC9FE4D141312C541DEE4FEB0500495A3C568DFAC6CC123785D12C71B", "role": "historical assessment only; not digest-bound FP-004R promotion"},
+        {"path": "software-factory/runs/family-passport-2026-08-17/delivery/fp004-isolation/results.md", "sha256": "D41190DD978783254E56DA99D735A8A3065E8993715F617B128811CCB2BD7191", "role": "historical disposable use; explicitly not promotion"}
+      ]
+    },
+    {"component": "typed_https_egress_gateway", "status": "blocked", "publisher": null, "tag": null, "digest": null, "licence_and_notices": null, "sbom_or_advisory_method": null, "scan_tool": null, "scan_date": null, "scan_result": null, "configuration_profile_sha256": null, "permitted_scope": null, "independent_approval": null, "evidence": []},
+    {"component": "fixed_schema_launcher", "status": "blocked", "publisher": null, "tag": null, "digest": null, "licence_and_notices": null, "sbom_or_advisory_method": null, "scan_tool": null, "scan_date": null, "scan_result": null, "configuration_profile_sha256": null, "permitted_scope": null, "independent_approval": null, "evidence": [], "contract_bindings": {"launcher_request_schema_sha256": "06161CB4AE457D705F90E6D2630B3589A07F17E49C9016AB242D973787A841FA", "signed_profile_format_sha256": "66F8A8C9F3A22E2B2192D350FB49C33319099865AB05268F7AA03A5A489A199D", "launcher_boundary_sha256": "A07BF3C1B84CD4AE6EC0C55C9A5617E0B91ABB155C1A5A8F3DE0F4BB79FCADCF", "launcher_image_digest": null}},
+    {"component": "restricted_container_control_proxy", "status": "blocked", "publisher": null, "tag": null, "digest": null, "licence_and_notices": null, "sbom_or_advisory_method": null, "scan_tool": null, "scan_date": null, "scan_result": null, "configuration_profile_sha256": null, "permitted_scope": null, "independent_approval": null, "evidence": []},
+    {"component": "fixed_profile_parser", "status": "blocked", "publisher": null, "tag": null, "digest": null, "licence_and_notices": null, "sbom_or_advisory_method": null, "scan_tool": null, "scan_date": null, "scan_result": null, "configuration_profile_sha256": "66F8A8C9F3A22E2B2192D350FB49C33319099865AB05268F7AA03A5A489A199D", "permitted_scope": null, "independent_approval": null, "evidence": []},
+    {"component": "application_control_runtime", "status": "blocked", "publisher": null, "tag": null, "digest": null, "licence_and_notices": null, "sbom_or_advisory_method": null, "scan_tool": null, "scan_date": null, "scan_result": null, "configuration_profile_sha256": null, "permitted_scope": null, "independent_approval": null, "evidence": []}
+  ]
+}
