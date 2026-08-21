@@ -13,14 +13,14 @@ async function render() {
   );
 }
 
-test("server-renders the Family Passport prototype shell", async () => {
+test("server-renders the Family Documents prototype shell", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
-  assert.match(html, /<title>Family Passport — Interactive prototype<\/title>/i);
+  assert.match(html, /<title>Family Documents — Interactive prototype<\/title>/i);
   assert.match(html, /src="\/prototype\/index\.html"/i);
-  assert.match(html, /title="Family Passport interactive prototype"/i);
+  assert.match(html, /title="Family Documents interactive prototype"/i);
   assert.doesNotMatch(html, /codex-preview|Building your site|react-loading-skeleton/i);
 });
 

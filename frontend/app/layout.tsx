@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Family Passport — Interactive prototype",
-  description: "A private, synthetic-data preview of the Family Passport experience.",
+  title: "Family Documents — Interactive prototype",
+  description: "A private, synthetic-data preview of the Family Documents experience.",
 };
 
 export default function RootLayout({

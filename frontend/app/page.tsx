@@ -4,7 +4,7 @@ export default function Home() {
       <iframe
         className="prototype-frame"
         src="/prototype/index.html"
-        title="Family Passport interactive prototype"
+        title="Family Documents interactive prototype"
       />
     </main>
   );
