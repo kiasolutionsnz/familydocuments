@@ -1,6 +1,6 @@
 (function attachFamilyPassportOcr(global){
   "use strict";
-  const baseUrl="http://127.0.0.1:55323";
+  const baseUrl="https://api-familydocuments.servicehub.co.nz/ocr";
   const allowed=new Set(["application/pdf","image/jpeg","image/png"]);
   function bytesToBase64(bytes){let value="";const chunk=0x8000;for(let i=0;i<bytes.length;i+=chunk)value+=String.fromCharCode(...bytes.subarray(i,i+chunk));return btoa(value)}
   async function process(file){

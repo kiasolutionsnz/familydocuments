@@ -41,3 +41,4 @@ yarn-error.log*
 preview.stdout.log
 preview.stderr.log
 family-passport-preview*.tar.gz
+public/prototype/google-drive-config.local.js

@@ -1,6 +1,6 @@
 (function attachFamilyPassportAuth(global) {
   "use strict";
-  const baseUrl = "http://127.0.0.1:55321";
+  const baseUrl = "https://api-familydocuments.servicehub.co.nz/auth";
   let session = null;
   async function request(path, options = {}) {
     const response = await fetch(`${baseUrl}${path}`, {...options, headers: {"content-type": "application/json", ...(options.headers || {})}});
@@ -18,6 +18,13 @@
     if (!response.ok) throw new Error("Local authentication is unavailable.");
     return true;
   }
+  async function googleAvailable(){const response=await fetch(`${baseUrl}/settings`,{headers:{accept:"application/json"}});if(!response.ok)return false;const body=await response.json().catch(()=>({}));return Boolean(body.external?.google)}
+  async function signInWithGoogle(){
+    if(!await googleAvailable()){const error=new Error("Google sign-in is not configured.");error.code="google_not_configured";throw error}
+    const redirect=`${location.origin}/prototype/oauth-callback.html`,popup=window.open(`${baseUrl}/authorize?provider=google&redirect_to=${encodeURIComponent(redirect)}`,"family-passport-google","popup,width=520,height=680");
+    if(!popup){const error=new Error("Google sign-in popup was blocked.");error.code="popup_blocked";throw error}
+    return new Promise((resolve,reject)=>{const timer=setTimeout(()=>finish(new Error("Google sign-in timed out.")),120000);function finish(error,payload){clearTimeout(timer);window.removeEventListener("message",receive);try{popup.close()}catch{}if(error)reject(error);else resolve(payload)}async function receive(event){if(event.origin!==location.origin||event.source!==popup||event.data?.type!=="family-passport-google-oauth")return;if(event.data.error||!event.data.access_token)return finish(new Error(event.data.error_description||"Google sign-in failed."));try{const response=await request("/user",{headers:{authorization:`Bearer ${event.data.access_token}`}});if(!response.id||!response.email)throw new Error("Google identity response was incomplete.");session={accessToken:event.data.access_token,refreshToken:event.data.refresh_token,user:response};finish(null,{user:{id:response.id,email:response.email}})}catch(error){finish(error)}}window.addEventListener("message",receive)})
+  }
   async function signUp({email, password, name}) {
     return request("/signup", {method: "POST", body: JSON.stringify({email, password, data: name ? {display_name: name} : {}})});
   }
@@ -33,7 +40,26 @@
     if (!current?.accessToken) return;
     try { await request("/logout", {method: "POST", headers: {authorization: `Bearer ${current.accessToken}`}}); } catch {}
   }
+  async function signOutAll() {
+    const current=session;session=null;if(!current?.accessToken)return;
+    try{await request("/logout?scope=global",{method:"POST",headers:{authorization:`Bearer ${current.accessToken}`}})}catch{}
+  }
+  async function recover(email) { return request("/recover",{method:"POST",body:JSON.stringify({email})}); }
+  async function enrollTotp() {
+    if(!session?.accessToken)throw new Error("Sign in is required.");
+    const user=await request("/user",{headers:{authorization:`Bearer ${session.accessToken}`}}),existing=(user.factors||[]).find(x=>x.factor_type==="totp"&&x.status==="verified");
+    if(existing)return {id:existing.id,existing:true,totp:{secret:""}};
+    return request("/factors",{method:"POST",headers:{authorization:`Bearer ${session.accessToken}`},body:JSON.stringify({factor_type:"totp",friendly_name:"Family Passport"})});
+  }
+  async function verifyTotp(factorId,code) {
+    if(!session?.accessToken)throw new Error("Sign in is required.");
+    const challenge=await request(`/factors/${factorId}/challenge`,{method:"POST",headers:{authorization:`Bearer ${session.accessToken}`},body:"{}"});
+    const verified=await request(`/factors/${factorId}/verify`,{method:"POST",headers:{authorization:`Bearer ${session.accessToken}`},body:JSON.stringify({challenge_id:challenge.id,code})});
+    if(verified.access_token)session={accessToken:verified.access_token,refreshToken:verified.refresh_token||session.refreshToken,user:verified.user||session.user};
+    return verified;
+  }
+  function assuranceLevel(){try{return JSON.parse(atob((session?.accessToken||"").split(".")[1].replaceAll("-","+").replaceAll("_","/"))).aal||"aal1"}catch{return "aal1"}}
   function getAccessToken() { return session?.accessToken || null; }
   function getUser() { return session?.user ? {id: session.user.id, email: session.user.email} : null; }
-  global.familyPassportAuth = Object.freeze({baseUrl, health, signUp, signIn, signOut, getAccessToken, getUser});
+  global.familyPassportAuth = Object.freeze({baseUrl, health, googleAvailable, signInWithGoogle, signUp, signIn, signOut, signOutAll, recover, enrollTotp, verifyTotp, assuranceLevel, getAccessToken, getUser});
 })(window);
