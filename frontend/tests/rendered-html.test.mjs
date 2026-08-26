@@ -162,7 +162,14 @@ assert.match(app, /const safe=async\(task,fallback\)/);
   assert.match(auth, /\/authorize\?provider=google/);
   assert.match(auth, /family-passport-google-oauth/);
   assert.match(auth, /googleAvailable/);
-  assert.doesNotMatch(auth, /localStorage|sessionStorage/);
+  assert.doesNotMatch(auth, /localStorage/);
+  assert.match(auth, /sessionStorage\.getItem\(refreshStorageKey\)/);
+  assert.match(auth, /grant_type=refresh_token/);
+  assert.match(auth, /restoreSession/);
+  assert.match(data, /response\.status === 401/);
+  assert.match(app, /setInterval\(refreshLiveStatus,15000\)/);
+  assert.match(app, /visibilitychange/);
+  assert.match(html, /rel="icon" type="image\/png" href="\/favicon\.png"/);
   assert.match(app, /data-category-form/);
   assert.match(app, /data-manual-upload/);
   assert.match(app, /Add manually/);
@@ -194,7 +201,7 @@ assert.match(app, /const safe=async\(task,fallback\)/);
   assert.match(css, /\.auth-page/);
   assert.match(css, /@media\(max-width:760px\)/);
   for (const source of [html, css, app, auth, data, ocr, drive]) {
-    for (const forbidden of [/localStorage/, /sessionStorage/, /indexedDB/, /WebSocket/]) {
+    for (const forbidden of [/localStorage/, /indexedDB/, /WebSocket/]) {
       assert.doesNotMatch(source, forbidden);
     }
   }

@@ -3,6 +3,7 @@ const {PrototypeAdapter,buildSearchView,restoreInvoker,stateCopy}=FamilyPassport
 const dataAdapter=new PrototypeAdapter();
 const MOCK_NOTICE="Synthetic document examples — household settings are saved in your isolated local database.";
 const appHitId=crypto.randomUUID();let appHitRecorded=false;
+let liveRefreshBusy=false;
 const state={route:"auth",scenario:"default",recordTab:"home",recordDetail:null,query:"",searchResult:null,searchBusy:false,searchError:"",selectedSourceId:null,sourceInvoker:null,helpInvoker:null,connectorPreview:{},authMode:"signin",previewSignedIn:false,authReady:false,authBusy:false,authMessage:"",authError:"",authUser:null,householdData:null,inboundEmails:[],classificationProposals:[],classificationJobs:[],documentLifecycle:[],entities:[],accessRules:[],permissionAudit:[],securityAudit:[],driveSources:[],driveConnection:null,mfaEnrollment:null,entityFilter:"all",reminderDashboard:{items:[],notifications:[],counts:{overdue:0,due_soon:0,unread:0}},savedWorkspace:{categories:[],links:[],share_candidates:[]},savedBusy:false,savedError:"",savedDeleted:null,rentalWorkspace:{properties:[],bills:[],documents:[]},rentalBusy:false,rentalError:"",rentalFilter:"all",dataBusy:false,dataError:"",addMode:"manual",manualBusy:false,manualError:"",ocrBusy:false,ocrError:"",ocrCandidate:null};
 const screen=document.querySelector("#screen"),statusRegion=document.querySelector("#app-status"),scenarioPanel=document.querySelector("#scenario-panel"),scenarioToggle=document.querySelector("#scenario-toggle"),scenarioSelect=document.querySelector("#scenario"),helpDialog=document.querySelector("#help-dialog");
 const esc=value=>String(value).replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
@@ -154,8 +155,24 @@ async function loadRentals(){state.rentalBusy=true;state.rentalError="";if(state
 async function loadHousehold(){
   state.dataBusy=true;state.dataError="";if(["household","home","inbox","records"].includes(state.route))render();
   try{state.householdData=await window.familyPassportData.snapshot();const safe=async(task,fallback)=>{try{return await task()}catch{return fallback}};if(!appHitRecorded){await safe(()=>window.familyPassportData.recordAppHit(appHitId),null);appHitRecorded=true}const admin=["owner","family_admin"].includes(state.householdData?.current_user?.role);const [inboundEmails,classificationProposals,classificationJobs,accessRules,permissionAudit,securityAudit,documentLifecycle,entities,driveSources,driveConnection,reminderDashboard]=await Promise.all([admin?safe(()=>window.familyPassportData.inboundEmails(),[]):[],admin?safe(()=>window.familyPassportData.classificationProposals(),[]):[],admin?safe(()=>window.familyPassportData.classificationJobs(),[]):[],admin?safe(()=>window.familyPassportData.accessRules(),[]):[],admin?safe(()=>window.familyPassportData.permissionAudit(),[]):[],admin?safe(()=>window.familyPassportData.securityAudit(),[]):[],safe(()=>window.familyPassportData.documentLifecycle(),[]),safe(()=>window.familyPassportData.entities(),[]),safe(()=>window.familyPassportData.googleDriveSources(),[]),safe(()=>window.familyPassportData.googleDriveConnection(),null),safe(()=>window.familyPassportData.reminderDashboard(),{items:[],notifications:[],counts:{overdue:0,due_soon:0}})]);state.inboundEmails=inboundEmails;state.classificationProposals=classificationProposals;state.classificationJobs=classificationJobs;state.accessRules=accessRules;state.permissionAudit=permissionAudit;state.securityAudit=securityAudit;state.documentLifecycle=documentLifecycle;state.entities=entities;state.driveSources=driveSources;state.driveConnection=driveConnection;state.reminderDashboard=reminderDashboard}
-  catch(error){state.dataError=error.status===401?"Your session expired. Sign in again.":"The isolated household service could not be reached."}
+  catch(error){if(error.status===401){window.familyPassportAuth.clearSession();state.previewSignedIn=false;state.authReady=false;state.authUser=null;state.route="auth"}state.dataError=error.status===401?"Your saved session expired. Sign in again.":"The isolated household service could not be reached."}
   finally{state.dataBusy=false;if(["household","home","inbox","records"].includes(state.route))render({focus:true})}
+}
+async function refreshLiveStatus(){
+  if(liveRefreshBusy||!state.previewSignedIn||document.hidden)return;
+  liveRefreshBusy=true;
+  try{
+    const admin=["owner","family_admin"].includes(state.householdData?.current_user?.role),safe=async(task,fallback)=>{try{return await task()}catch{return fallback}};
+    const [emails,proposals,jobs,reminders]=await Promise.all([
+      admin?safe(()=>window.familyPassportData.inboundEmails(),state.inboundEmails):state.inboundEmails,
+      admin?safe(()=>window.familyPassportData.classificationProposals(),state.classificationProposals):state.classificationProposals,
+      admin?safe(()=>window.familyPassportData.classificationJobs(),state.classificationJobs):state.classificationJobs,
+      safe(()=>window.familyPassportData.reminderDashboard(),state.reminderDashboard)
+    ]);
+    const before=JSON.stringify([state.inboundEmails,state.classificationProposals,state.classificationJobs,state.reminderDashboard]);
+    const after=JSON.stringify([emails,proposals,jobs,reminders]);
+    if(before!==after){state.inboundEmails=emails;state.classificationProposals=proposals;state.classificationJobs=jobs;state.reminderDashboard=reminders;render();announce("Inbox and notifications updated")}
+  }finally{liveRefreshBusy=false}
 }
 function activateTab(id){state.recordTab=id;state.recordDetail=null;render({tabFocus:true});announce(`${id} records selected`)}
 async function selectGoogleDriveFile(){
@@ -265,4 +282,13 @@ function openSource(invoker){
 }
 document.querySelectorAll("[data-route]").forEach(x=>x.addEventListener("click",e=>{e.preventDefault();navigate(x.dataset.route)}));document.querySelectorAll("[data-route-button]").forEach(x=>x.addEventListener("click",()=>navigate(x.dataset.routeButton)));
 scenarioToggle.addEventListener("click",()=>{const open=scenarioPanel.hidden;scenarioPanel.hidden=!open;scenarioToggle.setAttribute("aria-expanded",String(open));if(open)scenarioSelect.focus()});document.querySelector("#scenario-close").addEventListener("click",()=>{scenarioPanel.hidden=true;scenarioToggle.setAttribute("aria-expanded","false");scenarioToggle.focus()});scenarioSelect.addEventListener("change",()=>{state.scenario=scenarioSelect.value;render({focus:true})});document.querySelectorAll("[data-help]").forEach(b=>b.addEventListener("click",e=>openHelp(e.currentTarget)));
-window.addEventListener("hashchange",()=>{const route=location.hash.slice(1);if(renderers[route]&&route!==state.route){state.route=!state.previewSignedIn&&route!=="auth"?"auth":route;render({focus:true})}});const requestedRoute=location.hash.slice(1);state.route=state.previewSignedIn&&renderers[requestedRoute]?requestedRoute:"auth";render();
+window.addEventListener("hashchange",()=>{const route=location.hash.slice(1);if(renderers[route]&&route!==state.route){state.route=!state.previewSignedIn&&route!=="auth"?"auth":route;render({focus:true})}});
+setInterval(refreshLiveStatus,15000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)refreshLiveStatus()});
+window.addEventListener("focus",refreshLiveStatus);
+async function initialiseApp(){
+  const requestedRoute=location.hash.slice(1);state.authBusy=true;render();
+  try{const restored=await window.familyPassportAuth.restoreSession();if(restored){state.authUser=restored.user;state.previewSignedIn=true;state.authReady=true;await loadHousehold()}}
+  finally{state.authBusy=false;state.route=state.previewSignedIn&&renderers[requestedRoute]?requestedRoute:(state.previewSignedIn?(state.householdData?.needs_setup?"household":"home"):"auth");render()}
+}
+initialiseApp();

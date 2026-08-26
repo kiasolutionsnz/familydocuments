@@ -11,6 +11,7 @@ export const metadata: Metadata = {
   openGraph: { title: "Family Documents — Your family, clearly organised", description: "A private home for important documents, reminders and useful family links.", url: "/", siteName: "Family Documents", locale: "en_NZ", type: "website", images: [{url:"/og.png",width:1200,height:630,alt:"Family Documents — Your family, clearly organised."}] },
   twitter: { card: "summary_large_image", title: "Family Documents — Your family, clearly organised", description: "A private home for important documents, reminders and useful family links.", images:["/og.png"] },
   robots: { index: true, follow: true },
+  icons: { icon: "/favicon.png", apple: "/favicon.png" },
 };
 
 export default function RootLayout({

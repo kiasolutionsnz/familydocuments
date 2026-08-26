@@ -1,7 +1,7 @@
 (function attachFamilyPassportData(global) {
   "use strict";
   const baseUrl = "https://api-familydocuments.servicehub.co.nz/rest";
-  async function rpc(name, payload = {}) {
+  async function rpc(name, payload = {}, retry = true) {
     const token = global.familyPassportAuth.getAccessToken();
     if (!token) throw new Error("Sign in is required.");
     const response = await fetch(`${baseUrl}/rpc/${name}`, {
@@ -10,6 +10,10 @@
       body: JSON.stringify(payload)
     });
     const body = await response.json().catch(() => ({}));
+    if (response.status === 401 && retry) {
+      await global.familyPassportAuth.refreshSession();
+      return rpc(name, payload, false);
+    }
     if (!response.ok) {
       const error = new Error(body.message || "The household request could not be completed.");
       error.status = response.status;
