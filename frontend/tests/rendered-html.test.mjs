@@ -73,7 +73,7 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(html, /Family members and invitations/);
   assert.match(html, /href="#connections" data-route="connections"/);
   assert.doesNotMatch(html, /Local test|Synthetic household data|UI prototype/);
-  assert.match(html, /src="auth-client\.js"/);
+  assert.match(html, /src="auth-client\.js\?v=20260827-drive-reconnect"/);
   assert.doesNotMatch(app, /Continue with Google/);
   assert.doesNotMatch(app, /data-google-signin/);
   assert.match(app, /Google Drive/);
@@ -141,6 +141,10 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(data, /set_rental_bill_status/);
   assert.match(data, /rental_property_export/);
   assert.match(app, /Connect household Google Drive/);
+  assert.match(app, /Reconnect Google Drive/);
+  assert.match(app, /Reconnect required/);
+  assert.match(drive, /drive_upload_failed/);
+  assert.match(drive, /folder_unavailable/);
   assert.match(app, /do not need Google folder access/);
   assert.match(app, /Why can I see this\?/);
   assert.match(html, /document-preview-dialog/);
