@@ -73,7 +73,7 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(html, /Family members and invitations/);
   assert.match(html, /href="#connections" data-route="connections"/);
   assert.doesNotMatch(html, /Local test|Synthetic household data|UI prototype/);
-  assert.match(html, /src="auth-client\.js\?v=20260827-drive-reconnect"/);
+  assert.match(html, /src="auth-client\.js\?v=20260827-rental-review"/);
   assert.doesNotMatch(app, /Continue with Google/);
   assert.doesNotMatch(app, /data-google-signin/);
   assert.match(app, /Google Drive/);
@@ -205,6 +205,13 @@ assert.match(app, /const safe=async\(task,fallback\)/);
   assert.match(app, /Add a rental bill/);
   assert.match(app, /Download accountant CSV/);
   assert.match(app, /Suggestions use previously confirmed providers/);
+  assert.match(app, /Record belongs to/);
+  assert.match(app, /Tax\/IR supporting record/);
+  assert.match(app, /Add a new rental property/);
+  assert.match(app, /Invoice number/);
+  assert.match(app, /Create a personal reminder/);
+  assert.match(app, /Nothing saved automatically/);
+  assert.match(data, /create_rental_record/);
   assert.match(css, /\.auth-page/);
   assert.match(css, /@media\(max-width:760px\)/);
   for (const source of [html, css, app, auth, data, ocr, drive]) {

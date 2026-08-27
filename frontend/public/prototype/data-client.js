@@ -100,6 +100,7 @@
     ,rentalWorkspace: () => rpc("rental_property_workspace")
     ,createRentalProperty: value => rpc("create_rental_property",value)
     ,createRentalBill: value => rpc("create_rental_bill",value)
+    ,createRentalRecord: value => rpc("create_rental_record",value)
     ,setRentalBillStatus: (bill,newStatus,paidOn=null) => rpc("set_rental_bill_status",{bill,new_status:newStatus,paid_on:paidOn})
     ,rentalPropertyExport: () => rpc("rental_property_export")
   });
