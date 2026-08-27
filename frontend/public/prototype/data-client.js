@@ -103,5 +103,8 @@
     ,createRentalRecord: value => rpc("create_rental_record",value)
     ,setRentalBillStatus: (bill,newStatus,paidOn=null) => rpc("set_rental_bill_status",{bill,new_status:newStatus,paid_on:paidOn})
     ,rentalPropertyExport: () => rpc("rental_property_export")
+    ,travelWorkspace: () => rpc("travel_workspace")
+    ,createTravelTrip: value => rpc("create_travel_trip",value)
+    ,createTravelRecord: value => rpc("create_travel_record",value)
   });
 })(window);

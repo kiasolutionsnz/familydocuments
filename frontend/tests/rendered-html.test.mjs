@@ -67,13 +67,14 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(html, />Inbox</);
   assert.match(html, />Documents</);
   assert.match(html, />Rentals</);
+  assert.match(html, />Travel</);
   assert.match(html, />Saved links</);
   assert.match(html, /href="#saved" data-route="saved"/);
   assert.match(html, />Storage</);
   assert.match(html, /Family members and invitations/);
   assert.match(html, /href="#connections" data-route="connections"/);
   assert.doesNotMatch(html, /Local test|Synthetic household data|UI prototype/);
-  assert.match(html, /src="auth-client\.js\?v=20260827-rental-review"/);
+  assert.match(html, /src="auth-client\.js\?v=20260828-travel-review"/);
   assert.doesNotMatch(app, /Continue with Google/);
   assert.doesNotMatch(app, /data-google-signin/);
   assert.match(app, /Google Drive/);
@@ -107,6 +108,11 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(app, /data-saved-delete/);
   assert.match(app, /noopener noreferrer/);
   assert.match(data, /household_google_drive_connection_summary/);
+  assert.match(data, /travel_workspace/);
+  assert.match(data, /create_travel_trip/);
+  assert.match(data, /create_travel_record/);
+  assert.match(app, /Create a new trip/);
+  assert.match(app, /Travel booking saved to the confirmed trip/);
   assert.match(data, /set_google_drive_folder/);
   assert.match(data, /create_google_drive_document/);
   assert.match(data, /rotate_household_inbox/);
