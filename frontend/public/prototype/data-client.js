@@ -81,7 +81,7 @@
     ,googleDriveSources: () => rpc("google_drive_source_summaries")
     ,updateGoogleDriveSource: (source, metadata, observedStatus="active") => rpc("update_google_drive_source", {source,new_file_name:metadata.name||"Unavailable Drive file",mime_type:metadata.mimeType||"application/pdf",size_bytes:Number(metadata.size||1),modified_time:metadata.modifiedTime||new Date(0).toISOString(),provider_version:String(metadata.version||"unknown"),provider_checksum:metadata.md5Checksum||null,new_parent_ids:metadata.parents||[],observed_status:observedStatus})
     ,disconnectGoogleDrive: () => rpc("disconnect_google_drive")
-    ,googleDriveConnection: () => rpc("google_drive_connection_summary")
+    ,googleDriveConnection: () => rpc("household_google_drive_connection_summary")
     ,setGoogleDriveFolder: value => rpc("set_google_drive_folder",value)
     ,disconnectGoogleDriveStorage: () => rpc("disconnect_google_drive_storage")
     ,createGoogleDriveDocument: value => rpc("create_google_drive_document",value)
