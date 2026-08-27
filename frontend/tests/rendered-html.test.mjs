@@ -116,6 +116,7 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(data, /set_trip_share/);
   assert.match(data, /add_travel_cost/);
   assert.match(app, /Travel management/);
+  assert.match(app, /Create a trip manually/);
   assert.match(app, /Confirmed net cost/);
   assert.match(app, /Trip sharing does not automatically reveal restricted source documents/);
   assert.match(app, /Create a new trip/);
