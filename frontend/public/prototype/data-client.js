@@ -106,5 +106,9 @@
     ,travelWorkspace: () => rpc("travel_workspace")
     ,createTravelTrip: value => rpc("create_travel_trip",value)
     ,createTravelRecord: value => rpc("create_travel_record",value)
+    ,updateTravelTrip: value => rpc("update_travel_trip",value)
+    ,addTripTraveller: value => rpc("add_trip_traveller",value)
+    ,setTripShare: value => rpc("set_trip_share",value)
+    ,addTravelCost: value => rpc("add_travel_cost",value)
   });
 })(window);
