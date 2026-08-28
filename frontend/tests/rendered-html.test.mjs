@@ -127,6 +127,12 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(data, /disable_household_inbox/);
   assert.match(data, /enable_household_inbox/);
   assert.match(data, /inbound_email_summaries/);
+  assert.match(data, /inbound_email_detail/);
+  assert.match(data, /inbound_sender_rule_summaries/);
+  assert.match(data, /move_inbound_email_to_bin/);
+  assert.match(app, /Trusted senders/);
+  assert.match(app, /Unknown senders are quarantined/);
+  assert.match(app, /data-open-email/);
   assert.match(ocr, /https:\/\/api-familydocuments\.servicehub\.co\.nz\/ocr/);
   assert.match(ocr, /crypto\.subtle\.digest/);
   assert.match(html, /google-drive-config\.local\.js/);
