@@ -114,5 +114,7 @@
     ,addTripTraveller: value => rpc("add_trip_traveller",value)
     ,setTripShare: value => rpc("set_trip_share",value)
     ,addTravelCost: value => rpc("add_travel_cost",value)
+    ,createTravelItineraryEntry: value => rpc("create_travel_itinerary_entry",value)
+    ,updateTravelItineraryEntry: value => rpc("update_travel_itinerary_entry",value)
   });
 })(window);

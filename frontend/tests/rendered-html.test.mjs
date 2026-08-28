@@ -74,7 +74,7 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(html, /Family members and invitations/);
   assert.match(html, /href="#connections" data-route="connections"/);
   assert.doesNotMatch(html, /Local test|Synthetic household data|UI prototype/);
-  assert.match(html, /src="auth-client\.js\?v=20260828-travel-management"/);
+  assert.match(html, /src="auth-client\.js\?v=20260828-travel-itinerary"/);
   assert.doesNotMatch(app, /Continue with Google/);
   assert.doesNotMatch(app, /data-google-signin/);
   assert.match(app, /Google Drive/);
@@ -115,10 +115,17 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(data, /add_trip_traveller/);
   assert.match(data, /set_trip_share/);
   assert.match(data, /add_travel_cost/);
+  assert.match(data, /create_travel_itinerary_entry/);
+  assert.match(data, /update_travel_itinerary_entry/);
   assert.match(app, /Travel management/);
   assert.match(app, /Create a trip manually/);
   assert.match(app, /Confirmed net cost/);
   assert.match(app, /Trip sharing does not automatically reveal restricted source documents/);
+  assert.match(app, /Upcoming itinerary/);
+  assert.match(app, /Add itinerary item/);
+  assert.match(app, /History \(/);
+  assert.match(app, /Past, completed and cancelled items stay here/);
+  assert.match(css, /\.date-range/);
   assert.match(app, /Create a new trip/);
   assert.match(app, /Travel booking saved to the confirmed trip/);
   assert.match(data, /set_google_drive_folder/);
