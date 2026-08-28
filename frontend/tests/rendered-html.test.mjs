@@ -70,11 +70,12 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(html, />Travel</);
   assert.match(html, />Saved links</);
   assert.match(html, /href="#saved" data-route="saved"/);
+  assert.match(html, /href="#more" data-route="more"/);
   assert.match(html, />Storage</);
   assert.match(html, /Family members and invitations/);
   assert.match(html, /href="#connections" data-route="connections"/);
   assert.doesNotMatch(html, /Local test|Synthetic household data|UI prototype/);
-  assert.match(html, /src="auth-client\.js\?v=20260828-travel-itinerary"/);
+  assert.match(html, /src="auth-client\.js\?v=20260828-mobile-navigation"/);
   assert.doesNotMatch(app, /Continue with Google/);
   assert.doesNotMatch(app, /data-google-signin/);
   assert.match(app, /Google Drive/);
@@ -103,6 +104,9 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(data, /create_saved_link_category/);
   assert.match(data, /set_saved_link_shares/);
   assert.match(app, /Save privately/);
+  assert.match(app, /Everything else, clearly organised/);
+  assert.match(app, /Original files and app data are different/);
+  assert.match(app, /This release supports Google Drive only/);
   assert.match(app, /Share → Copy link/);
   assert.match(app, /data-saved-link-form/);
   assert.match(app, /data-saved-delete/);
@@ -245,6 +249,9 @@ assert.match(app, /const safe=async\(task,fallback\)/);
   assert.match(data, /create_rental_record/);
   assert.match(css, /\.auth-page/);
   assert.match(css, /@media\(max-width:760px\)/);
+  assert.match(css, /\.more-grid/);
+  assert.doesNotMatch(html, /class="mobile-add"/);
+  assert.doesNotMatch(html, /class="add-button"/);
   for (const source of [html, css, app, auth, data, ocr, drive]) {
     for (const forbidden of [/localStorage/, /indexedDB/, /WebSocket/]) {
       assert.doesNotMatch(source, forbidden);
