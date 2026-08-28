@@ -8,7 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="alternate icon" type="image/png" href="/favicon.png">
   <link rel="apple-touch-icon" href="/favicon.png">
-  <link rel="stylesheet" href="styles.css?v=20260828-mobile-navigation">
+  <link rel="stylesheet" href="styles.css?v=20260829-mobile-shell">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to main content</a>
@@ -34,8 +34,10 @@
     </aside>
 
     <header class="mobile-header">
+      <button class="icon-button mobile-menu-button" type="button" data-mobile-menu-open aria-label="Open navigation menu" aria-controls="mobile-menu-dialog">☰</button>
       <a class="brand" href="#home" data-route="home"><span class="brand-mark" aria-hidden="true"><img src="/favicon.svg" alt=""></span><span>Family Documents</span></a>
-      <div class="mobile-actions"><button class="icon-button mobile-family-button" type="button" data-route-button="household" aria-label="Family members and invitations"><span aria-hidden="true">♙</span><span>Family</span></button><button class="icon-button" type="button" data-help aria-label="Open help">?</button></div>
+      <button class="notification-bell" type="button" data-route-button="notifications" data-mobile-notifications aria-label="Notifications"><span aria-hidden="true">🔔</span><span class="notification-badge" data-mobile-notification-badge hidden></span></button>
+      <form class="mobile-global-search" data-global-search><label class="sr-only" for="mobile-global-query">Search documents with local AI</label><span aria-hidden="true">⌕</span><input id="mobile-global-query" name="query" minlength="2" maxlength="120" placeholder="Search documents with AI" autocomplete="off" required><button type="submit" aria-label="Search">Go</button></form>
     </header>
 
     <main id="main" tabindex="-1">
@@ -46,11 +48,29 @@
     <nav class="mobile-nav" aria-label="Primary navigation">
       <a href="#home" data-route="home"><span aria-hidden="true">⌂</span>Overview</a>
       <a href="#inbox" data-route="inbox"><span aria-hidden="true">✉</span>Inbox</a>
-      <a href="#records" data-route="records"><span aria-hidden="true">▤</span>Documents</a>
-      <a href="#saved" data-route="saved"><span aria-hidden="true">♡</span>Saved</a>
-      <a href="#more" data-route="more"><span aria-hidden="true">•••</span>More</a>
+      <a href="#saved" data-route="saved"><span aria-hidden="true">★</span>Favourites</a>
+      <a href="#rentals" data-route="rentals"><span aria-hidden="true">⌂</span>Rentals</a>
+      <a href="#travel" data-route="travel"><span aria-hidden="true">✈</span>Travel</a>
     </nav>
   </div>
+
+  <dialog id="mobile-menu-dialog" class="mobile-menu-dialog" aria-labelledby="mobile-menu-title">
+    <aside class="mobile-drawer">
+      <div class="drawer-head"><div><p class="eyebrow">Family Documents</p><h2 id="mobile-menu-title">Menu</h2></div><button class="icon-button" type="button" data-mobile-menu-close aria-label="Close navigation menu">×</button></div>
+      <nav aria-label="Mobile menu">
+        <a href="#home" data-route="home"><span aria-hidden="true">⌂</span>Overview</a>
+        <a href="#inbox" data-route="inbox"><span aria-hidden="true">✉</span>Inbox</a>
+        <a href="#saved" data-route="saved"><span aria-hidden="true">★</span>Favourites</a>
+        <a href="#records" data-route="records"><span aria-hidden="true">▤</span>Documents</a>
+        <a href="#rentals" data-route="rentals"><span aria-hidden="true">⌂</span>Rentals</a>
+        <a href="#travel" data-route="travel"><span aria-hidden="true">✈</span>Travel</a>
+        <a href="#search" data-route="search"><span aria-hidden="true">⌕</span>Search</a>
+        <a href="#connections" data-route="connections"><span aria-hidden="true">◇</span>Storage</a>
+        <a href="#household" data-route="household"><span aria-hidden="true">⚙</span>Family &amp; Settings</a>
+      </nav>
+      <div class="drawer-foot"><button class="nav-button" type="button" data-help><span aria-hidden="true">?</span>Help</button><a href="/privacy">Privacy Policy</a><a href="/terms">Terms</a><button class="nav-button signout-button" type="button" data-mobile-signout><span aria-hidden="true">↪</span>Sign out</button></div>
+    </aside>
+  </dialog>
 
   <section id="scenario-panel" hidden><select id="scenario"><option value="default">Default</option></select><button id="scenario-toggle" hidden></button><button id="scenario-close" hidden></button></section>
 
@@ -67,12 +87,12 @@
     <img id="document-preview-image" hidden alt="">
   </dialog>
 
-  <script src="model.js?v=20260828-mobile-navigation"></script>
-  <script src="auth-client.js?v=20260828-mobile-navigation"></script>
-  <script src="data-client.js?v=20260828-mobile-navigation"></script>
-  <script src="ocr-client.js?v=20260828-mobile-navigation"></script>
-  <script src="google-drive-config.local.js?v=20260828-mobile-navigation"></script>
-  <script src="google-drive-client.js?v=20260828-mobile-navigation"></script>
-  <script src="app.js?v=20260828-mobile-navigation"></script>
+  <script src="model.js?v=20260829-mobile-shell"></script>
+  <script src="auth-client.js?v=20260829-mobile-shell"></script>
+  <script src="data-client.js?v=20260829-mobile-shell"></script>
+  <script src="ocr-client.js?v=20260829-mobile-shell"></script>
+  <script src="google-drive-config.local.js?v=20260829-mobile-shell"></script>
+  <script src="google-drive-client.js?v=20260829-mobile-shell"></script>
+  <script src="app.js?v=20260829-mobile-shell"></script>
 </body>
 </html>
