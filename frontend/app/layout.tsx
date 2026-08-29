@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./legal.css";
+import "./assistant.css";
+import HelpChat from "./help-chat";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://familydocuments.app"),
@@ -21,7 +23,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en-NZ">
-      <body>{children}</body>
+      <body>{children}<HelpChat /></body>
     </html>
   );
 }

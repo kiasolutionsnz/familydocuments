@@ -53,6 +53,35 @@ test("publishes complete privacy and terms routes", async () => {
   assert.match(terms, /New Zealand law/i);
 });
 
+test("publishes indexable blog and FAQ routes with the scoped help assistant", async () => {
+  const routes = ["/blog", "/blog/organise-family-documents", "/blog/private-family-inbox", "/blog/document-reminders", "/faq"];
+  const responses = await Promise.all(routes.map(render));
+  for (const response of responses) assert.equal(response.status, 200);
+  const [blog, organise, inbox, reminders, faq] = await Promise.all(responses.map(response => response.text()));
+  assert.match(blog, /Useful guides, minus the filing-cabinet fog/);
+  assert.match(organise, /How to organise family documents without creating another mess/);
+  assert.match(inbox, /Turn forwarded emails into useful family records/);
+  assert.match(reminders, /track renewals and expiry dates/i);
+  assert.match(faq, /"@type":"FAQPage"/);
+  assert.match(faq, /Does the help chat retain my conversation/);
+  assert.match(faq, /has no access to accounts, documents, email, Google Drive, or household data/);
+  for (const html of [blog, organise, inbox, reminders, faq]) {
+    assert.match(html, /> Ask us</);
+  }
+});
+
+test("help assistant has a bounded isolated browser contract", async () => {
+  const chat = await readFile(new URL("../app/help-chat.tsx", import.meta.url), "utf8");
+  assert.match(chat, /maxLength=\{500\}/);
+  assert.match(chat, /https:\/\/api-familydocuments\.servicehub\.co\.nz\/help\/chat/);
+  assert.match(chat, /startsWith\("\/faq"\)/);
+  assert.match(chat, /No access to your account or documents/);
+  assert.match(chat, /Ask Family Documents/);
+  assert.match(chat, /Product help only/);
+  assert.match(chat, /For app guidance only/);
+  assert.doesNotMatch(chat, /localStorage|sessionStorage|document\.cookie|Authorization/);
+});
+
 test("ships isolated local auth, invitation, access and category boundaries", async () => {
   const [html, css, app, auth, data, ocr, drive] = await Promise.all([
     readFile(new URL("../public/prototype/index.html", import.meta.url), "utf8"),
