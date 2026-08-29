@@ -155,7 +155,7 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(app, /data-open-email/);
   assert.match(ocr, /https:\/\/api-familydocuments\.servicehub\.co\.nz\/ocr/);
   assert.match(ocr, /crypto\.subtle\.digest/);
-  assert.match(html, /google-drive-config\.local\.js/);
+  assert.match(html, /google-drive-config\.local\.js\?v=20260830-drive-config/);
   assert.match(html, /google-drive-client\.js/);
   assert.match(drive, /https:\/\/www\.googleapis\.com\/auth\/drive\.file/);
   assert.match(drive, /initCodeClient/);
