@@ -55,6 +55,25 @@
     })();
     try { return await refreshPromise; } finally { refreshPromise = null; }
   }
+  function accessTokenExpiresSoon() {
+    try {
+      const payload = JSON.parse(atob((session?.accessToken || "").split(".")[1].replaceAll("-", "+").replaceAll("_", "/")));
+      return !payload.exp || (payload.exp * 1000) <= Date.now() + 30000;
+    } catch { return true; }
+  }
+  async function authenticatedRequest(path, options = {}, retry = true) {
+    if (!session?.accessToken) throw new Error("Sign in is required.");
+    if (accessTokenExpiresSoon()) await refreshSession();
+    try {
+      return await request(path, {...options, headers: {...(options.headers || {}), authorization: `Bearer ${session.accessToken}`}});
+    } catch (error) {
+      if (retry && [401, 403].includes(error.status) && error.code === "bad_jwt") {
+        await refreshSession();
+        return authenticatedRequest(path, options, false);
+      }
+      throw error;
+    }
+  }
   async function restoreSession() {
     if (!storedRefreshToken()) return null;
     try { return await refreshSession(); } catch { return null; }
@@ -71,15 +90,13 @@
   }
   async function recover(email) { return request("/recover",{method:"POST",body:JSON.stringify({email})}); }
   async function enrollTotp() {
-    if(!session?.accessToken)throw new Error("Sign in is required.");
-    const user=await request("/user",{headers:{authorization:`Bearer ${session.accessToken}`}}),existing=(user.factors||[]).find(x=>x.factor_type==="totp"&&x.status==="verified");
+    const user=await authenticatedRequest("/user"),existing=(user.factors||[]).find(x=>x.factor_type==="totp"&&x.status==="verified");
     if(existing)return {id:existing.id,existing:true,totp:{secret:""}};
-    return request("/factors",{method:"POST",headers:{authorization:`Bearer ${session.accessToken}`},body:JSON.stringify({factor_type:"totp",friendly_name:"Family Passport"})});
+    return authenticatedRequest("/factors",{method:"POST",body:JSON.stringify({factor_type:"totp",friendly_name:"Family Documents"})});
   }
   async function verifyTotp(factorId,code) {
-    if(!session?.accessToken)throw new Error("Sign in is required.");
-    const challenge=await request(`/factors/${factorId}/challenge`,{method:"POST",headers:{authorization:`Bearer ${session.accessToken}`},body:"{}"});
-    const verified=await request(`/factors/${factorId}/verify`,{method:"POST",headers:{authorization:`Bearer ${session.accessToken}`},body:JSON.stringify({challenge_id:challenge.id,code})});
+    const challenge=await authenticatedRequest(`/factors/${factorId}/challenge`,{method:"POST",body:"{}"});
+    const verified=await authenticatedRequest(`/factors/${factorId}/verify`,{method:"POST",body:JSON.stringify({challenge_id:challenge.id,code})});
     if(verified.access_token)setSession({access_token:verified.access_token,refresh_token:verified.refresh_token||session.refreshToken,user:verified.user||session.user});
     return verified;
   }

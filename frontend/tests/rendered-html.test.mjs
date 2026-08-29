@@ -76,7 +76,7 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(html, /Family &amp; Settings/);
   assert.match(html, /href="#connections" data-route="connections"/);
   assert.doesNotMatch(html, /Local test|Synthetic household data|UI prototype/);
-  assert.match(html, /src="auth-client\.js\?v=20260829-email-bin"/);
+  assert.match(html, /src="auth-client\.js\?v=20260830-mfa-refresh"/);
   assert.doesNotMatch(app, /Continue with Google/);
   assert.doesNotMatch(app, /data-google-signin/);
   assert.match(app, /Google Drive/);
@@ -167,6 +167,9 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(drive, /content_base64/);
   assert.match(drive, /openDocument/);
   assert.match(drive, /refreshSession/);
+  assert.match(auth, /function authenticatedRequest/);
+  assert.match(auth, /error\.code === "bad_jwt"/);
+  assert.match(auth, /await authenticatedRequest\("\/user"\)/);
   assert.doesNotMatch(drive, /drive\.readonly|auth\/drive["'`]/);
   assert.match(data, /register_google_drive_source/);
   assert.match(data, /link_google_drive_source/);
