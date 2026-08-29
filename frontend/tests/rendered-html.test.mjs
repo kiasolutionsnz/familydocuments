@@ -76,7 +76,7 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(html, /Family &amp; Settings/);
   assert.match(html, /href="#connections" data-route="connections"/);
   assert.doesNotMatch(html, /Local test|Synthetic household data|UI prototype/);
-  assert.match(html, /src="auth-client\.js\?v=20260829-mobile-shell"/);
+  assert.match(html, /src="auth-client\.js\?v=20260829-email-bin"/);
   assert.doesNotMatch(app, /Continue with Google/);
   assert.doesNotMatch(app, /data-google-signin/);
   assert.match(app, /Google Drive/);
@@ -146,6 +146,10 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(data, /inbound_email_detail/);
   assert.match(data, /inbound_sender_rule_summaries/);
   assert.match(data, /move_inbound_email_to_bin/);
+  assert.match(app, /mail-row-actions/);
+  assert.match(app, /data-bin-restore/);
+  assert.match(app, /Delete email/);
+  assert.match(app, /querySelectorAll\("\[data-bin-email\]"\)/);
   assert.match(app, /Trusted senders/);
   assert.match(app, /Unknown senders are quarantined/);
   assert.match(app, /data-open-email/);
