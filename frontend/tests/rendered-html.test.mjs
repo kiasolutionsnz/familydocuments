@@ -215,6 +215,7 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(app, /Connect household Google Drive/);
   assert.match(app, /Reconnect Google Drive/);
   assert.match(app, /Reconnect required/);
+  assert.match(app, /Google Drive did not connect/);
   assert.match(drive, /drive_upload_failed/);
   assert.match(drive, /folder_unavailable/);
   assert.match(app, /do not need Google folder access/);
