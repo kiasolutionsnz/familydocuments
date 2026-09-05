@@ -50,6 +50,22 @@
     if(!invoker||invoker.isConnected===false||typeof invoker.focus!=="function")return false;
     invoker.focus();return true;
   }
+  function reminderGroups(items,filter="upcoming"){
+    const rows=Array.isArray(items)?items:[];
+    if(filter==="completed")return rows.filter(x=>x.status==="completed"||x.status==="dismissed");
+    if(filter==="overdue")return rows.filter(x=>x.status==="upcoming"&&x.due_state==="overdue");
+    if(filter==="due_soon")return rows.filter(x=>x.status==="upcoming"&&(["today","due_soon"].includes(x.due_state)||(x.days_until!=null&&Number(x.days_until)>=0&&Number(x.days_until)<=7))).sort((a,b)=>String(a.due_at).localeCompare(String(b.due_at)));
+    return rows.filter(x=>x.status==="upcoming"&&x.due_state!=="overdue").sort((a,b)=>String(a.due_at).localeCompare(String(b.due_at)));
+  }
+  function storageConnectionState(connection,attempt={status:"idle",error:""}){
+    if(attempt.status==="connecting")return {kind:"connecting",label:"Connecting…",error:""};
+    if(attempt.status==="failed")return {kind:"connection_failed",label:"Connection failed",error:attempt.error||"Google Drive could not be connected."};
+    if(connection?.status==="active")return {kind:"connected",label:"Connected",error:""};
+    if(connection?.status==="disconnected")return {kind:"disconnected",label:"Disconnected",error:""};
+    if(connection?.status==="reconnect_required")return {kind:"disconnected",label:"Reconnect required",error:""};
+    if(connection?.status==="authorised")return {kind:"not_connected",label:"Choose a folder",error:""};
+    return {kind:"not_connected",label:"Not connected",error:""};
+  }
   function stateCopy(route,kind,context={}){
     const query=context.query?` Your query “${context.query}” is preserved.`:"";
     const map={
@@ -60,7 +76,7 @@
       search:{loading:["Searching authorised sources","Permission filtering happens before any result or count is shown."],empty:["Ask a household question","Try a question about the synthetic home insurance or Toyota WOF."],error:["Search could not finish",`No answer was generated.${query} Retry or refine it.`],restricted:["Search is unavailable","No hidden result, count, snippet or citation is revealed."],offline:["Search is offline",`No new answer was generated.${query} Retry when connected.`],conflict:["Sources disagree",`Compare exact cited versions before relying on an answer.${query}`],stale:["Search index may be out of date",`Open an exact source before relying on the result.${query}`]},
       connections:{loading:["Checking connection status","No provider token or file detail is shown until account and household permissions pass."],empty:["No storage provider connected","Choose Google Drive or OneDrive when you are ready; originals stay with that provider."],error:["Connection could not be checked","No new access was granted. Retry without changing existing provider files."],restricted:["Connections are unavailable","Only a household owner or authorised admin can manage provider access."],offline:["Connections are offline","No provider request is queued. Existing originals remain unchanged."],conflict:["Connection ownership needs review","The provider account does not match the expected household owner; do not continue."],stale:["Connection needs reconfirmation","Future access is paused until the provider permission is verified again."]}
     };
-    return map[route][kind];
+    return map[route]?.[kind]||({loading:["Loading your information","Please wait a moment."],error:["This page could not load","Please try again. Your saved information has not changed."],empty:["Nothing here yet","Add a document or choose another page."]}[kind]||["This page is unavailable","Return to Home and try again."]);
   }
-  return {PrototypeAdapter,buildSearchView,restoreInvoker,stateCopy};
+  return {PrototypeAdapter,buildSearchView,restoreInvoker,stateCopy,reminderGroups,storageConnectionState};
 });

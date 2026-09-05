@@ -97,7 +97,7 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(html, />Documents</);
   assert.match(html, />Rentals</);
   assert.match(html, />Travel</);
-  assert.match(html, />Saved links</);
+  assert.match(app, /Saved links/);
   assert.match(html, /href="#saved" data-route="saved"/);
   assert.match(html, /data-mobile-menu-open/);
   assert.match(html, /id="mobile-menu-dialog"/);
@@ -214,7 +214,7 @@ test("ships isolated local auth, invitation, access and category boundaries", as
   assert.match(data, /rental_property_export/);
   assert.match(app, /Connect household Google Drive/);
   assert.match(app, /Reconnect Google Drive/);
-  assert.match(app, /Reconnect required/);
+  assert.match(app, /storageConnectionState\(connection,state.storageState\)/);
   assert.match(app, /Google Drive did not connect/);
   assert.match(drive, /drive_upload_failed/);
   assert.match(drive, /folder_unavailable/);
@@ -296,7 +296,7 @@ assert.match(app, /const safe=async\(task,fallback\)/);
   assert.match(css, /\.mobile-global-search/);
   const mobileNav=html.match(/<nav class="mobile-nav"[\s\S]*?<\/nav>/)?.[0]||"";
   assert.equal((mobileNav.match(/data-route=/g)||[]).length,5);
-  for(const label of ["Overview","Inbox","Favourites","Rentals","Travel"])assert.match(mobileNav,new RegExp(`>${label}<`));
+  for(const label of ["Home","Ask &amp; add","Documents","Reminders","More"])assert.match(mobileNav,new RegExp(`>${label}<`));
   for(const label of ["Documents","Search","Storage","Family &amp; Settings","Privacy Policy","Terms","Sign out"])assert.match(html,new RegExp(label));
   assert.doesNotMatch(html, /class="mobile-add"/);
   assert.doesNotMatch(html, /class="add-button"/);

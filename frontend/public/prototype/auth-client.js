@@ -5,7 +5,7 @@
   let session = null;
   let refreshPromise = null;
   function storedRefreshToken() { try { return sessionStorage.getItem(refreshStorageKey) || null; } catch { return null; } }
-  function persistRefreshToken(value) { try { if (value) sessionStorage.setItem(refreshStorageKey, value); else sessionStorage.removeItem(refreshStorageKey); } catch {} }
+  function persistRefreshToken(value) { try { if (value) sessionStorage.setItem(refreshStorageKey, value); else sessionStorage.removeItem(refreshStorageKey); } catch { /* Browser storage or popup access can be unavailable; retain the in-memory session. */ } }
   function setSession(body) {
     if (!body?.access_token || !body?.user?.email) throw new Error("Authentication response was incomplete.");
     session = {accessToken: body.access_token, refreshToken: body.refresh_token || session?.refreshToken || storedRefreshToken(), user: body.user};
@@ -34,7 +34,7 @@
     if(!await googleAvailable()){const error=new Error("Google sign-in is not configured.");error.code="google_not_configured";throw error}
     const redirect=`${location.origin}/prototype/oauth-callback.html`,popup=window.open(`${baseUrl}/authorize?provider=google&redirect_to=${encodeURIComponent(redirect)}`,"family-passport-google","popup,width=520,height=680");
     if(!popup){const error=new Error("Google sign-in popup was blocked.");error.code="popup_blocked";throw error}
-    return new Promise((resolve,reject)=>{const timer=setTimeout(()=>finish(new Error("Google sign-in timed out.")),120000);function finish(error,payload){clearTimeout(timer);window.removeEventListener("message",receive);try{popup.close()}catch{}if(error)reject(error);else resolve(payload)}async function receive(event){if(event.origin!==location.origin||event.source!==popup||event.data?.type!=="family-passport-google-oauth")return;if(event.data.error||!event.data.access_token)return finish(new Error(event.data.error_description||"Google sign-in failed."));try{const response=await request("/user",{headers:{authorization:`Bearer ${event.data.access_token}`}});if(!response.id||!response.email)throw new Error("Google identity response was incomplete.");setSession({access_token:event.data.access_token,refresh_token:event.data.refresh_token,user:response});finish(null,{user:{id:response.id,email:response.email}})}catch(error){finish(error)}}window.addEventListener("message",receive)})
+    return new Promise((resolve,reject)=>{const timer=setTimeout(()=>finish(new Error("Google sign-in timed out.")),120000);function finish(error,payload){clearTimeout(timer);window.removeEventListener("message",receive);try{popup.close()}catch{ /* Browser storage or popup access can be unavailable. */ }if(error)reject(error);else resolve(payload)}async function receive(event){if(event.origin!==location.origin||event.source!==popup||event.data?.type!=="family-passport-google-oauth")return;if(event.data.error||!event.data.access_token)return finish(new Error(event.data.error_description||"Google sign-in failed."));try{const response=await request("/user",{headers:{authorization:`Bearer ${event.data.access_token}`}});if(!response.id||!response.email)throw new Error("Google identity response was incomplete.");setSession({access_token:event.data.access_token,refresh_token:event.data.refresh_token,user:response});finish(null,{user:{id:response.id,email:response.email}})}catch(error){finish(error)}}window.addEventListener("message",receive)})
   }
   async function signUp({email, password, name}) {
     return request("/signup", {method: "POST", body: JSON.stringify({email, password, data: name ? {display_name: name} : {}})});
@@ -82,11 +82,11 @@
     const current = session;
     clearSession();
     if (!current?.accessToken) return;
-    try { await request("/logout", {method: "POST", headers: {authorization: `Bearer ${current.accessToken}`}}); } catch {}
+    try { await request("/logout", {method: "POST", headers: {authorization: `Bearer ${current.accessToken}`}}); } catch { /* Browser storage or popup access can be unavailable; retain the in-memory session. */ }
   }
   async function signOutAll() {
     const current=session;clearSession();if(!current?.accessToken)return;
-    try{await request("/logout?scope=global",{method:"POST",headers:{authorization:`Bearer ${current.accessToken}`}})}catch{}
+    try{await request("/logout?scope=global",{method:"POST",headers:{authorization:`Bearer ${current.accessToken}`}})}catch{ /* Browser storage or popup access can be unavailable. */ }
   }
   async function recover(email) { return request("/recover",{method:"POST",body:JSON.stringify({email})}); }
   async function enrollTotp() {

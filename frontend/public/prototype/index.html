@@ -8,7 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="alternate icon" type="image/png" href="/favicon.png">
   <link rel="apple-touch-icon" href="/favicon.png">
-  <link rel="stylesheet" href="styles.css?v=20260829-email-bin">
+  <link rel="stylesheet" href="styles.css?v=20260906-phase-b">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to main content</a>
@@ -18,15 +18,11 @@
         <span class="brand-mark" aria-hidden="true"><img src="/favicon.svg" alt=""></span><span>Family Documents<small>Your household hub</small></span>
       </a>
       <nav class="primary-nav" aria-label="Primary navigation">
-        <a href="#home" data-route="home"><span aria-hidden="true">⌂</span>Overview</a>
-        <a href="#inbox" data-route="inbox"><span aria-hidden="true">✉</span>Inbox</a>
+        <a href="#home" data-route="home"><span aria-hidden="true">⌂</span>Home</a>
+        <a href="#ask" data-route="ask"><span aria-hidden="true">＋</span>Ask &amp; add</a>
         <a href="#records" data-route="records"><span aria-hidden="true">▤</span>Documents</a>
-        <a href="#rentals" data-route="rentals"><span aria-hidden="true">⌂</span>Rentals</a>
-        <a href="#travel" data-route="travel"><span aria-hidden="true">✈</span>Travel</a>
-        <a href="#saved" data-route="saved"><span aria-hidden="true">♡</span>Saved links</a>
-        <a href="#search" data-route="search"><span aria-hidden="true">⌕</span>Search</a>
-        <a href="#connections" data-route="connections"><span aria-hidden="true">◇</span>Storage</a>
-        <a href="#household" data-route="household"><span aria-hidden="true">⚙</span>Settings</a>
+        <a href="#reminders" data-route="reminders"><span aria-hidden="true">⏱</span>Reminders</a>
+        <a href="#more" data-route="more"><span aria-hidden="true">☰</span>More</a>
       </nav>
       <div class="sidebar-foot">
         <button class="nav-button" type="button" data-help><span aria-hidden="true">?</span>Help</button>
@@ -46,11 +42,11 @@
     </main>
 
     <nav class="mobile-nav" aria-label="Primary navigation">
-      <a href="#home" data-route="home"><span aria-hidden="true">⌂</span>Overview</a>
-      <a href="#inbox" data-route="inbox"><span aria-hidden="true">✉</span>Inbox</a>
-      <a href="#saved" data-route="saved"><span aria-hidden="true">★</span>Favourites</a>
-      <a href="#rentals" data-route="rentals"><span aria-hidden="true">⌂</span>Rentals</a>
-      <a href="#travel" data-route="travel"><span aria-hidden="true">✈</span>Travel</a>
+        <a href="#home" data-route="home"><span aria-hidden="true">⌂</span>Home</a>
+        <a href="#ask" data-route="ask"><span aria-hidden="true">＋</span>Ask &amp; add</a>
+        <a href="#records" data-route="records"><span aria-hidden="true">▤</span>Documents</a>
+        <a href="#reminders" data-route="reminders"><span aria-hidden="true">⏱</span>Reminders</a>
+        <a href="#more" data-route="more"><span aria-hidden="true">☰</span>More</a>
     </nav>
   </div>
 
@@ -58,6 +54,7 @@
     <aside class="mobile-drawer">
       <div class="drawer-head"><div><p class="eyebrow">Family Documents</p><h2 id="mobile-menu-title">Menu</h2></div><button class="icon-button" type="button" data-mobile-menu-close aria-label="Close navigation menu">×</button></div>
       <nav aria-label="Mobile menu">
+        <a href="#reminders" data-route="reminders"><span aria-hidden="true">&#9201;</span>Reminders</a>
         <a href="#home" data-route="home"><span aria-hidden="true">⌂</span>Overview</a>
         <a href="#inbox" data-route="inbox"><span aria-hidden="true">✉</span>Inbox</a>
         <a href="#saved" data-route="saved"><span aria-hidden="true">★</span>Favourites</a>
@@ -82,17 +79,19 @@
     </form>
   </dialog>
   <dialog id="document-preview-dialog" class="document-preview-dialog" aria-labelledby="document-preview-title">
-    <form method="dialog" class="preview-toolbar"><h2 id="document-preview-title">Document preview</h2><button class="icon-button" value="close" aria-label="Close document preview">×</button></form>
+    <form method="dialog" class="preview-toolbar"><h2 id="document-preview-title">Document preview</h2><a id="document-preview-download" class="secondary-button" download>Download original</a><button class="icon-button" value="close" aria-label="Close document preview">×</button></form>
     <iframe id="document-preview-frame" title="Document preview" hidden></iframe>
     <img id="document-preview-image" hidden alt="">
+    <p id="document-preview-fallback" hidden>This original cannot be previewed here. Download it to open it in a compatible app.</p>
   </dialog>
 
+  <script src="extraction.js?v=20260906-phase-b"></script>
   <script src="model.js?v=20260829-email-bin"></script>
   <script src="auth-client.js?v=20260830-mfa-refresh"></script>
   <script src="data-client.js?v=20260829-email-bin"></script>
   <script src="ocr-client.js?v=20260829-email-bin"></script>
   <script src="google-drive-config.local.js?v=20260830-drive-config"></script>
   <script src="google-drive-client.js?v=20260829-email-bin"></script>
-  <script src="app.js?v=20260903-drive-errors"></script>
+  <script src="app.js?v=20260906-phase-b"></script>
 </body>
 </html>

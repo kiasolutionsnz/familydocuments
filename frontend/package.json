@@ -9,7 +9,9 @@
     "dev": "vinext dev --host 127.0.0.1 --port 3300",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "node --check public/prototype/app.js && node --check public/prototype/google-drive-client.js && npm run build && node --test tests/rendered-html.test.mjs",
+    "test": "node --check public/prototype/app.js && node --check public/prototype/google-drive-client.js && npm run build && node --test tests/rendered-html.test.mjs tests/ux-phase-a.test.mjs tests/extraction.test.mjs",
+    "test:browser": "node --test tests/ux-phase-a.browser.test.mjs",
+    "test:all": "npm run lint && npm test && npm run test:browser",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
@@ -35,6 +37,7 @@
     "eslint-plugin-react": "7.37.5",
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "16.4.0",
+    "playwright-core": "1.62.1",
     "react-server-dom-webpack": "19.2.6",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
