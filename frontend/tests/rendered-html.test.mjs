@@ -92,17 +92,15 @@ test("ships isolated local auth, invitation, access and category boundaries", as
     readFile(new URL("../public/prototype/ocr-client.js", import.meta.url), "utf8"),
     readFile(new URL("../public/prototype/google-drive-client.js", import.meta.url), "utf8"),
   ]);
-  assert.match(html, />Overview</);
+  assert.match(html, />Home</);
+  assert.match(html, />Timeline</);
+  assert.match(html, />Library</);
   assert.match(html, />Inbox</);
-  assert.match(html, />Documents</);
-  assert.match(html, />Rentals</);
-  assert.match(html, />Travel</);
+  assert.match(html, />Reminders</);
   assert.match(app, /Saved links/);
-  assert.match(html, /href="#saved" data-route="saved"/);
-  assert.match(html, /data-mobile-menu-open/);
+  assert.doesNotMatch(html, /href="#saved" data-route="saved"/);
   assert.match(html, /id="mobile-menu-dialog"/);
-  assert.match(html, />Storage</);
-  assert.match(html, /Family &amp; Settings/);
+  assert.match(html, /Settings/);
   assert.match(html, /href="#connections" data-route="connections"/);
   assert.doesNotMatch(html, /Local test|Synthetic household data|UI prototype/);
   assert.match(html, /src="auth-client\.js\?v=20260830-mfa-refresh"/);
@@ -266,8 +264,8 @@ assert.match(app, /const safe=async\(task,fallback\)/);
   assert.match(app, /Household inbox/);
   assert.match(app, /data-copy-inbox/);
   assert.match(app, /Received email/);
-  assert.match(app, /Signed in as:/);
-  assert.match(app, /Help with this page/);
+  assert.match(app, /Open profile and settings/);
+  assert.match(html, />Help</);
   assert.match(app, /setInboxAlias/);
   assert.match(app, /quarantined/);
   assert.match(app, /name="dueTime" type="time"/);
@@ -296,8 +294,8 @@ assert.match(app, /const safe=async\(task,fallback\)/);
   assert.match(css, /\.mobile-global-search/);
   const mobileNav=html.match(/<nav class="mobile-nav"[\s\S]*?<\/nav>/)?.[0]||"";
   assert.equal((mobileNav.match(/data-route=/g)||[]).length,5);
-  for(const label of ["Home","Ask &amp; add","Documents","Reminders","More"])assert.match(mobileNav,new RegExp(`>${label}<`));
-  for(const label of ["Documents","Search","Storage","Family &amp; Settings","Privacy Policy","Terms","Sign out"])assert.match(html,new RegExp(label));
+  for(const label of ["Home","Timeline","Library","Inbox","Reminders"])assert.match(mobileNav,new RegExp(`>${label}<`));
+  for(const label of ["Search","Storage connection","Settings","Privacy Policy","Terms","Sign out"])assert.match(html,new RegExp(label));
   assert.doesNotMatch(html, /class="mobile-add"/);
   assert.doesNotMatch(html, /class="add-button"/);
   for (const source of [html, css, app, auth, data, ocr, drive]) {

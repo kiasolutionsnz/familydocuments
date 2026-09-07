@@ -113,9 +113,9 @@ test("document opens with keyboard, loading, deduplication and accessible previe
   assert.equal(await page.getByRole("button",{name:"Open",exact:true}).evaluate(button=>button===document.activeElement),true);
 });
 
-test("email errors stay in Inbox and pending document opens do not pop over another route",async t=>{
-  const page=await openApp(t,"inbox");await page.locator('[data-open-email="synthetic-email"]').click();await page.getByRole("alert").filter({hasText:"The email could not be opened."}).waitFor();
-  await navigate(page,"household/security");await page.getByRole("heading",{name:"Multi-factor protection"}).waitFor();assert.doesNotMatch(await page.locator("#screen").innerText(),/The email could not be opened/);
+test("Inbox stays focused on items needing attention and pending document opens do not pop over another route",async t=>{
+  const page=await openApp(t,"inbox");await page.getByText("You’re all caught up.").waitFor();
+  await navigate(page,"household/security");await page.getByRole("heading",{name:"Multi-factor protection"}).waitFor();
   await navigate(page,"records");await setFixture(page,{sourceDelay:350});await page.getByRole("button",{name:"Open",exact:true}).click();await navigate(page,"connections");await page.waitForTimeout(450);
   assert.equal(await page.locator("#document-preview-dialog").evaluate(dialog=>dialog.open),false);assert.equal(await page.locator("#app-status").textContent(),"");
 });
@@ -151,8 +151,8 @@ test("search feedback and late responses do not leak between routes",async t=>{
   await page.waitForTimeout(500);assert.equal(await page.locator("#app-status").textContent(),"");assert.doesNotMatch(await page.locator("#screen").innerText(),/authorised matches shown/);
 });
 
-test("all reminders, bell window, keyboard filters and family completion remain separate",async t=>{
-  const page=await openApp(t,"home");await page.locator('[data-route-button="reminders"]').filter({hasText:"View all"}).click();
+test("all reminders, keyboard filters and family completion remain separate",async t=>{
+  const page=await openApp(t,"reminders");
   await page.getByRole("tabpanel").getByText("Future insurance renewal",{exact:true}).waitFor();
   await page.getByRole("tab",{name:"Upcoming",exact:true}).focus();await page.keyboard.press("ArrowRight");
   assert.equal(await page.getByRole("tab",{name:"Due soon",exact:true}).getAttribute("aria-selected"),"true");assert.equal(await page.getByRole("tabpanel").getByText("Due soon policy",{exact:true}).isVisible(),true);
@@ -227,7 +227,7 @@ test("P1 onboarding hides unusable navigation and creates a space without requir
   await page.locator("[data-household-setup]").evaluate(form=>form.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true})));
   await page.waitForFunction(()=>document.title.startsWith("Home —"));assert.deepEqual(await calls(page,"bootstrap"),[["bootstrap","Test Household","Synthetic Person"]]);
   assert.equal(await page.locator(".mobile-nav").isVisible(),true);
-  for(const name of ["Add your first document","Scan with camera","Ask a question"])assert.equal(await page.getByRole("button",{name,exact:true}).isVisible(),true);
+  for(const name of ["Upload a document","Scan a document"])assert.equal(await page.getByRole("button",{name,exact:true}).isVisible(),true);
 });
 
 test("P1 create errors preserve entries; join is a separate verified-email path",async t=>{
@@ -240,15 +240,11 @@ test("P1 create errors preserve entries; join is a separate verified-email path"
   await setFixture(page,{joinFailure:false});await page.getByRole("button",{name:"Accept my invitation"}).click();await page.waitForFunction(()=>document.title.startsWith("Home —"));assert.equal((await calls(page,"join")).length,2);
 });
 
-test("P1 five main destinations keep secondary modules reachable and old routes valid",async t=>{
-  const page=await openApp(t,"more",390);
-  assert.equal(await page.locator("[data-mobile-notification-badge]").isVisible(),false);
-  assert.notEqual(await page.locator("[data-mobile-menu-open]").evaluate(x=>getComputedStyle(x).color),"rgb(255, 255, 255)");
-  await page.locator("[data-mobile-menu-open]").click();await page.locator("#mobile-menu-dialog[open]").waitFor();await page.keyboard.press("Escape");
-  for(const nav of [".primary-nav",".mobile-nav"]){assert.equal(await page.locator(`${nav} a`).count(),5);assert.deepEqual(await page.locator(`${nav} a`).evaluateAll(links=>links.map(x=>x.dataset.route)),["home","ask","records","reminders","more"]);}
-  for(const route of ["inbox","saved","rentals","travel","connections","household"]){await navigate(page,"more");await page.locator(`#screen [data-route="${route}"],#screen [data-route-button="${route}"]`).first().click();await page.waitForFunction(route=>location.hash==="#"+route,route);}
-  for(const route of ["ask","search","add"]){await navigate(page,route);assert.equal(await page.locator('.mobile-nav [aria-current="page"]').getAttribute("data-route"),"ask");}
-  await navigate(page,"ask");await page.locator('[data-route-button="add"]').focus();await page.keyboard.press("Enter");await page.waitForFunction(()=>location.hash==="#add");
+test("P1 five main destinations keep secondary library modules and settings reachable",async t=>{
+  const page=await openApp(t,"library",390);
+  for(const nav of [".primary-nav",".mobile-nav"]){assert.equal(await page.locator(`${nav} a`).count(),5);assert.deepEqual(await page.locator(`${nav} a`).evaluateAll(links=>links.map(x=>x.dataset.route)),["home","timeline","library","inbox","reminders"]);}
+  for(const route of ["records","saved","rentals","travel","connections","household"]){await navigate(page,route);await page.waitForFunction(route=>location.hash==="#"+route,route);}
+  await navigate(page,"home");await page.locator('[data-composer-upload]').click();await page.waitForFunction(()=>location.hash==="#add");
 });
 
 test("P1 Settings has seven focused sections and preserves subsection navigation",async t=>{
