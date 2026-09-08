@@ -398,6 +398,35 @@ void main() {
     expect(find.text('Saved in Rentals.'), findsOneWidget);
   });
 
+  testWidgets(
+    'suggested destination can be changed without losing attachment',
+    (t) async {
+      final auth = authenticatedUser();
+      final home = FakeHomeService(auth, categories: const ['Home', 'Rentals']);
+      await t.pumpWidget(
+        FamilyDocumentsApp(
+          auth: auth,
+          homeService: home,
+          pickUpload: () async => syntheticUpload(),
+        ),
+      );
+      await t.pump();
+      await t.tap(find.byTooltip('Attach a document').last);
+      await t.pump();
+      await t.tap(find.byTooltip('Send').last);
+      await t.pumpAndSettle();
+      expect(find.text('Choose category'), findsOneWidget);
+      await t.tap(find.text('Choose category'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Rentals').last);
+      await t.pumpAndSettle();
+      expect(home.savedCategory, 'Rentals');
+      expect(home.savedBytes, orderedEquals([1, 2, 3, 4]));
+      expect(home.analysisCalls, 0);
+      expect(find.text('Saved in Rentals.'), findsOneWidget);
+    },
+  );
+
   testWidgets('missing Rentals offers create choose and cancel', (t) async {
     final auth = authenticatedUser();
     final home = FakeHomeService(auth, categories: const ['Home']);
@@ -555,7 +584,12 @@ void main() {
     expect(home.analysisCalls, 1);
     expect(home.saveCalls, 0);
     expect(home.savedBytes, orderedEquals([1, 2, 3, 4]));
+    expect(find.text('Finished reading your document'), findsOneWidget);
     expect(find.text('Synthetic electricity bill'), findsOneWidget);
+    expect(find.text('Category'), findsOneWidget);
+    expect(find.widgetWithText(Chip, 'Home'), findsOneWidget);
+    expect(find.text('Tags'), findsOneWidget);
+    expect(find.text('invoice'), findsOneWidget);
     await t.pumpWidget(const SizedBox());
   });
 

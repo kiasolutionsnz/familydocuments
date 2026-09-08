@@ -1181,7 +1181,9 @@ class Home extends StatelessWidget {
                                   child: const Text('Save there'),
                                 ),
                                 OutlinedButton(
-                                  onPressed: busy ? null : onClearAttachment,
+                                  onPressed: busy
+                                      ? null
+                                      : onChooseUploadCategory,
                                   child: const Text('Choose category'),
                                 ),
                               ],
@@ -1584,6 +1586,17 @@ class _AnalysisResult extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        const Row(
+          children: [
+            Icon(Icons.check_circle_outline, color: Color(0xff287a4d)),
+            SizedBox(width: 8),
+            Text(
+              'Finished reading your document',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
         Text(result.title, style: const TextStyle(fontWeight: FontWeight.w700)),
         if (fileName != null && fileName != result.title) ...[
           const SizedBox(height: 2),
@@ -1595,14 +1608,25 @@ class _AnalysisResult extends StatelessWidget {
           style: TextStyle(color: Color(0xff64748b)),
         ),
         const SizedBox(height: 12),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [
-            result.category,
-            ...result.tags,
-          ].map((value) => Chip(label: Text(value))).toList(),
-        ),
+        const Text('Category', style: TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 6),
+        Chip(label: Text(result.category)),
+        const SizedBox(height: 8),
+        const Text('Tags', style: TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 6),
+        if (result.tags.isEmpty)
+          const Text(
+            'No tags added',
+            style: TextStyle(color: Color(0xff64748b)),
+          )
+        else
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: result.tags
+                .map((value) => Chip(label: Text(value)))
+                .toList(),
+          ),
       ],
     ),
   );
