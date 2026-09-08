@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
+import {isolatedContext} from './isolated-context.mjs';
 
-const authUrl = 'http://127.0.0.1:55321';
-const mailUrl = 'http://127.0.0.1:55324';
+const {auth: authUrl, mail: mailUrl} = isolatedContext();
 const suffix = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 const email = `synthetic-${suffix}@family-passport.test`;
 const password = `Synthetic-${suffix}-Password!`;

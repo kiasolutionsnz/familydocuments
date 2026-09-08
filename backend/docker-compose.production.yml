@@ -1,0 +1,25 @@
+services:
+  auth:
+    environment:
+      API_EXTERNAL_URL: https://${API_HOST:?required}/auth
+      GOTRUE_SITE_URL: ${FRONTEND_ORIGIN:-https://familydocuments.app}
+      GOTRUE_URI_ALLOW_LIST: ${FRONTEND_ORIGIN:-https://familydocuments.app},${FRONTEND_ORIGIN:-https://familydocuments.app}/prototype/oauth-callback.html,https://familydocuments.inderchauhan.workers.dev,https://familydocuments.inderchauhan.workers.dev/prototype/oauth-callback.html
+      GOTRUE_MAILER_EXTERNAL_HOSTS: ${API_HOST:?required}
+
+  rest:
+    environment:
+      PGRST_SERVER_CORS_ALLOWED_ORIGINS: ${FRONTEND_ORIGIN:-https://familydocuments.app}
+
+  inbound-gateway:
+    networks: [application, proxy]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: proxy
+      traefik.http.routers.familydocuments-inbound.rule: "Host(`${INGESTION_HOST:?required}`) && Path(`/v1/inbound-email`)"
+      traefik.http.routers.familydocuments-inbound.entrypoints: local-supabase
+      traefik.http.routers.familydocuments-inbound.middlewares: security-headers@file,rate-limit@file
+      traefik.http.services.familydocuments-inbound.loadbalancer.server.port: "8080"
+      traefik.http.routers.familydocuments-api.rule: "Host(`${API_HOST:?required}`)"
+      traefik.http.routers.familydocuments-api.entrypoints: local-supabase
+      traefik.http.routers.familydocuments-api.middlewares: security-headers@file,rate-limit@file
+      traefik.http.routers.familydocuments-api.service: familydocuments-inbound

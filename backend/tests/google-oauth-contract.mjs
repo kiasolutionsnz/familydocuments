@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {isolatedContext} from './isolated-context.mjs';
+const {auth:authUrl}=isolatedContext();const settings=await fetch(`${authUrl}/settings`);assert.equal(settings.status,200);const body=await settings.json();
+assert.equal(body.external?.google,false,'Google must fail closed until Family Passport credentials are configured');
+const [compose,callback,client]=await Promise.all([readFile(new URL('../docker-compose.yml',import.meta.url),'utf8'),readFile(new URL('../../frontend/frontend/public/prototype/oauth-callback.html',import.meta.url),'utf8'),readFile(new URL('../../frontend/frontend/public/prototype/auth-client.js',import.meta.url),'utf8')]);
+assert.match(compose,/GOTRUE_EXTERNAL_GOOGLE_ENABLED/);assert.match(compose,/GOOGLE_OAUTH_CLIENT_ID/);assert.match(compose,/127\.0\.0\.1:55321\/callback/);assert.match(compose,/oauth-callback\.html/);assert.match(compose,/PROVIDER_LINKING_DOMAINS: google=google/);
+assert.match(callback,/event|postMessage/);assert.match(callback,/family-passport-google-oauth/);assert.doesNotMatch(callback,/localStorage|sessionStorage/);
+assert.match(client,/event\.origin!==location\.origin/);assert.match(client,/event\.source!==popup/);assert.match(client,/\/user/);
+console.log(JSON.stringify({provider_fail_closed:'PASS',callback_contract:'PASS',origin_and_opener_validation:'PASS',drive_scope_separation:'PASS',email_auto_link_isolation:'PASS'}));

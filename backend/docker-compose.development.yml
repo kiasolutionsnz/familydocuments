@@ -1,0 +1,14 @@
+services:
+  auth:
+    depends_on:
+      mail: {condition: service_healthy}
+    environment:
+      GOTRUE_SMTP_HOST: mail
+      GOTRUE_SMTP_PORT: 1025
+      GOTRUE_SMTP_USER: ""
+      GOTRUE_SMTP_PASS: ""
+      GOTRUE_SMTP_ADMIN_EMAIL: no-reply@family-passport.local
+      GOTRUE_SMTP_SENDER_NAME: Family Documents Local
+
+  mail:
+    profiles: [development]

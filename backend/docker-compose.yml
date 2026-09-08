@@ -2,7 +2,7 @@ name: family-passport-supabase
 
 services:
   db:
-    image: public.ecr.aws/supabase/postgres:17.6.1.159@sha256:86a2e078779e5bdccda1f6f6c5063aa9779a322d1fface5fb408d051909b230f
+    image: kia/familydocuments-supabase-postgres:17.6.1.159-kia.3@sha256:fd909b0e75d65a9282058d0b12c3e3b997faef8a3ddad5644828b75364ab0b51
     environment:
       POSTGRES_HOST: /var/run/postgresql
       PGPORT: 5432
@@ -30,27 +30,33 @@ services:
       options: {max-size: "10m", max-file: "3"}
 
   auth:
-    image: public.ecr.aws/supabase/gotrue:v2.195.0@sha256:362659ca70eaa75ba05bbaf963caa84c1c5afe5e8fbf0777e17b830dd5f0f60a
+    image: kia/familydocuments-supabase-auth:v2.195.0-kia.3@sha256:0bdbd51de73eadb612cd24ae51c78fb91cf06ae14dbe507454d1beb4c746d2d8
     depends_on:
       db: {condition: service_healthy}
-      mail: {condition: service_healthy}
     environment:
       GOTRUE_API_HOST: 0.0.0.0
       GOTRUE_API_PORT: 9999
       API_EXTERNAL_URL: http://127.0.0.1:55321
       GOTRUE_SITE_URL: http://127.0.0.1:3300
-      GOTRUE_URI_ALLOW_LIST: http://127.0.0.1:3300
+      GOTRUE_URI_ALLOW_LIST: http://127.0.0.1:3300,http://127.0.0.1:3300/prototype/oauth-callback.html
       GOTRUE_DB_DRIVER: postgres
       GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/postgres
       GOTRUE_DB_NAMESPACE: auth
       GOTRUE_DISABLE_SIGNUP: "false"
       GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_GOOGLE_ENABLED: ${GOOGLE_OAUTH_ENABLED:-false}
+      GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-not-configured}
+      GOTRUE_EXTERNAL_GOOGLE_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-not-configured}
+      GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI: http://127.0.0.1:55321/callback
+      GOTRUE_EXPERIMENTAL_PROVIDER_LINKING_DOMAINS: google=google
       GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
       GOTRUE_MAILER_AUTOCONFIRM: "false"
-      GOTRUE_SMTP_HOST: mail
-      GOTRUE_SMTP_PORT: 1025
-      GOTRUE_SMTP_ADMIN_EMAIL: no-reply@family-passport.local
-      GOTRUE_SMTP_SENDER_NAME: Family Passport Local
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:?required}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-2525}
+      GOTRUE_SMTP_USER: ${SMTP_USERNAME:?required}
+      GOTRUE_SMTP_PASS: ${SMTP_PASSWORD:?required}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_FROM_EMAIL:?required}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_FROM_NAME:-Family Documents}
       GOTRUE_JWT_SECRET: ${GOTRUE_JWT_SECRET:?required}
       GOTRUE_JWT_EXP: 300
       GOTRUE_JWT_AUD: authenticated
@@ -63,8 +69,12 @@ services:
       - "127.0.0.1:55321:9999"
     networks: [application, database]
     restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    tmpfs: ["/tmp:size=16m,mode=0700,uid=65532,gid=65532"]
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9999/health"]
+      test: ["CMD", "/usr/local/bin/healthcheck"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -74,7 +84,7 @@ services:
       options: {max-size: "10m", max-file: "3"}
 
   rest:
-    image: postgrest/postgrest:v14.12@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c
+    image: postgrest/postgrest:v14.13@sha256:488093de819567422bc1d37cb79da6e84bca3726bac321daeed618f0ed957888
     depends_on:
       db: {condition: service_healthy}
     environment:
@@ -98,6 +108,42 @@ services:
       timeout: 5s
       retries: 20
     security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  inbound-gateway:
+    profiles: [production]
+    build: {context: ./inbound-gateway}
+    image: kia/familydocuments-inbound-gateway:0.5.4
+    depends_on:
+      rest: {condition: service_healthy}
+    environment:
+      INGESTION_HMAC_SECRET: ${INGESTION_HMAC_SECRET:-not-configured}
+      GOTRUE_JWT_SECRET: ${GOTRUE_JWT_SECRET:?required}
+      FP_API_URL: http://rest:3000
+      AUTH_UPSTREAM_URL: http://auth:9999
+      OCR_UPSTREAM_URL: http://ocr:8080
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://familydocuments.app}
+      GOOGLE_DRIVE_CLIENT_ID: ${GOOGLE_DRIVE_CLIENT_ID:-}
+      GOOGLE_DRIVE_CLIENT_SECRET: ${GOOGLE_DRIVE_CLIENT_SECRET:-}
+      GOOGLE_DRIVE_TOKEN_KEY: ${GOOGLE_DRIVE_TOKEN_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      HELP_CHAT_MODEL: ${HELP_CHAT_MODEL:-qwen3:4b}
+      DOCUMENT_CLASSIFIER_MODEL: ${DOCUMENT_CLASSIFIER_MODEL:-qwen3:4b}
+    ports: ["127.0.0.1:55327:8080"]
+    networks: [application]
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=8m,mode=0700,uid=65532,gid=65532"]
+    pids_limit: 64
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "/inbound-gateway"]
+      disable: true
     logging:
       driver: json-file
       options: {max-size: "10m", max-file: "3"}
@@ -132,8 +178,10 @@ services:
 
   mail:
     image: public.ecr.aws/supabase/mailpit:v1.30.2@sha256:37a38e48e9338cd7e89dfeb487f37b02ebfcd9cb23111bed2d345e79d37d6dd6
+    profiles: [development]
     ports:
       - "127.0.0.1:55324:8025"
+      - "127.0.0.1:55325:1025"
     networks: [application]
     restart: unless-stopped
     healthcheck:
@@ -146,6 +194,57 @@ services:
       driver: json-file
       options: {max-size: "10m", max-file: "3"}
 
+  clamd:
+    image: clamav/clamav:1.5.4@sha256:15167977085b01d083812d42aa70d390c2e3fcaaf647dfe82a47328fa6d48c9c
+    entrypoint: ["clamd"]
+    command: ["--config-file=/etc/family-passport-clamav/clamd.conf", "--fail-if-cvd-older-than=2"]
+    ports:
+      - "127.0.0.1:55326:3310"
+    user: "100:101"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp
+      - /run/clamav:uid=100,gid=101,mode=0770
+      - /var/log/clamav:uid=100,gid=101,mode=0770
+    volumes:
+      - family_passport_clamav_database:/var/lib/clamav:ro
+      - ./clamav/clamd.conf:/etc/family-passport-clamav/clamd.conf:ro
+    networks: [application]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test \"$(echo PING | nc 127.0.0.1 3310)\" = PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  freshclam:
+    image: clamav/clamav:1.5.4@sha256:15167977085b01d083812d42aa70d390c2e3fcaaf647dfe82a47328fa6d48c9c
+    entrypoint: ["freshclam"]
+    command: ["--daemon", "--config-file=/etc/family-passport-clamav/freshclam.conf", "--stdout"]
+    user: "100:101"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp
+      - /run/clamav:uid=100,gid=101,mode=0770
+      - /var/log/clamav:uid=100,gid=101,mode=0770
+    volumes:
+      - family_passport_clamav_database:/var/lib/clamav
+      - ./clamav/freshclam.conf:/etc/family-passport-clamav/freshclam.conf:ro
+    networks: [application]
+    restart: unless-stopped
+    healthcheck: {disable: true}
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
 networks:
   application:
     name: family_passport_app
@@ -153,7 +252,12 @@ networks:
   database:
     name: family_passport_db
     internal: true
+  proxy:
+    external: true
+    name: proxy
 
 volumes:
   family_passport_database:
     name: family-passport-supabase-database
+  family_passport_clamav_database:
+    name: family-passport-clamav-database

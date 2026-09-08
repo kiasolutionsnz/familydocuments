@@ -2,15 +2,37 @@
   "name": "family-passport-local-backend",
   "private": true,
   "version": "0.1.0",
+  "dependencies": {
+    "nodemailer": "9.0.5"
+  },
   "scripts": {
     "supabase": "supabase",
     "start": "powershell -ExecutionPolicy Bypass -File scripts/start.ps1",
     "stop": "powershell -ExecutionPolicy Bypass -File scripts/stop.ps1",
     "status": "powershell -ExecutionPolicy Bypass -File scripts/status.ps1",
+    "test:isolated": "node scripts/test-isolated.mjs",
     "migrate": "powershell -ExecutionPolicy Bypass -File scripts/apply-migrations.ps1",
-    "test:auth": "node tests/email-password-auth.mjs",
-    "test:foundation": "node tests/family-foundation.mjs",
-    "test:e2e": "node tests/ocr-reminder-e2e.mjs"
+    "test:auth": "node scripts/test-isolated.mjs email-password-auth.mjs",
+    "test:foundation": "node scripts/test-isolated.mjs family-foundation.mjs",
+    "test:mfa": "node scripts/test-isolated.mjs totp-mfa-e2e.mjs",
+    "test:google-auth": "node scripts/test-isolated.mjs google-oauth-contract.mjs",
+    "test:google-drive": "node scripts/test-isolated.mjs google-drive-exact-files.sql",
+    "test:operations": "node scripts/test-isolated.mjs operational-hardening.sql",
+    "inbox:send": "powershell -ExecutionPolicy Bypass -File scripts/send-synthetic-inbox-email.ps1",
+    "inbox:ingest": "node email-ingestion/worker.mjs",
+    "inbox:watch": "node email-ingestion/worker.mjs --watch",
+    "attachments:scan": "node email-ingestion/attachment-scanner.mjs",
+    "attachments:watch": "node email-ingestion/attachment-scanner.mjs --watch",
+    "classifications:run": "node email-ingestion/classifier.mjs",
+    "classifications:watch": "node email-ingestion/classifier.mjs --watch",
+    "test:relative-date": "node --test tests/relative-date.test.mjs",
+    "notifications:run": "node notifications/worker.mjs",
+    "notifications:watch": "node notifications/worker.mjs --watch",
+    "search:serve": "node search-assistant/server.mjs",
+    "test:inbox-ingestion": "node scripts/test-isolated.mjs email-ingestion-e2e.mjs",
+    "test:attachment-scanner": "node scripts/test-isolated.mjs attachment-scanner-e2e.mjs",
+    "test:search": "node scripts/test-isolated.mjs search-assistant-e2e.mjs",
+    "test:e2e": "node scripts/test-isolated.mjs ocr-reminder-e2e.mjs"
   },
   "devDependencies": {
     "supabase": "2.115.0"
