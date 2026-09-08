@@ -48,10 +48,23 @@ class FakeAuth extends AuthService {
 }
 
 class FakeHomeService extends HomeService {
-  FakeHomeService(super.auth);
+  FakeHomeService(
+    super.auth, {
+    this.failFirstReminder = false,
+    this.pendingJobs = const [],
+  });
   int reminderCalls = 0;
+  final bool failFirstReminder;
+  final List<AnalysisJob> pendingJobs;
+  int dismissCalls = 0;
+  final List<String> reminderRequestIds = [];
   @override
-  Future<List<AnalysisJob>> pendingAnalysisJobs() async => const [];
+  Future<List<AnalysisJob>> pendingAnalysisJobs() async => pendingJobs;
+  @override
+  Future<void> dismissAnalysisJob(String id) async {
+    dismissCalls++;
+  }
+
   @override
   Future<ReminderResult> createReminder({
     required String title,
@@ -61,6 +74,12 @@ class FakeHomeService extends HomeService {
     String? documentId,
   }) async {
     reminderCalls++;
+    reminderRequestIds.add(requestId);
+    if (failFirstReminder && reminderCalls == 1) {
+      throw HomeServiceException(
+        'Your reminder could not be added. Try again.',
+      );
+    }
     return ReminderResult(
       id: 'reminder-1',
       title: title,
@@ -161,5 +180,67 @@ void main() {
     await t.pump();
     expect(home.reminderCalls, 0);
     expect(find.text('What date next month should I use?'), findsOneWidget);
+  });
+
+  testWidgets('reminder retry reuses its idempotency key', (t) async {
+    final auth = FakeAuth(
+      Session(
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        email: 'ava@example.com',
+        userId: 'u',
+      ),
+    );
+    final home = FakeHomeService(auth, failFirstReminder: true);
+    await t.pumpWidget(FamilyDocumentsApp(auth: auth, homeService: home));
+    await t.pump();
+    await t.enterText(
+      find.byType(TextField).last,
+      'Remind me about doctor appointment tomorrow at 2 pm',
+    );
+    await t.tap(find.byTooltip('Send').last);
+    await t.pumpAndSettle();
+    await t.tap(find.text('Retry'));
+    await t.pumpAndSettle();
+    expect(home.reminderCalls, 2);
+    expect(home.reminderRequestIds.toSet(), hasLength(1));
+    expect(
+      find.text('Reminder added: Doctor appointment — tomorrow at 2:00 pm'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('failed analysis can be saved without reading', (t) async {
+    final auth = FakeAuth(
+      Session(
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        email: 'ava@example.com',
+        userId: 'u',
+      ),
+    );
+    final home = FakeHomeService(
+      auth,
+      pendingJobs: const [
+        AnalysisJob(
+          id: 'job-1',
+          documentId: 'document-1',
+          status: 'permanent_failed',
+          failure: 'This document could not be read.',
+          retryAllowed: true,
+        ),
+      ],
+    );
+    await t.pumpWidget(FamilyDocumentsApp(auth: auth, homeService: home));
+    await t.pump();
+    expect(find.text('Save without reading'), findsOneWidget);
+    expect(find.text('Choose category'), findsOneWidget);
+    await t.tap(find.text('Save without reading'));
+    await t.pumpAndSettle();
+    expect(home.dismissCalls, 1);
+    expect(
+      find.text('Saved without reading. You can change its category later.'),
+      findsOneWidget,
+    );
   });
 }

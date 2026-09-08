@@ -67,6 +67,11 @@ ParsedReminder parseReminderCommand(String command, {DateTime? now}) {
     }
     if (period == 'pm' && hour != 12) hour += 12;
     if (period == 'am' && hour == 12) hour = 0;
+    if (hour == 2 && _isAucklandClockChangeDate(due)) {
+      throw const ReminderClarification(
+        'That time changes with daylight saving. What other time should I use?',
+      );
+    }
     dueTime =
         '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}:00';
     final shownHour = int.parse(timeMatch.group(1)!);
@@ -105,6 +110,19 @@ ParsedReminder parseReminderCommand(String command, {DateTime? now}) {
     dueTime: dueTime,
     displayWhen: displayWhen,
   );
+}
+
+bool _isAucklandClockChangeDate(DateTime date) {
+  var aprilDay = 1;
+  while (DateTime(date.year, 4, aprilDay).weekday != DateTime.sunday) {
+    aprilDay++;
+  }
+  var septemberDay = 30;
+  while (DateTime(date.year, 9, septemberDay).weekday != DateTime.sunday) {
+    septemberDay--;
+  }
+  return (date.month == 4 && date.day == aprilDay) ||
+      (date.month == 9 && date.day == septemberDay);
 }
 
 DateTime _aucklandDate(DateTime utc) {

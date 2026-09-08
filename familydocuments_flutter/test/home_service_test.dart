@@ -89,6 +89,10 @@ class RoutingClient extends http.BaseClient {
           },
         ],
       ),
+      '/rest/rpc/dismiss_document_analysis_job' => (
+        200,
+        {'job_id': 'job-1', 'document_id': 'document-1', 'status': 'dismissed'},
+      ),
       _ => (404, {'error': 'not_found'}),
     };
     return http.StreamedResponse(
@@ -249,6 +253,18 @@ void main() {
     final jobs = await service.pendingAnalysisJobs();
     expect(jobs.single.status, 'processing');
   });
+
+  test(
+    'failed analysis can be durably dismissed without deleting it',
+    () async {
+      final client = RoutingClient();
+      final service = HomeService(await signedInAuth(), client: client);
+      await service.dismissAnalysisJob('job-1');
+      final request = client.requests.single as http.Request;
+      expect(request.url.path, '/rest/rpc/dismiss_document_analysis_job');
+      expect(jsonDecode(request.body), {'job': 'job-1'});
+    },
+  );
 
   test('search returns a clear empty result', () async {
     final service = HomeService(

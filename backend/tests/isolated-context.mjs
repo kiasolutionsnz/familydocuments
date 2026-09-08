@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import {createHmac, createHash, randomBytes} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
-import nodemailer from 'nodemailer';
 
 // Mutating test suites must never silently fall back to the live local stack.
 export function isolatedContext() {
@@ -20,6 +19,7 @@ export function isolatedContext() {
 }
 
 export async function ingestSyntheticEmail(to, subject, attachmentPath, externalId = crypto.randomUUID()) {
+  const {default: nodemailer} = await import('nodemailer');
   const {gateway} = isolatedContext();
   const bytes = await readFile(attachmentPath);
   const filename = attachmentPath.split(/[\\/]/).pop();

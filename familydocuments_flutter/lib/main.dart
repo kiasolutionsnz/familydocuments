@@ -32,6 +32,7 @@ class _AppState extends State<FamilyDocumentsApp> {
   final Map<String, AnalysisJob> analysisJobs = {};
   Timer? analysisTimer;
   String? analysisRequestId;
+  String? reminderRequestId, reminderInstruction;
   int analysisPolls = 0;
   int tab = 0;
   final query = TextEditingController();
@@ -65,6 +66,7 @@ class _AppState extends State<FamilyDocumentsApp> {
   }
 
   Future<void> send() async {
+    if (busy) return;
     if (uploadedBytes != null) return _sendAttachment();
     final instruction = query.text.trim();
     switch (parseHomeIntent(instruction, hasAttachment: false).type) {
@@ -103,19 +105,26 @@ class _AppState extends State<FamilyDocumentsApp> {
       busy = true;
       error = null;
       message = 'Adding your reminder…';
-      retryAction = null;
+      retryAction = 'reminder';
     });
+    if (reminderInstruction != instruction) {
+      reminderInstruction = instruction;
+      reminderRequestId =
+          'home-${auth.session?.userId ?? 'user'}-${DateTime.now().microsecondsSinceEpoch}';
+    }
     try {
       final result = await homeService.createReminder(
         title: parsed.title,
         dueDate: parsed.dueDate,
         dueTime: parsed.dueTime,
-        requestId:
-            'home-${auth.session?.userId ?? 'user'}-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: reminderRequestId!,
       );
       if (mounted) {
         setState(() {
           message = 'Reminder added: ${result.title} — ${parsed.displayWhen}';
+          retryAction = null;
+          reminderRequestId = null;
+          reminderInstruction = null;
           query.clear();
         });
       }
@@ -177,6 +186,7 @@ class _AppState extends State<FamilyDocumentsApp> {
       uploadedMimeType = _mimeType(file.name);
       uploadedBytes = bytes;
       message = null;
+      analysisRequestId = null;
     });
   }
 
@@ -378,6 +388,9 @@ class _AppState extends State<FamilyDocumentsApp> {
   Future<void> retry() async {
     if (retryAction == 'search') return search();
     if (retryAction == 'upload') return _sendAttachment();
+    if (retryAction == 'reminder' && reminderInstruction != null) {
+      return _createReminder(reminderInstruction!);
+    }
     if (retryAction?.startsWith('analysis:') ?? false) {
       final id = retryAction!.substring('analysis:'.length);
       final job = await homeService.retryAnalysisJob(id);
@@ -397,6 +410,7 @@ class _AppState extends State<FamilyDocumentsApp> {
     uploadedBytes = null;
     uploadedName = null;
     uploadedMimeType = null;
+    analysisRequestId = null;
   });
 
   Future<void> saveSuggestion() async {
@@ -405,11 +419,22 @@ class _AppState extends State<FamilyDocumentsApp> {
     await _sendAttachment();
   }
 
-  void saveFailedAnalysisWithoutReading() => setState(() {
-    error = null;
-    retryAction = null;
-    message = 'Saved without reading. You can change its category later.';
-  });
+  Future<void> saveFailedAnalysisWithoutReading() async {
+    final retry = retryAction;
+    if (retry == null || !retry.startsWith('analysis:')) return;
+    try {
+      await homeService.dismissAnalysisJob(retry.substring('analysis:'.length));
+      if (mounted) {
+        setState(() {
+          error = null;
+          retryAction = null;
+          message = 'Saved without reading. You can change its category later.';
+        });
+      }
+    } on HomeServiceException catch (failure) {
+      if (mounted) setState(() => error = failure.message);
+    }
+  }
 
   Future<void> chooseFailedAnalysisCategory() async {
     final retry = retryAction;
@@ -461,6 +486,9 @@ class _AppState extends State<FamilyDocumentsApp> {
   Future<void> signOut() async {
     _stopAnalysisPolling();
     analysisJobs.clear();
+    analysisRequestId = null;
+    reminderRequestId = null;
+    reminderInstruction = null;
     setState(() => checking = true);
     await auth.signOut();
     if (mounted) setState(() => checking = false);

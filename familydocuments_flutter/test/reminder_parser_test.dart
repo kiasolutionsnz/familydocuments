@@ -33,4 +33,23 @@ void main() {
       throwsA(isA<ReminderClarification>()),
     );
   });
+
+  test('clarifies Auckland daylight-saving gap and overlap times', () {
+    for (final command in [
+      'Appointment on 27 September 2026 at 2:30 am',
+      'Appointment on 5 April 2026 at 2:30 am',
+    ]) {
+      expect(
+        () => parseReminderCommand(command, now: DateTime.utc(2026, 1, 1)),
+        throwsA(
+          isA<ReminderClarification>().having(
+            (value) => value.message,
+            'message',
+            contains('daylight saving'),
+          ),
+        ),
+        reason: command,
+      );
+    }
+  });
 }

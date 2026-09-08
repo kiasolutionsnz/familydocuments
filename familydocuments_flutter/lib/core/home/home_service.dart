@@ -64,7 +64,8 @@ class AnalysisJob {
   bool get terminal =>
       status == 'succeeded' ||
       status == 'failed' ||
-      status == 'permanent_failed';
+      status == 'permanent_failed' ||
+      status == 'dismissed';
 }
 
 class HomeService {
@@ -222,6 +223,17 @@ class HomeService {
     if (response.statusCode != 200) {
       throw HomeServiceException(
         'That category could not be applied. Try again.',
+      );
+    }
+  }
+
+  Future<void> dismissAnalysisJob(String id) async {
+    final response = await _post('/rest/rpc/dismiss_document_analysis_job', {
+      'job': id,
+    });
+    if (response.statusCode != 200) {
+      throw HomeServiceException(
+        'This document could not be saved without reading. Try again.',
       );
     }
   }

@@ -4,11 +4,12 @@ do $$
 declare
   owner_id constant uuid:='20000000-0000-4000-8000-000000000001';
   other_id constant uuid:='20000000-0000-4000-8000-000000000002';
+  member_id constant uuid:='20000000-0000-4000-8000-000000000003';
   household_id uuid:=gen_random_uuid();other_household uuid:=gen_random_uuid();category_id uuid:=gen_random_uuid();
-  linked_document uuid:=gen_random_uuid();foreign_document uuid:=gen_random_uuid();standalone jsonb;duplicate jsonb;linked jsonb;job jsonb;claimed jsonb;
+  linked_document uuid:=gen_random_uuid();foreign_document uuid:=gen_random_uuid();standalone jsonb;duplicate jsonb;linked jsonb;job jsonb;claimed jsonb;retry_job jsonb;permanent_job jsonb;first_lease uuid;second_lease uuid;i integer;
 begin
   insert into fp.households(id,name,owner_user_id) values(household_id,'Phase 1B family',owner_id),(other_household,'Other family',other_id);
-  insert into fp.members(household_id,user_id,email,role) values(household_id,owner_id,'phase1b@example.test','owner'),(other_household,other_id,'other-phase1b@example.test','owner');
+  insert into fp.members(household_id,user_id,email,role) values(household_id,owner_id,'phase1b@example.test','owner'),(household_id,member_id,'phase1b-member@example.test','viewer'),(other_household,other_id,'other-phase1b@example.test','owner');
   insert into fp.categories(id,household_id,name,is_system,created_by) values(category_id,household_id,'Documents',true,owner_id);
   insert into fp.categories(household_id,name,is_system,created_by) values(other_household,'Documents',true,other_id);
   insert into fp.documents(id,household_id,category_id,title,created_by,confirmation_status) values(linked_document,household_id,category_id,'Linked synthetic document',owner_id,'confirmed');
@@ -30,6 +31,8 @@ begin
   if not exists(select 1 from fp.reminders where root_reminder_id=(standalone->>'id')::uuid and document_id is null and status='upcoming') then raise exception 'standalone reminder recurrence failed';end if;
   begin perform fp.create_reminder('Foreign reminder',current_date+2,null,'Pacific/Auckland',foreign_document,'phase1b-reminder-3');raise exception 'cross-family reminder unexpectedly succeeded';exception when insufficient_privilege then null;end;
   begin perform fp.create_reminder('',current_date+2,null,'Pacific/Auckland',null,'phase1b-reminder-4');raise exception 'missing title unexpectedly succeeded';exception when invalid_parameter_value then null;end;
+  begin perform fp.create_reminder('DST gap',date '2026-09-27',time '02:30','Pacific/Auckland',null,'phase1b-reminder-5');raise exception 'nonexistent Auckland time unexpectedly succeeded';exception when invalid_parameter_value then null;end;
+  begin perform fp.create_reminder('DST overlap',date '2026-04-05',time '02:30','Pacific/Auckland',null,'phase1b-reminder-6');raise exception 'ambiguous Auckland time unexpectedly succeeded';exception when invalid_parameter_value then null;end;
 
   job:=fp.create_document_analysis_job('test.pdf','application/pdf',encode(convert_to('%PDF-1.4 synthetic','UTF8'),'base64'),'invoice','phase1b-analysis-1');
   if job->>'status'<>'queued' or job->>'document_id' is null then raise exception 'job was not durably queued after upload';end if;
@@ -39,14 +42,49 @@ begin
   perform set_config('request.jwt.claims',jsonb_build_object('role','service_role')::text,true);
   claimed:=fp.claim_document_analysis_jobs(2);
   if jsonb_array_length(claimed)<>1 or claimed#>>'{0,job_id}'<>job->>'job_id' then raise exception 'atomic claim failed';end if;
+  first_lease:=(claimed#>>'{0,lease_token}')::uuid;
+  if not fp.renew_document_analysis_job_lease((job->>'job_id')::uuid,first_lease) then raise exception 'active lease was not renewed';end if;
   if jsonb_array_length(fp.claim_document_analysis_jobs(2))<>0 then raise exception 'active lease was claimed twice';end if;
   update fp.document_analysis_jobs set lease_expires_at=now()-interval '1 second' where id=(job->>'job_id')::uuid;
   claimed:=fp.claim_document_analysis_jobs(2);
   if jsonb_array_length(claimed)<>1 then raise exception 'expired lease was not recovered';end if;
-  perform fp.complete_document_analysis_job((job->>'job_id')::uuid,jsonb_build_object('title','Test invoice','category','Documents','document_type','Invoice','provider_name','Synthetic','document_date',current_date::text,'tags',jsonb_build_array('invoice'),'text','Synthetic invoice text','mean_confidence',0.9));
+  second_lease:=(claimed#>>'{0,lease_token}')::uuid;
+  if first_lease=second_lease then raise exception 'reclaimed job reused its fencing token';end if;
+  begin perform fp.complete_document_analysis_job((job->>'job_id')::uuid,first_lease,jsonb_build_object('title','Stale result'));raise exception 'stale worker unexpectedly completed job';exception when sqlstate 'PT404' then null;end;
+  perform fp.complete_document_analysis_job((job->>'job_id')::uuid,second_lease,jsonb_build_object('title','Test invoice','category','Documents','document_type','Invoice','provider_name','Synthetic','document_date',current_date::text,'tags',jsonb_build_array('invoice'),'text','Synthetic invoice text','mean_confidence',0.9));
   if (select status from fp.document_analysis_jobs where id=(job->>'job_id')::uuid)<>'succeeded' then raise exception 'result was not stored';end if;
 
+  insert into fp.document_permissions(document_id,member_user_id,access_level,granted_by) values((job->>'document_id')::uuid,member_id,'view',owner_id);
+  perform set_config('request.jwt.claims',jsonb_build_object('sub',member_id,'email','phase1b-member@example.test','role','authenticated')::text,true);
+  perform fp.document_analysis_job((job->>'job_id')::uuid);
+  delete from fp.document_permissions where document_id=(job->>'document_id')::uuid and member_user_id=member_id;
+  begin perform fp.document_analysis_job((job->>'job_id')::uuid);raise exception 'revoked member retained job access';exception when sqlstate 'PT404' then null;end;
+
+  perform set_config('request.jwt.claims',jsonb_build_object('sub',owner_id,'email','phase1b@example.test','role','authenticated')::text,true);
+  retry_job:=fp.create_document_analysis_job('retry.pdf','application/pdf',encode(convert_to('%PDF-1.4 retry','UTF8'),'base64'),'document','phase1b-analysis-retry');
+  perform set_config('request.jwt.claims',jsonb_build_object('role','service_role')::text,true);
+  for i in 1..5 loop
+    claimed:=fp.claim_document_analysis_jobs(1);
+    if jsonb_array_length(claimed)<>1 then raise exception 'retryable job was not claimable at attempt %',i;end if;
+    perform fp.fail_document_analysis_job((retry_job->>'job_id')::uuid,(claimed#>>'{0,lease_token}')::uuid,'processing_unavailable',true);
+    if i<5 then update fp.document_analysis_jobs set next_attempt_at=now() where id=(retry_job->>'job_id')::uuid;end if;
+  end loop;
+  if (select status from fp.document_analysis_jobs where id=(retry_job->>'job_id')::uuid)<>'failed' then raise exception 'retry limit was not terminal';end if;
+  if not exists(select 1 from fp.manual_document_sources where document_id=(retry_job->>'document_id')::uuid) then raise exception 'failed analysis lost its uploaded source';end if;
+
+  perform set_config('request.jwt.claims',jsonb_build_object('sub',owner_id,'email','phase1b@example.test','role','authenticated')::text,true);
+  permanent_job:=fp.create_document_analysis_job('permanent.pdf','application/pdf',encode(convert_to('%PDF-1.4 permanent','UTF8'),'base64'),'document','phase1b-analysis-permanent');
+  perform set_config('request.jwt.claims',jsonb_build_object('role','service_role')::text,true);
+  claimed:=fp.claim_document_analysis_jobs(1);
+  perform fp.fail_document_analysis_job((permanent_job->>'job_id')::uuid,(claimed#>>'{0,lease_token}')::uuid,'document_unreadable',false);
+  if (select status from fp.document_analysis_jobs where id=(permanent_job->>'job_id')::uuid)<>'permanent_failed' then raise exception 'permanent failure was not terminal';end if;
+  perform set_config('request.jwt.claims',jsonb_build_object('sub',owner_id,'email','phase1b@example.test','role','authenticated')::text,true);
+  perform fp.dismiss_document_analysis_job((permanent_job->>'job_id')::uuid);
+  if exists(select 1 from jsonb_array_elements(fp.pending_document_analysis_jobs()) item where item->>'job_id'=permanent_job->>'job_id') then raise exception 'dismissed failure remained pending';end if;
+  if not exists(select 1 from fp.manual_document_sources where document_id=(permanent_job->>'document_id')::uuid) then raise exception 'dismissed analysis lost its uploaded source';end if;
+
   perform set_config('request.jwt.claims',jsonb_build_object('sub',other_id,'email','other-phase1b@example.test','role','authenticated')::text,true);
+  begin perform fp.act_on_reminder((linked->>'id')::uuid,'complete');raise exception 'cross-family reminder action unexpectedly succeeded';exception when insufficient_privilege then null;end;
   begin perform fp.document_analysis_job((job->>'job_id')::uuid);raise exception 'cross-family status unexpectedly succeeded';exception when sqlstate 'PT404' then null;end;
   begin perform fp.retry_document_analysis_job((job->>'job_id')::uuid);raise exception 'cross-family retry unexpectedly succeeded';exception when sqlstate 'PT404' then null;end;
 end $$;

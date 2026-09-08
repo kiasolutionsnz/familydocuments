@@ -17,7 +17,7 @@ const images = {
   db: 'kia/familydocuments-supabase-postgres:17.6.1.159-kia.3',
   auth: 'kia/familydocuments-supabase-auth:v2.195.0-kia.3',
   rest: 'postgrest/postgrest:v14.13', mail: 'public.ecr.aws/supabase/mailpit:v1.30.2',
-  ocr: 'kia/family-passport-paddleocr-api:0.1.0', gateway: 'kia/familydocuments-inbound-gateway:0.5.4', clamd: 'clamav/clamav:1.5.4'
+  ocr: 'kia/family-passport-paddleocr-api:0.1.0', gateway: process.env.FD_GATEWAY_IMAGE || 'kia/familydocuments-inbound-gateway:0.5.4', clamd: 'clamav/clamav:1.5.4'
 };
 
 function command(bin, args, {input, quiet = false, childEnv = env} = {}) {
@@ -78,7 +78,7 @@ try {
   }
   const ports = Object.fromEntries(await Promise.all(['AUTH', 'API', 'MAIL', 'OCR', 'SEARCH', 'SMTP', 'GATEWAY', 'CLAMD'].map(async key => [key, await freePort()])));
   for (const [key, port] of Object.entries(ports)) env[`FD_${key}_URL`] = `http://127.0.0.1:${port}`;
-  Object.assign(env, {FP_API_URL: env.FD_API_URL, FP_MAILPIT_URL: env.FD_MAIL_URL, FP_SEARCH_PORT: String(ports.SEARCH), FP_OLLAMA_URL: 'http://127.0.0.1:1'});
+  Object.assign(env, {FP_API_URL: env.FD_API_URL, FP_OCR_URL: env.FD_OCR_URL, FP_MAILPIT_URL: env.FD_MAIL_URL, FP_SEARCH_PORT: String(ports.SEARCH), FP_OLLAMA_URL: process.env.FD_TEST_OLLAMA_URL || 'http://127.0.0.1:1'});
   Object.assign(env, {FP_CLAMD_HOST: '127.0.0.1', FP_CLAMD_PORT: String(ports.CLAMD)});
   await run('db', images.db, ['--network', networks[0], '--network-alias', 'db', '--tmpfs', '/var/lib/postgresql/data:rw,size=512m', '-e', `POSTGRES_PASSWORD=${password}`, '-e', 'POSTGRES_HOST=/var/run/postgresql', '-e', 'PGPORT=5432', '-e', 'POSTGRES_DB=postgres', '-e', `JWT_SECRET=${env.GOTRUE_JWT_SECRET}`, '-e', 'JWT_EXP=3600']);
   for (let attempt = 0; ; attempt++) {
@@ -130,7 +130,7 @@ try {
     if (!/^[a-z0-9-]+\.(mjs|sql)$/.test(suite)) throw new Error('Invalid test suite name');
     console.log(`Running ${suite}`);
     try {
-      if (suite === 'ocr-reminder-e2e.mjs') await startOcr();
+      if (suite === 'ocr-reminder-e2e.mjs' || suite === 'phase-1b-e2e.mjs') await startOcr();
       if (suite === 'attachment-scanner-e2e.mjs') await startScanner();
       if (suite.endsWith('.sql')) await sql(await readFile(new URL(`../tests/${suite}`, import.meta.url), 'utf8'));
       else await command(process.execPath, [`tests/${suite}`]);
