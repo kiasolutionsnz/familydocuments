@@ -22,7 +22,7 @@ HomeIntent parseHomeIntent(String message, {required bool hasAttachment}) {
   final text = message.trim();
   final lower = text.toLowerCase();
   final destination = RegExp(
-    r'\b(?:add|save|put|keep)\s+(?:this\s+)?(?:under|to|in|with)\s+(.+)$',
+    r'\b(?:add|save|put|keep)\s+(?:this\s+)?(?:as|under|to|in|with)\s+(.+)$',
     caseSensitive: false,
   ).firstMatch(text)?.group(1)?.trim().replaceFirst(RegExp(r'[.!?]+$'), '');
   final asksInvoice = RegExp(r'\b(invoice|bill)\b').hasMatch(lower);

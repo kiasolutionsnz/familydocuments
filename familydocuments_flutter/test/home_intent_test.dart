@@ -9,6 +9,9 @@ void main() {
     );
     expect(intent.type, HomeIntentType.saveAttachment);
     expect(intent.destination, 'Rentals');
+    final natural = parseHomeIntent('Save this as rental', hasAttachment: true);
+    expect(natural.type, HomeIntentType.saveAttachment);
+    expect(natural.destination, 'rental');
   });
 
   test('invoice attachment explicitly requests OCR', () {

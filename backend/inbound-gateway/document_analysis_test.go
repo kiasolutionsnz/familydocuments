@@ -32,6 +32,20 @@ func TestResolveDocumentCategoryReportsAmbiguity(t *testing.T) {
 	}
 }
 
+func TestResolveDocumentCategoryReportsSingularPluralAmbiguity(t *testing.T) {
+	categories := []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}{
+		{ID: "singular", Name: "Rental"},
+		{ID: "plural", Name: "Rentals"},
+	}
+	id, _, matches := resolveDocumentCategory("rental", categories)
+	if id != "" || len(matches) != 2 {
+		t.Fatalf("expected both real Family categories, got %q %#v", id, matches)
+	}
+}
+
 func TestResolveDocumentCategoryDoesNotCrossMissingFamilyList(t *testing.T) {
 	categories := []struct {
 		ID   string `json:"id"`

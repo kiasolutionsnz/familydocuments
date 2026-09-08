@@ -6,6 +6,18 @@ import (
 	"strings"
 )
 
+func registerDocumentAnalysisJobRoutes(mux *http.ServeMux, api, allowedOrigin string) {
+	create := documentAnalysisJobCreateHandler(api, allowedOrigin)
+	status := documentAnalysisJobStatusHandler(api, allowedOrigin)
+	retry := documentAnalysisJobRetryHandler(api, allowedOrigin)
+	mux.HandleFunc("POST /document-analysis/jobs", create)
+	mux.HandleFunc("OPTIONS /document-analysis/jobs", create)
+	mux.HandleFunc("GET /document-analysis/jobs/{id}", status)
+	mux.HandleFunc("OPTIONS /document-analysis/jobs/{id}", status)
+	mux.HandleFunc("POST /document-analysis/jobs/{id}/retry", retry)
+	mux.HandleFunc("OPTIONS /document-analysis/jobs/{id}/retry", retry)
+}
+
 type analysisJobCreateRequest struct {
 	FileName      string `json:"file_name"`
 	MimeType      string `json:"mime_type"`

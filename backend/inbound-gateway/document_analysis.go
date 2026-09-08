@@ -190,12 +190,16 @@ func resolveDocumentCategory(requested string, categories []struct {
 		return "", "", nil
 	}
 	if key == "rental" || key == "rental property" {
+		var matches []analysedCategory
 		for _, category := range categories {
-			if strings.EqualFold(strings.TrimSpace(category.Name), "Rentals") {
-				return category.ID, category.Name, nil
+			if categoryKey(category.Name) == "rental" {
+				matches = append(matches, analysedCategory{ID: category.ID, Name: category.Name})
 			}
 		}
-		return "", "", nil
+		if len(matches) == 1 {
+			return matches[0].ID, matches[0].Name, nil
+		}
+		return "", "", categoryNames(matches)
 	}
 	var exact []analysedCategory
 	for _, category := range categories {

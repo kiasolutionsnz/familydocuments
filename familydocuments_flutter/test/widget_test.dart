@@ -361,6 +361,10 @@ void main() {
     );
     await t.pumpWidget(FamilyDocumentsApp(auth: auth, homeService: home));
     await t.pump();
+    expect(
+      find.text('The file was saved, but I couldn’t read its contents.'),
+      findsOneWidget,
+    );
     expect(find.text('Save without reading'), findsOneWidget);
     expect(find.text('Choose category'), findsOneWidget);
     expect(find.text('Retry reading'), findsOneWidget);
@@ -385,7 +389,7 @@ void main() {
       ),
     );
     await t.pump();
-    await attachAndSend(t, 'Save this in Rentals');
+    await attachAndSend(t, 'Save this as rental');
     await t.pumpAndSettle();
     expect(home.saveCalls, 1);
     expect(home.analysisCalls, 0);
@@ -632,7 +636,10 @@ void main() {
       ),
     );
     await t.pump();
-    expect(find.text('I couldn’t read this document.'), findsNothing);
+    expect(
+      find.text('The file was saved, but I couldn’t read its contents.'),
+      findsNothing,
+    );
     expect(dismissHome.analysisCalls, 0);
   });
 
@@ -696,5 +703,25 @@ void main() {
     expect(home.analysisCalls, 2);
     expect(home.analysisRequestIds.toSet(), hasLength(1));
     await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('file selection failure has a specific recoverable message', (
+    t,
+  ) async {
+    final auth = authenticatedUser();
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: FakeHomeService(auth),
+        pickUpload: () async => throw StateError('synthetic picker failure'),
+      ),
+    );
+    await t.pump();
+    await t.tap(find.byTooltip('Attach a document').last);
+    await t.pumpAndSettle();
+    expect(
+      find.text('I couldn’t read the selected file. Please choose it again.'),
+      findsOneWidget,
+    );
   });
 }

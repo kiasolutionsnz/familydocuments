@@ -97,15 +97,26 @@ class HomeService {
   final AuthService _auth;
   final http.Client _client;
 
-  Future<http.Response> _post(String path, Map<String, dynamic> body) async {
-    Future<http.Response> send() async => _client.post(
-      Uri.parse('$familyDocumentsApiBaseUrl$path'),
-      headers: {
-        'authorization': 'Bearer ${await _auth.validAccessToken()}',
-        'content-type': 'application/json',
-      },
-      body: jsonEncode(body),
-    );
+  Future<http.Response> _post(
+    String path,
+    Map<String, dynamic> body, {
+    String networkError = 'FamilyDocuments could not be reached. Try again.',
+  }) async {
+    Future<http.Response> send() async {
+      final token = await _auth.validAccessToken();
+      try {
+        return await _client.post(
+          Uri.parse('$familyDocumentsApiBaseUrl$path'),
+          headers: {
+            'authorization': 'Bearer $token',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(body),
+        );
+      } catch (_) {
+        throw HomeServiceException(networkError);
+      }
+    }
 
     var response = await send();
     if (response.statusCode == 401) {
@@ -172,11 +183,11 @@ class HomeService {
       'content_base64': base64Encode(bytes),
       'mode': invoice ? 'invoice' : 'document',
       'idempotency_key': idempotencyKey,
-    });
+    }, networkError: 'The file couldn’t be uploaded. Try again.');
     final payload = _json(response.body);
     if (response.statusCode != 202) {
       throw HomeServiceException(
-        _plainError(payload, 'Your document could not be queued. Try again.'),
+        _plainError(payload, 'The file couldn’t be uploaded. Try again.'),
       );
     }
     return _job(payload);
@@ -407,12 +418,12 @@ class HomeService {
       'sha256': sha256.convert(bytes).toString(),
       'content_base64': base64Encode(bytes),
       'category': category,
-    });
+    }, networkError: 'The file couldn’t be uploaded. Try again.');
     final payload = _json(response.body);
     if (response.statusCode != 200) {
       final message = payload['error'] == 'category_not_found'
-          ? 'I could not find that category in your Family.'
-          : 'Your document could not be saved. Please try again.';
+          ? 'I couldn’t find that category. Choose or create one.'
+          : 'Something went wrong while saving the document.';
       throw HomeServiceException(message);
     }
     return OrganisedDocument(
@@ -465,7 +476,7 @@ CategoryResolution resolveCategoryName(
   final alias = _categoryAlias(requestedKey);
   if (alias != null) {
     final matches = names
-        .where((name) => name.toLowerCase() == alias.toLowerCase())
+        .where((name) => _categoryKey(name) == _categoryKey(alias))
         .toList();
     return switch (matches.length) {
       0 => const CategoryResolution.missing(),

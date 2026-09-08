@@ -114,6 +114,13 @@ class FailureClient extends http.BaseClient {
       );
 }
 
+class NetworkFailureClient extends http.BaseClient {
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    throw http.ClientException('synthetic network failure', request.url);
+  }
+}
+
 class CategoryClient extends http.BaseClient {
   CategoryClient([Iterable<String> initial = const []])
     : categories = initial.toList();
@@ -186,6 +193,15 @@ void main() {
     expect(result.type, CategoryResolutionType.ambiguous);
     expect(result.matches, containsAll(['Home', 'Home records']));
   });
+
+  test(
+    'singular and plural category names require selection when both exist',
+    () {
+      final result = resolveCategoryName('rental', const ['Rental', 'Rentals']);
+      expect(result.type, CategoryResolutionType.ambiguous);
+      expect(result.matches, containsAll(const ['Rental', 'Rentals']));
+    },
+  );
 
   test(
     'repeated category creation resolves the Family category once',
@@ -411,4 +427,26 @@ void main() {
       );
     },
   );
+
+  test('asynchronous upload maps browser transport failure safely', () async {
+    final auth = AuthService(store: MemoryStore(), client: TokenClient());
+    await auth.signIn('test@example.com', 'fake-password');
+    final service = HomeService(auth, client: NetworkFailureClient());
+    await expectLater(
+      service.submitAnalysisJob(
+        name: 'synthetic.pdf',
+        mimeType: 'application/pdf',
+        bytes: Uint8List.fromList([37, 80, 68, 70]),
+        invoice: false,
+        idempotencyKey: 'synthetic-request',
+      ),
+      throwsA(
+        isA<HomeServiceException>().having(
+          (failure) => failure.message,
+          'message',
+          'The file couldn’t be uploaded. Try again.',
+        ),
+      ),
+    );
+  });
 }

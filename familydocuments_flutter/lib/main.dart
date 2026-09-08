@@ -187,15 +187,27 @@ class _AppState extends State<FamilyDocumentsApp> {
   }
 
   Future<void> upload() async {
-    final selected = widget.pickUpload != null
-        ? await widget.pickUpload!()
-        : await _pickFile();
+    SelectedUpload? selected;
+    try {
+      selected = widget.pickUpload != null
+          ? await widget.pickUpload!()
+          : await _pickFile();
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => error =
+              'I couldn’t read the selected file. Please choose it again.',
+        );
+      }
+      return;
+    }
     if (selected == null) return;
+    final upload = selected;
     setState(() {
       error = null;
-      uploadedName = selected.name;
-      uploadedMimeType = _mimeType(selected.name);
-      uploadedBytes = selected.bytes;
+      uploadedName = upload.name;
+      uploadedMimeType = _mimeType(upload.name);
+      uploadedBytes = upload.bytes;
       message = null;
       analysisRequestId = null;
     });
@@ -207,7 +219,11 @@ class _AppState extends State<FamilyDocumentsApp> {
       type: FileType.custom,
       allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
     );
-    if (result == null || result.files.single.bytes == null) return null;
+    if (result == null) return null;
+    if (result.files.single.bytes == null ||
+        result.files.single.bytes!.isEmpty) {
+      throw StateError('selected file has no readable bytes');
+    }
     final file = result.files.single;
     return SelectedUpload(name: file.name, bytes: file.bytes!);
   }
@@ -323,7 +339,9 @@ class _AppState extends State<FamilyDocumentsApp> {
     } catch (_) {
       if (mounted) {
         setState(
-          () => error = 'Your document could not be processed. Try again.',
+          () => error = needsAnalysis
+              ? 'The file couldn’t be uploaded. Try again.'
+              : 'Something went wrong while saving the document.',
         );
       }
     } finally {
@@ -354,7 +372,7 @@ class _AppState extends State<FamilyDocumentsApp> {
           organisedDocument = completed.result;
           message = null;
         } else if (failed != null) {
-          error = 'I couldn’t read this document.';
+          error = 'The file was saved, but I couldn’t read its contents.';
           retryAction = failed.retryAllowed ? 'analysis:${failed.id}' : null;
         } else {
           message = 'Resuming document processing…';
@@ -404,7 +422,7 @@ class _AppState extends State<FamilyDocumentsApp> {
             message = null;
           } else if (job.status == 'failed' ||
               job.status == 'permanent_failed') {
-            error = 'I couldn’t read this document.';
+            error = 'The file was saved, but I couldn’t read its contents.';
             retryAction = job.retryAllowed ? 'analysis:${job.id}' : null;
           } else {
             message = job.status == 'queued'
