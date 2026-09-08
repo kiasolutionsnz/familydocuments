@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -6,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'core/auth/auth_service.dart';
 import 'core/home/home_intent.dart';
 import 'core/home/home_service.dart';
+import 'core/home/reminder_parser.dart';
 
 void main() => runApp(const FamilyDocumentsApp());
 
@@ -27,6 +29,10 @@ class _AppState extends State<FamilyDocumentsApp> {
   String? suggestedDestination;
   String? uploadedName, uploadedMimeType;
   Uint8List? uploadedBytes;
+  final Map<String, AnalysisJob> analysisJobs = {};
+  Timer? analysisTimer;
+  String? analysisRequestId;
+  int analysisPolls = 0;
   int tab = 0;
   final query = TextEditingController();
   @override
@@ -41,6 +47,7 @@ class _AppState extends State<FamilyDocumentsApp> {
     try {
       await auth.restore();
     } catch (_) {}
+    if (auth.session != null) await _restoreAnalysisJobs();
     if (mounted) setState(() => checking = false);
   }
 
@@ -48,6 +55,7 @@ class _AppState extends State<FamilyDocumentsApp> {
     setState(() => signingIn = true);
     try {
       await auth.signIn(e, p);
+      await _restoreAnalysisJobs();
       if (mounted) setState(() => error = null);
     } on AuthException catch (x) {
       if (mounted) setState(() => error = x.message);
@@ -63,12 +71,7 @@ class _AppState extends State<FamilyDocumentsApp> {
       case HomeIntentType.search:
         return search();
       case HomeIntentType.reminder:
-        setState(() {
-          message =
-              'I need a related document before I can save that reminder.';
-          error = null;
-        });
-        return;
+        return _createReminder(instruction);
       case HomeIntentType.viewCategory:
         setState(() {
           message =
@@ -82,6 +85,44 @@ class _AppState extends State<FamilyDocumentsApp> {
           error = null;
         });
         return;
+    }
+  }
+
+  Future<void> _createReminder(String instruction) async {
+    ParsedReminder parsed;
+    try {
+      parsed = parseReminderCommand(instruction);
+    } on ReminderClarification catch (clarification) {
+      setState(() {
+        message = clarification.message;
+        error = null;
+      });
+      return;
+    }
+    setState(() {
+      busy = true;
+      error = null;
+      message = 'Adding your reminder…';
+      retryAction = null;
+    });
+    try {
+      final result = await homeService.createReminder(
+        title: parsed.title,
+        dueDate: parsed.dueDate,
+        dueTime: parsed.dueTime,
+        requestId:
+            'home-${auth.session?.userId ?? 'user'}-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      if (mounted) {
+        setState(() {
+          message = 'Reminder added: ${result.title} — ${parsed.displayWhen}';
+          query.clear();
+        });
+      }
+    } on HomeServiceException catch (failure) {
+      if (mounted) setState(() => error = failure.message);
+    } finally {
+      if (mounted) setState(() => busy = false);
     }
   }
 
@@ -179,18 +220,37 @@ class _AppState extends State<FamilyDocumentsApp> {
       suggestedDestination = null;
     });
     try {
-      final result = needsAnalysis
-          ? await homeService.analyseUpload(
-              name: name,
-              mimeType: mimeType,
-              bytes: bytes,
-            )
-          : await homeService.saveUpload(
-              name: name,
-              mimeType: mimeType,
-              bytes: bytes,
-              category: category!,
-            );
+      if (needsAnalysis) {
+        analysisRequestId ??=
+            'ocr-${auth.session?.userId ?? 'user'}-${DateTime.now().microsecondsSinceEpoch}';
+        final job = await homeService.submitAnalysisJob(
+          name: name,
+          mimeType: mimeType,
+          bytes: bytes,
+          invoice: intent.type == HomeIntentType.invoiceAttachment,
+          idempotencyKey: analysisRequestId!,
+        );
+        if (mounted) {
+          setState(() {
+            analysisJobs[job.id] = job;
+            message =
+                'Uploaded. Reading and organising $name in the background…';
+            uploadedBytes = null;
+            uploadedName = null;
+            uploadedMimeType = null;
+            analysisRequestId = null;
+            query.clear();
+          });
+          _startAnalysisPolling();
+        }
+        return;
+      }
+      final result = await homeService.saveUpload(
+        name: name,
+        mimeType: mimeType,
+        bytes: bytes,
+        category: category!,
+      );
       if (mounted) {
         setState(() {
           message = null;
@@ -222,9 +282,115 @@ class _AppState extends State<FamilyDocumentsApp> {
     }
   }
 
+  Future<void> _restoreAnalysisJobs() async {
+    try {
+      final jobs = await homeService.pendingAnalysisJobs();
+      if (!mounted || jobs.isEmpty) return;
+      setState(() {
+        for (final job in jobs) {
+          analysisJobs[job.id] = job;
+        }
+        final completed = jobs
+            .where((job) => job.status == 'succeeded' && job.result != null)
+            .lastOrNull;
+        final failed = jobs
+            .where(
+              (job) =>
+                  job.status == 'failed' || job.status == 'permanent_failed',
+            )
+            .lastOrNull;
+        if (completed != null) {
+          organisedDocument = completed.result;
+          message = null;
+        } else if (failed != null) {
+          error = failed.failure ?? 'This document could not be read.';
+          retryAction = failed.retryAllowed ? 'analysis:${failed.id}' : null;
+        } else {
+          message = 'Resuming document processing…';
+        }
+      });
+      _startAnalysisPolling();
+    } catch (_) {}
+  }
+
+  void _startAnalysisPolling() {
+    if (analysisTimer?.isActive ?? false) return;
+    analysisPolls = 0;
+    analysisTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => _pollAnalysisJobs(),
+    );
+    _pollAnalysisJobs();
+  }
+
+  Future<void> _pollAnalysisJobs() async {
+    if (!mounted || auth.session == null) {
+      _stopAnalysisPolling();
+      return;
+    }
+    final active = analysisJobs.values.where((job) => !job.terminal).toList();
+    if (active.isEmpty) {
+      _stopAnalysisPolling();
+      return;
+    }
+    if (++analysisPolls > 120) {
+      _stopAnalysisPolling();
+      if (mounted) {
+        setState(
+          () => message = 'Processing is still continuing. Return to Home to refresh its status.',
+        );
+      }
+      return;
+    }
+    for (final current in active) {
+      try {
+        final job = await homeService.analysisJob(current.id);
+        if (!mounted) return;
+        setState(() {
+          analysisJobs[job.id] = job;
+          if (job.status == 'succeeded' && job.result != null) {
+            organisedDocument = job.result;
+            message = null;
+          } else if (job.status == 'failed' ||
+              job.status == 'permanent_failed') {
+            error = job.failure ?? 'This document could not be read.';
+            retryAction = job.retryAllowed ? 'analysis:${job.id}' : null;
+          } else {
+            message = job.status == 'queued'
+                ? 'Your document is queued for reading…'
+                : 'Reading and organising your document in the background…';
+          }
+        });
+      } on AuthException {
+        await auth.clear();
+        _stopAnalysisPolling();
+      } catch (_) {
+        // A transient status failure does not cancel durable server processing.
+      }
+    }
+  }
+
+  void _stopAnalysisPolling() {
+    analysisTimer?.cancel();
+    analysisTimer = null;
+  }
+
   Future<void> retry() async {
     if (retryAction == 'search') return search();
     if (retryAction == 'upload') return _sendAttachment();
+    if (retryAction?.startsWith('analysis:') ?? false) {
+      final id = retryAction!.substring('analysis:'.length);
+      final job = await homeService.retryAnalysisJob(id);
+      if (mounted) {
+        setState(() {
+          analysisJobs[id] = job;
+          error = null;
+          message = 'Trying to read your document again…';
+          retryAction = null;
+        });
+      }
+      _startAnalysisPolling();
+    }
   }
 
   void clearAttachment() => setState(() {
@@ -239,6 +405,49 @@ class _AppState extends State<FamilyDocumentsApp> {
     await _sendAttachment();
   }
 
+  void saveFailedAnalysisWithoutReading() => setState(() {
+    error = null;
+    retryAction = null;
+    message = 'Saved without reading. You can change its category later.';
+  });
+
+  Future<void> chooseFailedAnalysisCategory() async {
+    final retry = retryAction;
+    if (retry == null || !retry.startsWith('analysis:')) return;
+    try {
+      final categories = await homeService.categories();
+      if (!mounted) return;
+      final chosen = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => SimpleDialog(
+          title: const Text('Choose category'),
+          children: categories
+              .map(
+                (category) => SimpleDialogOption(
+                  onPressed: () => Navigator.pop(dialogContext, category),
+                  child: Text(category),
+                ),
+              )
+              .toList(),
+        ),
+      );
+      if (chosen == null) return;
+      await homeService.categorizeAnalysisJob(
+        retry.substring('analysis:'.length),
+        chosen,
+      );
+      if (mounted) {
+        setState(() {
+          error = null;
+          retryAction = null;
+          message = 'Saved in $chosen without reading.';
+        });
+      }
+    } on HomeServiceException catch (failure) {
+      if (mounted) setState(() => error = failure.message);
+    }
+  }
+
   static String _mimeType(String name) {
     final extension = name.split('.').last.toLowerCase();
     return switch (extension) {
@@ -250,9 +459,18 @@ class _AppState extends State<FamilyDocumentsApp> {
   }
 
   Future<void> signOut() async {
+    _stopAnalysisPolling();
+    analysisJobs.clear();
     setState(() => checking = true);
     await auth.signOut();
     if (mounted) setState(() => checking = false);
+  }
+
+  @override
+  void dispose() {
+    _stopAnalysisPolling();
+    query.dispose();
+    super.dispose();
   }
 
   @override
@@ -282,6 +500,9 @@ class _AppState extends State<FamilyDocumentsApp> {
             onClearAttachment: clearAttachment,
             onSaveSuggestion: saveSuggestion,
             onRetry: retry,
+            analysisFailure: retryAction?.startsWith('analysis:') ?? false,
+            onSaveWithoutReading: saveFailedAnalysisWithoutReading,
+            onChooseCategory: chooseFailedAnalysisCategory,
             email: auth.session!.email,
             onSignOut: signOut,
           ),
@@ -362,6 +583,9 @@ class Shell extends StatelessWidget {
     required this.onClearAttachment,
     required this.onSaveSuggestion,
     required this.onRetry,
+    required this.analysisFailure,
+    required this.onSaveWithoutReading,
+    required this.onChooseCategory,
     required this.email,
     required this.onSignOut,
   });
@@ -379,7 +603,10 @@ class Shell extends StatelessWidget {
       onUpload,
       onClearAttachment,
       onSaveSuggestion,
-      onRetry;
+      onRetry,
+      onSaveWithoutReading,
+      onChooseCategory;
+  final bool analysisFailure;
   final String email;
   final Future<void> Function() onSignOut;
   static const labels = ['Home', 'Timeline', 'Library', 'Inbox', 'Reminders'];
@@ -439,6 +666,9 @@ class Shell extends StatelessWidget {
             onClearAttachment: onClearAttachment,
             onSaveSuggestion: onSaveSuggestion,
             onRetry: onRetry,
+            analysisFailure: analysisFailure,
+            onSaveWithoutReading: onSaveWithoutReading,
+            onChooseCategory: onChooseCategory,
           )
         : Center(child: Text('${labels[tab]} will be connected in Phase 2.'));
     final main = Column(
@@ -609,6 +839,9 @@ class Home extends StatelessWidget {
     required this.onClearAttachment,
     required this.onSaveSuggestion,
     required this.onRetry,
+    required this.analysisFailure,
+    required this.onSaveWithoutReading,
+    required this.onChooseCategory,
   });
   final TextEditingController query;
   final bool busy;
@@ -622,7 +855,10 @@ class Home extends StatelessWidget {
       onUpload,
       onClearAttachment,
       onSaveSuggestion,
-      onRetry;
+      onRetry,
+      onSaveWithoutReading,
+      onChooseCategory;
+  final bool analysisFailure;
   @override
   Widget build(BuildContext c) => LayoutBuilder(
     builder: (context, constraints) {
@@ -731,17 +967,39 @@ class Home extends StatelessWidget {
                       border: Border.all(color: const Color(0xfff3c4c4)),
                       borderRadius: BorderRadius.circular(16),
                     ),
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(
-                          Icons.error_outline,
-                          color: Color(0xffa72d2d),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.error_outline,
+                              color: Color(0xffa72d2d),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(child: Text(error!)),
+                          ],
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(child: Text(error!)),
-                        TextButton(
-                          onPressed: busy ? null : onRetry,
-                          child: const Text('Retry'),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          children: [
+                            TextButton(
+                              onPressed: busy ? null : onRetry,
+                              child: const Text('Retry'),
+                            ),
+                            if (analysisFailure) ...[
+                              TextButton(
+                                onPressed: onSaveWithoutReading,
+                                child: const Text('Save without reading'),
+                              ),
+                              TextButton(
+                                onPressed: onChooseCategory,
+                                child: const Text('Choose category'),
+                              ),
+                            ],
+                          ],
                         ),
                       ],
                     ),

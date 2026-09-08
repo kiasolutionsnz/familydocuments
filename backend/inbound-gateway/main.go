@@ -23,6 +23,7 @@ import (
 const maxBody = 15 * 1024 * 1024
 
 var nonceRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
+var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 func env(name string) string {
 	v := os.Getenv(name)
@@ -188,6 +189,9 @@ func main() {
 	mux.Handle("/ocr/", publicProxy("/ocr", env("OCR_UPSTREAM_URL"), allowedOrigin, "http://127.0.0.1:3300"))
 	mux.HandleFunc("/documents/analyse", documentAnalysisHandler(api, env("OCR_UPSTREAM_URL"), optionalEnv("OLLAMA_BASE_URL"), optionalEnv("DOCUMENT_CLASSIFIER_MODEL"), allowedOrigin))
 	mux.HandleFunc("/documents/save", documentSaveHandler(api, allowedOrigin))
+	mux.HandleFunc("POST /document-analysis/jobs", documentAnalysisJobCreateHandler(api, allowedOrigin))
+	mux.HandleFunc("GET /document-analysis/jobs/{id}", documentAnalysisJobStatusHandler(api, allowedOrigin))
+	mux.HandleFunc("POST /document-analysis/jobs/{id}/retry", documentAnalysisJobRetryHandler(api, allowedOrigin))
 	mux.HandleFunc("/search/ask", searchHandler(api, allowedOrigin))
 	mux.HandleFunc("/help/chat", newHelpChatHandler(allowedOrigin, optionalEnv("OLLAMA_BASE_URL"), optionalEnv("HELP_CHAT_MODEL"), nil))
 	driveGateway, driveErr := newDriveGateway(api, allowedOrigin, jwtSecret)

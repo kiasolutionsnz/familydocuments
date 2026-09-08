@@ -209,7 +209,7 @@ func allowDocumentOrigin(w http.ResponseWriter, r *http.Request, allowed string)
 		w.Header().Set("Access-Control-Allow-Origin", allowed)
 		w.Header().Add("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Headers", "authorization, content-type")
-		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	}
 	return true
 }

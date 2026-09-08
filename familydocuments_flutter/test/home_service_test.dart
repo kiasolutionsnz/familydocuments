@@ -46,6 +46,70 @@ class RecordingClient extends http.BaseClient {
   }
 }
 
+class RoutingClient extends http.BaseClient {
+  final List<http.BaseRequest> requests = [];
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    requests.add(request);
+    final path = request.url.path;
+    final (status, body) = switch (path) {
+      '/rest/rpc/create_reminder' => (
+        200,
+        {
+          'id': 'reminder-1',
+          'title': 'Doctor appointment',
+          'due_at': '2026-09-09',
+          'due_time': '14:00:00',
+        },
+      ),
+      '/document-analysis/jobs' => (
+        202,
+        {'job_id': 'job-1', 'document_id': 'document-1', 'status': 'queued'},
+      ),
+      '/document-analysis/jobs/job-1' => (
+        200,
+        {
+          'job_id': 'job-1',
+          'document_id': 'document-1',
+          'status': 'succeeded',
+          'result': {
+            'title': 'Test invoice',
+            'category': 'Documents',
+            'tags': ['invoice'],
+          },
+        },
+      ),
+      '/rest/rpc/pending_document_analysis_jobs' => (
+        200,
+        [
+          {
+            'job_id': 'job-1',
+            'document_id': 'document-1',
+            'status': 'processing',
+          },
+        ],
+      ),
+      _ => (404, {'error': 'not_found'}),
+    };
+    return http.StreamedResponse(
+      Stream.value(utf8.encode(jsonEncode(body))),
+      status,
+    );
+  }
+}
+
+class FailureClient extends http.BaseClient {
+  FailureClient(this.status, this.body);
+  final int status;
+  final Map<String, dynamic> body;
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async =>
+      http.StreamedResponse(
+        Stream.value(utf8.encode(jsonEncode(body))),
+        status,
+      );
+}
+
 String _token() {
   final expiry =
       DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/
@@ -94,6 +158,97 @@ void main() {
       expect(result.documents.single.collection, 'Travel');
     },
   );
+
+  test(
+    'standalone reminder sends structured date, time and timezone',
+    () async {
+      final client = RoutingClient();
+      final service = HomeService(await signedInAuth(), client: client);
+      final reminder = await service.createReminder(
+        title: 'Doctor appointment',
+        dueDate: '2026-09-09',
+        dueTime: '14:00:00',
+        requestId: 'request-12345',
+      );
+      final request = client.requests.single as http.Request;
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      expect(request.url.path, '/rest/rpc/create_reminder');
+      expect(body['related_document'], isNull);
+      expect(body['due_timezone'], 'Pacific/Auckland');
+      expect(reminder.id, 'reminder-1');
+    },
+  );
+
+  test('standalone reminder API errors stay user-safe', () async {
+    final service = HomeService(
+      await signedInAuth(),
+      client: FailureClient(422, {'message': 'database details'}),
+    );
+    expect(
+      () => service.createReminder(
+        title: 'Doctor appointment',
+        dueDate: '2026-09-09',
+        requestId: 'request-12345',
+      ),
+      throwsA(
+        isA<HomeServiceException>().having(
+          (value) => value.message,
+          'message',
+          'Your reminder could not be added. Try again.',
+        ),
+      ),
+    );
+  });
+
+  test('failed OCR status exposes only safe retry state', () async {
+    final service = HomeService(
+      await signedInAuth(),
+      client: FailureClient(200, {
+        'job_id': 'job-1',
+        'document_id': 'document-1',
+        'status': 'failed',
+        'failure': 'This document could not be read.',
+        'retry_allowed': true,
+      }),
+    );
+    final job = await service.analysisJob('job-1');
+    expect(job.terminal, isTrue);
+    expect(job.retryAllowed, isTrue);
+    expect(job.failure, 'This document could not be read.');
+  });
+
+  test('upload is submitted once to the asynchronous job API', () async {
+    final client = RoutingClient();
+    final service = HomeService(await signedInAuth(), client: client);
+    final job = await service.submitAnalysisJob(
+      name: 'bill.pdf',
+      mimeType: 'application/pdf',
+      bytes: Uint8List.fromList([1, 2, 3]),
+      invoice: true,
+      idempotencyKey: 'request-12345',
+    );
+    final request = client.requests.single as http.Request;
+    final body = jsonDecode(request.body) as Map<String, dynamic>;
+    expect(request.url.path, '/document-analysis/jobs');
+    expect(body['mode'], 'invoice');
+    expect(body['idempotency_key'], 'request-12345');
+    expect(job.status, 'queued');
+  });
+
+  test('polling returns the real completed OCR result', () async {
+    final client = RoutingClient();
+    final service = HomeService(await signedInAuth(), client: client);
+    final job = await service.analysisJob('job-1');
+    expect(job.terminal, isTrue);
+    expect(job.result?.title, 'Test invoice');
+  });
+
+  test('pending jobs can be restored from backend state', () async {
+    final client = RoutingClient();
+    final service = HomeService(await signedInAuth(), client: client);
+    final jobs = await service.pendingAnalysisJobs();
+    expect(jobs.single.status, 'processing');
+  });
 
   test('search returns a clear empty result', () async {
     final service = HomeService(

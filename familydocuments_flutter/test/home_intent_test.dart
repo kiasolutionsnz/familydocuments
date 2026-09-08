@@ -40,6 +40,13 @@ void main() {
       HomeIntentType.reminder,
     );
     expect(
+      parseHomeIntent(
+        'Dentist appointment on 18 September at 9:30 am',
+        hasAttachment: false,
+      ).type,
+      HomeIntentType.reminder,
+    );
+    expect(
       parseHomeIntent('Save this', hasAttachment: false).type,
       HomeIntentType.clarification,
     );

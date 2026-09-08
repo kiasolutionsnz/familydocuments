@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:familydocuments_flutter/main.dart';
 import 'package:familydocuments_flutter/core/auth/auth_service.dart';
 import 'package:familydocuments_flutter/core/auth/session_store.dart';
+import 'package:familydocuments_flutter/core/home/home_service.dart';
 
 class Store implements SessionStore {
   String? value;
@@ -43,6 +44,29 @@ class FakeAuth extends AuthService {
   Future<void> signOut() async {
     signedOut = true;
     current = null;
+  }
+}
+
+class FakeHomeService extends HomeService {
+  FakeHomeService(super.auth);
+  int reminderCalls = 0;
+  @override
+  Future<List<AnalysisJob>> pendingAnalysisJobs() async => const [];
+  @override
+  Future<ReminderResult> createReminder({
+    required String title,
+    required String dueDate,
+    String? dueTime,
+    required String requestId,
+    String? documentId,
+  }) async {
+    reminderCalls++;
+    return ReminderResult(
+      id: 'reminder-1',
+      title: title,
+      dueDate: dueDate,
+      dueTime: dueTime,
+    );
   }
 }
 
@@ -88,5 +112,54 @@ void main() {
     await t.pumpAndSettle();
     expect(auth.signedOut, isTrue);
     expect(find.text('Sign in'), findsOneWidget);
+  });
+
+  testWidgets('Home creates a standalone reminder without an attachment', (
+    t,
+  ) async {
+    final auth = FakeAuth(
+      Session(
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        email: 'ava@example.com',
+        userId: 'u',
+      ),
+    );
+    final home = FakeHomeService(auth);
+    await t.pumpWidget(FamilyDocumentsApp(auth: auth, homeService: home));
+    await t.pump();
+    await t.enterText(
+      find.byType(TextField).last,
+      'Remind me about doctor appointment tomorrow at 2 pm',
+    );
+    await t.tap(find.byTooltip('Send').last);
+    await t.pumpAndSettle();
+    expect(home.reminderCalls, 1);
+    expect(
+      find.text('Reminder added: Doctor appointment — tomorrow at 2:00 pm'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('Home asks for an ambiguous reminder date', (t) async {
+    final auth = FakeAuth(
+      Session(
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        email: 'ava@example.com',
+        userId: 'u',
+      ),
+    );
+    final home = FakeHomeService(auth);
+    await t.pumpWidget(FamilyDocumentsApp(auth: auth, homeService: home));
+    await t.pump();
+    await t.enterText(
+      find.byType(TextField).last,
+      'Remind me sometime next month',
+    );
+    await t.tap(find.byTooltip('Send').last);
+    await t.pump();
+    expect(home.reminderCalls, 0);
+    expect(find.text('What date next month should I use?'), findsOneWidget);
   });
 }

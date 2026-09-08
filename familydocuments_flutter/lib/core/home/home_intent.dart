@@ -41,7 +41,11 @@ HomeIntent parseHomeIntent(String message, {required bool hasAttachment}) {
     return const HomeIntent(HomeIntentType.vagueAttachment);
   }
 
-  if (lower.startsWith('remind me') || lower.startsWith('add reminder')) {
+  if (lower.startsWith('remind me') ||
+      lower.startsWith('add reminder') ||
+      (RegExp(r'\b(appointment|meeting|reminder)\b').hasMatch(lower) &&
+          RegExp(r'\b(tomorrow|on\s+\d{1,2}\s+[a-z]+|next month)\b')
+              .hasMatch(lower))) {
     final title = text
         .replaceFirst(
           RegExp(

@@ -19,3 +19,10 @@ The existing browser client uses bearer authentication and `sessionStorage` for 
 Flutter interprets only a small, deterministic set of Home commands. A clear destination such as “Save this in Rentals” saves the original file without OCR, resolving the category only within the authenticated Family. “Read”, “scan”, “OCR”, “bill”, and “invoice” explicitly request OCR. For an attachment with no clear instruction, Flutter first uses safe filename and MIME metadata: a high-confidence filename hint offers a category suggestion without OCR; an unidentifiable file is read so the user can be given an organisation result. The current OCR endpoint is synchronous, so there is no job-status or polling API to resume after refresh. Standalone text reminders are not sent because the current reminder contract requires a related document.
 
 Run Web locally: `flutter run -d chrome`. Build: `flutter build web`. Android: `flutter run -d android`. iOS builds require macOS.
+# Phase 1B Home APIs
+
+- `POST /rest/rpc/create_reminder` creates standalone or document-linked reminders. The authenticated session determines the user and Family; clients send an explicit date/time in `Pacific/Auckland` plus an idempotency request ID.
+- `POST /document-analysis/jobs` uploads a supported file and atomically persists it before queuing durable OCR/classification work. It returns HTTP 202 with job/document IDs.
+- `GET /document-analysis/jobs/{id}` returns a tenant-filtered, user-safe status/result.
+- `POST /document-analysis/jobs/{id}/retry` retries terminal failures.
+- `POST /documents/analyse` remains unchanged for existing synchronous clients.
