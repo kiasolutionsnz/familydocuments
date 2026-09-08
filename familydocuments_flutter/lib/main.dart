@@ -11,15 +11,28 @@ import 'core/home/reminder_parser.dart';
 
 void main() => runApp(const FamilyDocumentsApp());
 
+class SelectedUpload {
+  const SelectedUpload({required this.name, required this.bytes});
+  final String name;
+  final Uint8List bytes;
+}
+
 class FamilyDocumentsApp extends StatefulWidget {
-  const FamilyDocumentsApp({super.key, this.auth, this.homeService});
+  const FamilyDocumentsApp({
+    super.key,
+    this.auth,
+    this.homeService,
+    this.pickUpload,
+  });
   final AuthService? auth;
   final HomeService? homeService;
+  final Future<SelectedUpload?> Function()? pickUpload;
   @override
   State<FamilyDocumentsApp> createState() => _AppState();
 }
 
 class _AppState extends State<FamilyDocumentsApp> {
+  final navigatorKey = GlobalKey<NavigatorState>();
   late final AuthService auth;
   late final HomeService homeService;
   bool checking = true, signingIn = false, busy = false;
@@ -27,6 +40,8 @@ class _AppState extends State<FamilyDocumentsApp> {
   SearchResponse? searchResponse;
   OrganisedDocument? organisedDocument;
   String? suggestedDestination;
+  String? unresolvedCategory;
+  bool categoryMatchAmbiguous = false;
   String? uploadedName, uploadedMimeType;
   Uint8List? uploadedBytes;
   final Map<String, AnalysisJob> analysisJobs = {};
@@ -172,22 +187,29 @@ class _AppState extends State<FamilyDocumentsApp> {
   }
 
   Future<void> upload() async {
-    final p = await FilePicker.platform.pickFiles(
+    final selected = widget.pickUpload != null
+        ? await widget.pickUpload!()
+        : await _pickFile();
+    if (selected == null) return;
+    setState(() {
+      error = null;
+      uploadedName = selected.name;
+      uploadedMimeType = _mimeType(selected.name);
+      uploadedBytes = selected.bytes;
+      message = null;
+      analysisRequestId = null;
+    });
+  }
+
+  Future<SelectedUpload?> _pickFile() async {
+    final result = await FilePicker.platform.pickFiles(
       withData: true,
       type: FileType.custom,
       allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
     );
-    if (p == null || p.files.single.bytes == null) return;
-    final file = p.files.single;
-    final bytes = file.bytes!;
-    setState(() {
-      error = null;
-      uploadedName = file.name;
-      uploadedMimeType = _mimeType(file.name);
-      uploadedBytes = bytes;
-      message = null;
-      analysisRequestId = null;
-    });
+    if (result == null || result.files.single.bytes == null) return null;
+    final file = result.files.single;
+    return SelectedUpload(name: file.name, bytes: file.bytes!);
   }
 
   Future<void> _sendAttachment() async {
@@ -228,6 +250,8 @@ class _AppState extends State<FamilyDocumentsApp> {
       searchResponse = null;
       organisedDocument = null;
       suggestedDestination = null;
+      unresolvedCategory = null;
+      categoryMatchAmbiguous = false;
     });
     try {
       if (needsAnalysis) {
@@ -255,18 +279,35 @@ class _AppState extends State<FamilyDocumentsApp> {
         }
         return;
       }
+      final resolution = await homeService.resolveCategory(category!);
+      if (!mounted) return;
+      if (resolution.type != CategoryResolutionType.found) {
+        final canonical = canonicalCategoryName(category);
+        setState(() {
+          unresolvedCategory = category;
+          categoryMatchAmbiguous =
+              resolution.type == CategoryResolutionType.ambiguous;
+          retryAction = null;
+          message = categoryMatchAmbiguous
+              ? 'I found more than one matching category. Which one should I use?'
+              : 'Your family doesn’t have a $canonical category yet. Would you like to create it?';
+        });
+        return;
+      }
       final result = await homeService.saveUpload(
         name: name,
         mimeType: mimeType,
         bytes: bytes,
-        category: category!,
+        category: resolution.category!,
       );
       if (mounted) {
         setState(() {
-          message = null;
+          message = 'Saved in ${result.category}.';
           organisedDocument = result;
           uploadedBytes = null;
+          uploadedName = null;
           uploadedMimeType = null;
+          retryAction = null;
           query.clear();
         });
       }
@@ -313,7 +354,7 @@ class _AppState extends State<FamilyDocumentsApp> {
           organisedDocument = completed.result;
           message = null;
         } else if (failed != null) {
-          error = failed.failure ?? 'This document could not be read.';
+          error = 'I couldn’t read this document.';
           retryAction = failed.retryAllowed ? 'analysis:${failed.id}' : null;
         } else {
           message = 'Resuming document processing…';
@@ -363,7 +404,7 @@ class _AppState extends State<FamilyDocumentsApp> {
             message = null;
           } else if (job.status == 'failed' ||
               job.status == 'permanent_failed') {
-            error = job.failure ?? 'This document could not be read.';
+            error = 'I couldn’t read this document.';
             retryAction = job.retryAllowed ? 'analysis:${job.id}' : null;
           } else {
             message = job.status == 'queued'
@@ -411,6 +452,8 @@ class _AppState extends State<FamilyDocumentsApp> {
     uploadedName = null;
     uploadedMimeType = null;
     analysisRequestId = null;
+    unresolvedCategory = null;
+    categoryMatchAmbiguous = false;
   });
 
   Future<void> saveSuggestion() async {
@@ -419,6 +462,97 @@ class _AppState extends State<FamilyDocumentsApp> {
     await _sendAttachment();
   }
 
+  Future<void> createAndSaveCategory() async {
+    final requested = unresolvedCategory;
+    if (requested == null || uploadedBytes == null || busy) return;
+    setState(() {
+      busy = true;
+      error = null;
+      message = 'Creating your category…';
+    });
+    try {
+      final category = await homeService.createCategory(requested);
+      await _saveCurrentAttachmentIn(category);
+    } on AuthException catch (failure) {
+      await auth.clear();
+      if (mounted) setState(() => error = failure.message);
+    } on HomeServiceException catch (failure) {
+      if (mounted) setState(() => error = failure.message);
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> chooseUploadCategory() async {
+    if (uploadedBytes == null || busy) return;
+    try {
+      final categories = await homeService.categories();
+      if (!mounted) return;
+      final chosen = await showDialog<String>(
+        context: navigatorKey.currentContext!,
+        builder: (dialogContext) => SimpleDialog(
+          title: const Text('Choose category'),
+          children: categories
+              .map(
+                (category) => SimpleDialogOption(
+                  onPressed: () => Navigator.pop(dialogContext, category),
+                  child: Text(category),
+                ),
+              )
+              .toList(),
+        ),
+      );
+      if (chosen == null) return;
+      if (mounted) setState(() => busy = true);
+      await _saveCurrentAttachmentIn(chosen);
+    } on AuthException catch (failure) {
+      await auth.clear();
+      if (mounted) setState(() => error = failure.message);
+    } on HomeServiceException catch (failure) {
+      if (mounted) setState(() => error = failure.message);
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _saveCurrentAttachmentIn(String category) async {
+    final bytes = uploadedBytes;
+    final name = uploadedName;
+    final mimeType = uploadedMimeType;
+    if (bytes == null || name == null || mimeType == null) return;
+    if (mounted) {
+      setState(() {
+        error = null;
+        message = 'Saving to $category…';
+      });
+    }
+    final result = await homeService.saveUpload(
+      name: name,
+      mimeType: mimeType,
+      bytes: bytes,
+      category: category,
+    );
+    if (!mounted) return;
+    setState(() {
+      message = 'Saved in ${result.category}.';
+      organisedDocument = result;
+      uploadedBytes = null;
+      uploadedName = null;
+      uploadedMimeType = null;
+      unresolvedCategory = null;
+      categoryMatchAmbiguous = false;
+      retryAction = null;
+      query.clear();
+    });
+  }
+
+  void cancelCategoryChoice() => setState(() {
+    unresolvedCategory = null;
+    categoryMatchAmbiguous = false;
+    error = null;
+    message = 'Not saved. Your document is still attached.';
+  });
+
   Future<void> saveFailedAnalysisWithoutReading() async {
     final retry = retryAction;
     if (retry == null || !retry.startsWith('analysis:')) return;
@@ -426,6 +560,7 @@ class _AppState extends State<FamilyDocumentsApp> {
       await homeService.dismissAnalysisJob(retry.substring('analysis:'.length));
       if (mounted) {
         setState(() {
+          analysisJobs.remove(retry.substring('analysis:'.length));
           error = null;
           retryAction = null;
           message = 'Saved without reading. You can change its category later.';
@@ -443,7 +578,7 @@ class _AppState extends State<FamilyDocumentsApp> {
       final categories = await homeService.categories();
       if (!mounted) return;
       final chosen = await showDialog<String>(
-        context: context,
+        context: navigatorKey.currentContext!,
         builder: (dialogContext) => SimpleDialog(
           title: const Text('Choose category'),
           children: categories
@@ -463,9 +598,29 @@ class _AppState extends State<FamilyDocumentsApp> {
       );
       if (mounted) {
         setState(() {
+          analysisJobs.remove(retry.substring('analysis:'.length));
           error = null;
           retryAction = null;
           message = 'Saved in $chosen without reading.';
+        });
+      }
+    } on HomeServiceException catch (failure) {
+      if (mounted) setState(() => error = failure.message);
+    }
+  }
+
+  Future<void> dismissFailedAnalysis() async {
+    final retry = retryAction;
+    if (retry == null || !retry.startsWith('analysis:')) return;
+    final id = retry.substring('analysis:'.length);
+    try {
+      await homeService.dismissAnalysisJob(id);
+      if (mounted) {
+        setState(() {
+          analysisJobs.remove(id);
+          error = null;
+          retryAction = null;
+          message = null;
         });
       }
     } on HomeServiceException catch (failure) {
@@ -489,6 +644,8 @@ class _AppState extends State<FamilyDocumentsApp> {
     analysisRequestId = null;
     reminderRequestId = null;
     reminderInstruction = null;
+    unresolvedCategory = null;
+    categoryMatchAmbiguous = false;
     setState(() => checking = true);
     await auth.signOut();
     if (mounted) setState(() => checking = false);
@@ -503,6 +660,7 @@ class _AppState extends State<FamilyDocumentsApp> {
 
   @override
   Widget build(BuildContext c) => MaterialApp(
+    navigatorKey: navigatorKey,
     title: 'FamilyDocuments',
     theme: ThemeData(
       useMaterial3: true,
@@ -522,15 +680,21 @@ class _AppState extends State<FamilyDocumentsApp> {
             searchResponse: searchResponse,
             organisedDocument: organisedDocument,
             suggestedDestination: suggestedDestination,
+            unresolvedCategory: unresolvedCategory,
+            categoryMatchAmbiguous: categoryMatchAmbiguous,
             uploadedName: uploadedName,
             onSend: send,
             onUpload: upload,
             onClearAttachment: clearAttachment,
             onSaveSuggestion: saveSuggestion,
+            onCreateAndSaveCategory: createAndSaveCategory,
+            onChooseUploadCategory: chooseUploadCategory,
+            onCancelCategoryChoice: cancelCategoryChoice,
             onRetry: retry,
             analysisFailure: retryAction?.startsWith('analysis:') ?? false,
             onSaveWithoutReading: saveFailedAnalysisWithoutReading,
             onChooseCategory: chooseFailedAnalysisCategory,
+            onDismissAnalysis: dismissFailedAnalysis,
             email: auth.session!.email,
             onSignOut: signOut,
           ),
@@ -605,15 +769,21 @@ class Shell extends StatelessWidget {
     required this.searchResponse,
     required this.organisedDocument,
     required this.suggestedDestination,
+    required this.unresolvedCategory,
+    required this.categoryMatchAmbiguous,
     required this.uploadedName,
     required this.onSend,
     required this.onUpload,
     required this.onClearAttachment,
     required this.onSaveSuggestion,
+    required this.onCreateAndSaveCategory,
+    required this.onChooseUploadCategory,
+    required this.onCancelCategoryChoice,
     required this.onRetry,
     required this.analysisFailure,
     required this.onSaveWithoutReading,
     required this.onChooseCategory,
+    required this.onDismissAnalysis,
     required this.email,
     required this.onSignOut,
   });
@@ -626,14 +796,20 @@ class Shell extends StatelessWidget {
   final SearchResponse? searchResponse;
   final OrganisedDocument? organisedDocument;
   final String? suggestedDestination;
+  final String? unresolvedCategory;
+  final bool categoryMatchAmbiguous;
   final String? uploadedName;
   final VoidCallback onSend,
       onUpload,
       onClearAttachment,
       onSaveSuggestion,
+      onCreateAndSaveCategory,
+      onChooseUploadCategory,
+      onCancelCategoryChoice,
       onRetry,
       onSaveWithoutReading,
-      onChooseCategory;
+      onChooseCategory,
+      onDismissAnalysis;
   final bool analysisFailure;
   final String email;
   final Future<void> Function() onSignOut;
@@ -688,15 +864,21 @@ class Shell extends StatelessWidget {
             searchResponse: searchResponse,
             organisedDocument: organisedDocument,
             suggestedDestination: suggestedDestination,
+            unresolvedCategory: unresolvedCategory,
+            categoryMatchAmbiguous: categoryMatchAmbiguous,
             uploadedName: uploadedName,
             onSend: onSend,
             onUpload: onUpload,
             onClearAttachment: onClearAttachment,
             onSaveSuggestion: onSaveSuggestion,
+            onCreateAndSaveCategory: onCreateAndSaveCategory,
+            onChooseUploadCategory: onChooseUploadCategory,
+            onCancelCategoryChoice: onCancelCategoryChoice,
             onRetry: onRetry,
             analysisFailure: analysisFailure,
             onSaveWithoutReading: onSaveWithoutReading,
             onChooseCategory: onChooseCategory,
+            onDismissAnalysis: onDismissAnalysis,
           )
         : Center(child: Text('${labels[tab]} will be connected in Phase 2.'));
     final main = Column(
@@ -861,15 +1043,21 @@ class Home extends StatelessWidget {
     required this.searchResponse,
     required this.organisedDocument,
     required this.suggestedDestination,
+    required this.unresolvedCategory,
+    required this.categoryMatchAmbiguous,
     required this.uploadedName,
     required this.onSend,
     required this.onUpload,
     required this.onClearAttachment,
     required this.onSaveSuggestion,
+    required this.onCreateAndSaveCategory,
+    required this.onChooseUploadCategory,
+    required this.onCancelCategoryChoice,
     required this.onRetry,
     required this.analysisFailure,
     required this.onSaveWithoutReading,
     required this.onChooseCategory,
+    required this.onDismissAnalysis,
   });
   final TextEditingController query;
   final bool busy;
@@ -878,14 +1066,20 @@ class Home extends StatelessWidget {
   final SearchResponse? searchResponse;
   final OrganisedDocument? organisedDocument;
   final String? suggestedDestination;
+  final String? unresolvedCategory;
+  final bool categoryMatchAmbiguous;
   final String? uploadedName;
   final VoidCallback onSend,
       onUpload,
       onClearAttachment,
       onSaveSuggestion,
+      onCreateAndSaveCategory,
+      onChooseUploadCategory,
+      onCancelCategoryChoice,
       onRetry,
       onSaveWithoutReading,
-      onChooseCategory;
+      onChooseCategory,
+      onDismissAnalysis;
   final bool analysisFailure;
   @override
   Widget build(BuildContext c) => LayoutBuilder(
@@ -975,6 +1169,34 @@ class Home extends StatelessWidget {
                               ],
                             ),
                           ],
+                          if (unresolvedCategory != null) ...[
+                            const SizedBox(height: 12),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                if (!categoryMatchAmbiguous)
+                                  FilledButton(
+                                    onPressed: busy
+                                        ? null
+                                        : onCreateAndSaveCategory,
+                                    child: const Text('Create and save'),
+                                  ),
+                                OutlinedButton(
+                                  onPressed: busy
+                                      ? null
+                                      : onChooseUploadCategory,
+                                  child: const Text('Choose another category'),
+                                ),
+                                TextButton(
+                                  onPressed: busy
+                                      ? null
+                                      : onCancelCategoryChoice,
+                                  child: const Text('Cancel'),
+                                ),
+                              ],
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -1015,7 +1237,9 @@ class Home extends StatelessWidget {
                           children: [
                             TextButton(
                               onPressed: busy ? null : onRetry,
-                              child: const Text('Retry'),
+                              child: Text(
+                                analysisFailure ? 'Retry reading' : 'Retry',
+                              ),
                             ),
                             if (analysisFailure) ...[
                               TextButton(
@@ -1025,6 +1249,10 @@ class Home extends StatelessWidget {
                               TextButton(
                                 onPressed: onChooseCategory,
                                 child: const Text('Choose category'),
+                              ),
+                              TextButton(
+                                onPressed: onDismissAnalysis,
+                                child: const Text('Dismiss'),
                               ),
                             ],
                           ],
@@ -1338,10 +1566,11 @@ class _AnalysisResult extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          fileName ?? 'Document',
-          style: const TextStyle(fontWeight: FontWeight.w700),
-        ),
+        Text(result.title, style: const TextStyle(fontWeight: FontWeight.w700)),
+        if (fileName != null && fileName != result.title) ...[
+          const SizedBox(height: 2),
+          Text(fileName!, style: const TextStyle(color: Color(0xff64748b))),
+        ],
         const SizedBox(height: 4),
         const Text(
           'Saved and organised for your Family.',

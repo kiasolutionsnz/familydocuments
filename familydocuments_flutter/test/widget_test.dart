@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
@@ -51,18 +52,124 @@ class FakeHomeService extends HomeService {
   FakeHomeService(
     super.auth, {
     this.failFirstReminder = false,
-    this.pendingJobs = const [],
-  });
+    List<AnalysisJob> pendingJobs = const [],
+    List<String> categories = const ['Documents', 'Home'],
+    this.pollingResult,
+    this.failFirstAnalysisSubmit = false,
+  }) : pendingJobs = List.of(pendingJobs),
+       categoryNames = List.of(categories);
   int reminderCalls = 0;
   final bool failFirstReminder;
   final List<AnalysisJob> pendingJobs;
+  final List<String> categoryNames;
+  final AnalysisJob? pollingResult;
+  final bool failFirstAnalysisSubmit;
   int dismissCalls = 0;
+  int saveCalls = 0;
+  int analysisCalls = 0;
+  int createCategoryCalls = 0;
+  int categorizeCalls = 0;
+  int restoreCalls = 0;
+  int retryAnalysisCalls = 0;
+  String? savedCategory;
+  Uint8List? savedBytes;
+  final List<String> analysisRequestIds = [];
   final List<String> reminderRequestIds = [];
   @override
-  Future<List<AnalysisJob>> pendingAnalysisJobs() async => pendingJobs;
+  Future<List<AnalysisJob>> pendingAnalysisJobs() async {
+    restoreCalls++;
+    return List.of(pendingJobs);
+  }
+
   @override
   Future<void> dismissAnalysisJob(String id) async {
     dismissCalls++;
+    pendingJobs.removeWhere((job) => job.id == id);
+  }
+
+  @override
+  Future<List<String>> categories() async => List.of(categoryNames);
+
+  @override
+  Future<CategoryResolution> resolveCategory(String requested) async =>
+      resolveCategoryName(requested, categoryNames);
+
+  @override
+  Future<String> createCategory(String requested) async {
+    final name = canonicalCategoryName(requested);
+    final existing = resolveCategoryName(name, categoryNames);
+    if (existing.type == CategoryResolutionType.found) {
+      return existing.category!;
+    }
+    createCategoryCalls++;
+    categoryNames.add(name);
+    return name;
+  }
+
+  @override
+  Future<OrganisedDocument> saveUpload({
+    required String name,
+    required String mimeType,
+    required Uint8List bytes,
+    required String category,
+  }) async {
+    saveCalls++;
+    savedCategory = category;
+    savedBytes = bytes;
+    return OrganisedDocument(
+      title: name.replaceFirst('.pdf', ''),
+      category: category,
+      tags: const [],
+      pageCount: 0,
+    );
+  }
+
+  @override
+  Future<AnalysisJob> submitAnalysisJob({
+    required String name,
+    required String mimeType,
+    required Uint8List bytes,
+    required bool invoice,
+    required String idempotencyKey,
+  }) async {
+    analysisCalls++;
+    analysisRequestIds.add(idempotencyKey);
+    if (failFirstAnalysisSubmit && analysisCalls == 1) {
+      throw HomeServiceException(
+        'Your document could not be queued. Try again.',
+      );
+    }
+    savedBytes = bytes;
+    return const AnalysisJob(
+      id: 'job-1',
+      documentId: 'document-1',
+      status: 'queued',
+    );
+  }
+
+  @override
+  Future<AnalysisJob> analysisJob(String id) async =>
+      pollingResult ??
+      const AnalysisJob(
+        id: 'job-1',
+        documentId: 'document-1',
+        status: 'processing',
+      );
+
+  @override
+  Future<AnalysisJob> retryAnalysisJob(String id) async {
+    retryAnalysisCalls++;
+    return const AnalysisJob(
+      id: 'job-1',
+      documentId: 'document-1',
+      status: 'queued',
+    );
+  }
+
+  @override
+  Future<void> categorizeAnalysisJob(String id, String category) async {
+    categorizeCalls++;
+    pendingJobs.removeWhere((job) => job.id == id);
   }
 
   @override
@@ -87,6 +194,27 @@ class FakeHomeService extends HomeService {
       dueTime: dueTime,
     );
   }
+}
+
+FakeAuth authenticatedUser() => FakeAuth(
+  Session(
+    accessToken: 'access',
+    refreshToken: 'refresh',
+    email: 'ava@example.com',
+    userId: 'u',
+  ),
+);
+
+SelectedUpload syntheticUpload([String name = 'synthetic-rental.pdf']) =>
+    SelectedUpload(name: name, bytes: Uint8List.fromList([1, 2, 3, 4]));
+
+Future<void> attachAndSend(WidgetTester tester, String message) async {
+  await tester.pump(const Duration(milliseconds: 100));
+  await tester.tap(find.byTooltip('Attach a document').last);
+  await tester.pump();
+  await tester.enterText(find.byType(TextField).last, message);
+  await tester.tap(find.byTooltip('Send').last);
+  await tester.pump();
 }
 
 void main() {
@@ -235,6 +363,8 @@ void main() {
     await t.pump();
     expect(find.text('Save without reading'), findsOneWidget);
     expect(find.text('Choose category'), findsOneWidget);
+    expect(find.text('Retry reading'), findsOneWidget);
+    expect(find.text('Dismiss'), findsOneWidget);
     await t.tap(find.text('Save without reading'));
     await t.pumpAndSettle();
     expect(home.dismissCalls, 1);
@@ -242,5 +372,329 @@ void main() {
       find.text('Saved without reading. You can change its category later.'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('existing Rentals saves selected bytes without OCR', (t) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(auth, categories: const ['Home', 'Rentals']);
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: home,
+        pickUpload: () async => syntheticUpload(),
+      ),
+    );
+    await t.pump();
+    await attachAndSend(t, 'Save this in Rentals');
+    await t.pumpAndSettle();
+    expect(home.saveCalls, 1);
+    expect(home.analysisCalls, 0);
+    expect(home.savedCategory, 'Rentals');
+    expect(home.savedBytes, orderedEquals([1, 2, 3, 4]));
+    expect(find.text('Saved in Rentals.'), findsOneWidget);
+  });
+
+  testWidgets('missing Rentals offers create choose and cancel', (t) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(auth, categories: const ['Home']);
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: home,
+        pickUpload: () async => syntheticUpload(),
+      ),
+    );
+    await t.pump();
+    await attachAndSend(t, 'Save this in Rentals');
+    await t.pumpAndSettle();
+    expect(
+      find.text(
+        'Your family doesn’t have a Rentals category yet. Would you like to create it?',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Create and save'), findsOneWidget);
+    expect(find.text('Choose another category'), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
+    expect(home.saveCalls, 0);
+  });
+
+  testWidgets('create and save creates one category and saves once', (t) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(auth, categories: const ['Home']);
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: home,
+        pickUpload: () async => syntheticUpload(),
+      ),
+    );
+    await t.pump();
+    await attachAndSend(t, 'Save this in rental');
+    await t.pumpAndSettle();
+    await t.tap(find.text('Create and save'));
+    await t.pumpAndSettle();
+    expect(home.createCategoryCalls, 1);
+    expect(home.saveCalls, 1);
+    expect(home.analysisCalls, 0);
+    expect(find.text('Saved in Rentals.'), findsOneWidget);
+  });
+
+  testWidgets('choose another category saves the same selected bytes', (
+    t,
+  ) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(auth, categories: const ['Home']);
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: home,
+        pickUpload: () async => syntheticUpload(),
+      ),
+    );
+    await t.pump();
+    await attachAndSend(t, 'Save this in Rentals');
+    await t.pumpAndSettle();
+    await t.tap(find.text('Choose another category'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Home').last);
+    await t.pumpAndSettle();
+    expect(home.savedCategory, 'Home');
+    expect(home.savedBytes, orderedEquals([1, 2, 3, 4]));
+    expect(home.analysisCalls, 0);
+  });
+
+  testWidgets('cancel keeps the attachment without false success', (t) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(auth, categories: const ['Home']);
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: home,
+        pickUpload: () async => syntheticUpload(),
+      ),
+    );
+    await t.pump();
+    await attachAndSend(t, 'Save this in Rentals');
+    await t.pumpAndSettle();
+    await t.tap(find.text('Cancel'));
+    await t.pumpAndSettle();
+    expect(home.saveCalls, 0);
+    expect(
+      find.text('Not saved. Your document is still attached.'),
+      findsOneWidget,
+    );
+    expect(find.text('synthetic-rental.pdf'), findsOneWidget);
+  });
+
+  testWidgets('ambiguous category requires a real selection', (t) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(
+      auth,
+      categories: const ['Home', 'Home records'],
+    );
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: home,
+        pickUpload: () async => syntheticUpload('synthetic-home.pdf'),
+      ),
+    );
+    await t.pump();
+    await attachAndSend(t, 'Save this in home records archive');
+    await t.pumpAndSettle();
+    expect(
+      find.text(
+        'I found more than one matching category. Which one should I use?',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Create and save'), findsNothing);
+    expect(find.text('Choose another category'), findsOneWidget);
+    expect(home.saveCalls, 0);
+  });
+
+  testWidgets('explicit scan creates one async job and renders success', (
+    t,
+  ) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(
+      auth,
+      pollingResult: const AnalysisJob(
+        id: 'job-1',
+        documentId: 'document-1',
+        status: 'succeeded',
+        result: OrganisedDocument(
+          title: 'Synthetic electricity bill',
+          category: 'Home',
+          tags: ['invoice'],
+          pageCount: 1,
+        ),
+      ),
+    );
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: home,
+        pickUpload: () async => syntheticUpload('synthetic-bill.pdf'),
+      ),
+    );
+    await t.pump();
+    await attachAndSend(t, 'Scan this document for OCR');
+    for (
+      var attempt = 0;
+      attempt < 5 && find.text('Synthetic electricity bill').evaluate().isEmpty;
+      attempt++
+    ) {
+      await t.pump(const Duration(milliseconds: 500));
+    }
+    expect(home.analysisCalls, 1);
+    expect(home.saveCalls, 0);
+    expect(home.savedBytes, orderedEquals([1, 2, 3, 4]));
+    expect(find.text('Synthetic electricity bill'), findsOneWidget);
+    await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('failed scan retry keeps the same durable document', (t) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(
+      auth,
+      pendingJobs: const [
+        AnalysisJob(
+          id: 'job-1',
+          documentId: 'document-1',
+          status: 'permanent_failed',
+          retryAllowed: true,
+        ),
+      ],
+    );
+    await t.pumpWidget(FamilyDocumentsApp(auth: auth, homeService: home));
+    await t.pump();
+    await t.tap(find.text('Retry reading'));
+    await t.pump();
+    expect(home.retryAnalysisCalls, 1);
+    expect(home.analysisCalls, 0);
+    await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('failure category and dismissal create no OCR job and persist', (
+    t,
+  ) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(
+      auth,
+      categories: const ['Home'],
+      pendingJobs: const [
+        AnalysisJob(
+          id: 'job-1',
+          documentId: 'document-1',
+          status: 'permanent_failed',
+          retryAllowed: true,
+        ),
+      ],
+    );
+    await t.pumpWidget(FamilyDocumentsApp(auth: auth, homeService: home));
+    await t.pump();
+    await t.tap(find.text('Choose category'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Home').last);
+    await t.pumpAndSettle();
+    expect(home.categorizeCalls, 1);
+    expect(home.analysisCalls, 0);
+
+    final dismissHome = FakeHomeService(
+      auth,
+      pendingJobs: const [
+        AnalysisJob(
+          id: 'job-2',
+          documentId: 'document-2',
+          status: 'permanent_failed',
+          retryAllowed: true,
+        ),
+      ],
+    );
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        key: UniqueKey(),
+        auth: auth,
+        homeService: dismissHome,
+      ),
+    );
+    await t.pump();
+    await t.tap(find.text('Dismiss'));
+    await t.pumpAndSettle();
+    expect(dismissHome.dismissCalls, 1);
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        key: UniqueKey(),
+        auth: auth,
+        homeService: dismissHome,
+      ),
+    );
+    await t.pump();
+    expect(find.text('I couldn’t read this document.'), findsNothing);
+    expect(dismissHome.analysisCalls, 0);
+  });
+
+  testWidgets('navigation and rebuild restore a pending job', (t) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(
+      auth,
+      pendingJobs: const [
+        AnalysisJob(
+          id: 'job-1',
+          documentId: 'document-1',
+          status: 'processing',
+        ),
+      ],
+    );
+    await t.pumpWidget(
+      FamilyDocumentsApp(key: UniqueKey(), auth: auth, homeService: home),
+    );
+    await t.pump(const Duration(milliseconds: 100));
+    expect(
+      find.text('Reading and organising your document in the background…'),
+      findsOneWidget,
+    );
+    await t.tap(find.text('Timeline').first);
+    await t.pump();
+    await t.tap(find.text('Home').first);
+    await t.pump();
+    expect(
+      find.text('Reading and organising your document in the background…'),
+      findsOneWidget,
+    );
+    await t.pumpWidget(
+      FamilyDocumentsApp(key: UniqueKey(), auth: auth, homeService: home),
+    );
+    await t.pump(const Duration(milliseconds: 100));
+    expect(home.restoreCalls, greaterThanOrEqualTo(2));
+    expect(
+      find.text('Reading and organising your document in the background…'),
+      findsOneWidget,
+    );
+    await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('retrying a failed submission reuses its idempotency key', (
+    t,
+  ) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(auth, failFirstAnalysisSubmit: true);
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: home,
+        pickUpload: () async => syntheticUpload('synthetic-bill.pdf'),
+      ),
+    );
+    await t.pump();
+    await attachAndSend(t, 'Scan this document for OCR');
+    await t.pumpAndSettle();
+    await t.tap(find.text('Retry'));
+    await t.pump();
+    expect(home.analysisCalls, 2);
+    expect(home.analysisRequestIds.toSet(), hasLength(1));
+    await t.pumpWidget(const SizedBox());
   });
 }

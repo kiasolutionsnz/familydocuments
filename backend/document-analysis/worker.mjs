@@ -7,6 +7,9 @@ const apiUrl = process.env.FP_API_URL || 'http://127.0.0.1:55322';
 const ocrUrl = process.env.FP_OCR_URL || 'http://127.0.0.1:55323';
 const ollamaUrl = process.env.FP_OLLAMA_URL || 'http://127.0.0.1:11434';
 const model = process.env.FP_OLLAMA_MODEL || 'qwen3:4b';
+const isolatedProcessingDelayMs = process.env.FD_TEST_CONTEXT === 'isolated'
+  ? Math.min(Math.max(Number(process.env.FP_DOCUMENT_ANALYSIS_TEST_DELAY_MS) || 0, 0), 60000)
+  : 0;
 
 function b64url(value) { return Buffer.from(value).toString('base64url'); }
 function signedJwt(secret, role = 'service_role', subject) {
@@ -30,6 +33,9 @@ async function rpc(name, payload, token) {
   return body;
 }
 async function readDocument(job, ocrToken) {
+  if (isolatedProcessingDelayMs) {
+    await new Promise(resolve => setTimeout(resolve, isolatedProcessingDelayMs));
+  }
   const contentBase64 = String(job.content_base64 || '').replace(/\s/g, '');
   const response = await fetch(`${ocrUrl}/ocr`, {method: 'POST', headers: {origin: 'http://127.0.0.1:3300', authorization: `Bearer ${ocrToken}`, 'content-type': 'application/json'}, body: JSON.stringify({file_name: job.file_name, mime_type: job.mime_type, sha256: job.sha256, content_base64: contentBase64}), signal: AbortSignal.timeout(180000)});
   const body = await response.json().catch(() => ({}));

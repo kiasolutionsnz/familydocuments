@@ -98,10 +98,24 @@ const upload = {
 
 const saved = await gatewayRequest(owner, '/documents/save', {
   ...upload,
-  category: 'Rentals',
+  category: 'this as rental document',
 });
 assert.equal(saved.status, 200, JSON.stringify(saved.body));
 assert.equal(saved.body.category, 'Rentals');
+assert.equal(
+  (await gatewayRequest(outsider, '/documents/save', {
+    ...upload,
+    category: 'Rentals',
+  })).status,
+  422,
+);
+assert.equal(
+  (await gatewayRequest(owner, '/documents/save', {
+    ...upload,
+    category: 'Taxes',
+  })).status,
+  422,
+);
 assert.deepEqual((await rpc(owner, 'pending_document_analysis_jobs')).body, []);
 const linked = await rpc(owner, 'create_reminder', {
   ...reminderPayload,
@@ -173,6 +187,9 @@ console.log(JSON.stringify({
   cross_family_reminder_denial: 'PASS',
   document_linked_reminder: 'PASS',
   clear_destination_without_ocr: 'PASS',
+  natural_category_alias: 'PASS',
+  missing_category_rejected: 'PASS',
+  cross_family_category_denial: 'PASS',
   asynchronous_acceptance: 'PASS',
   real_paddleocr_and_ollama: 'PASS',
   job_restore_and_idempotency: 'PASS',

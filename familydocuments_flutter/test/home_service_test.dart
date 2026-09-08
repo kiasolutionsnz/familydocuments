@@ -114,6 +114,39 @@ class FailureClient extends http.BaseClient {
       );
 }
 
+class CategoryClient extends http.BaseClient {
+  CategoryClient([Iterable<String> initial = const []])
+    : categories = initial.toList();
+  final List<String> categories;
+  int createCalls = 0;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final path = request.url.path;
+    if (path == '/rest/rpc/household_snapshot') {
+      return _response(200, {
+        'categories': categories
+            .map((name) => {'id': name.toLowerCase(), 'name': name})
+            .toList(),
+      });
+    }
+    if (path == '/rest/rpc/create_category') {
+      createCalls++;
+      final body = jsonDecode((request as http.Request).body);
+      final name = body['category_name'] as String;
+      categories.add(name);
+      return _response(200, {'id': 'created', 'name': name});
+    }
+    return _response(404, {'error': 'not_found'});
+  }
+
+  http.StreamedResponse _response(int status, Object body) =>
+      http.StreamedResponse(
+        Stream.value(utf8.encode(jsonEncode(body))),
+        status,
+      );
+}
+
 String _token() {
   final expiry =
       DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/
@@ -131,6 +164,41 @@ Future<AuthService> signedInAuth() async {
 }
 
 void main() {
+  test('category matching handles case, plural and Rentals aliases', () {
+    const categories = ['Rentals', 'Rental records', 'Travel'];
+    for (final requested in [
+      'rental',
+      'RENTALS',
+      'this as rental document',
+      'rental property',
+    ]) {
+      final result = resolveCategoryName(requested, categories);
+      expect(result.type, CategoryResolutionType.found);
+      expect(result.category, 'Rentals');
+    }
+  });
+
+  test('ambiguous category matching requires a real selection', () {
+    final result = resolveCategoryName('home records archive', const [
+      'Home',
+      'Home records',
+    ]);
+    expect(result.type, CategoryResolutionType.ambiguous);
+    expect(result.matches, containsAll(['Home', 'Home records']));
+  });
+
+  test(
+    'repeated category creation resolves the Family category once',
+    () async {
+      final client = CategoryClient();
+      final service = HomeService(await signedInAuth(), client: client);
+      expect(await service.createCategory('rental'), 'Rentals');
+      expect(await service.createCategory('Rentals'), 'Rentals');
+      expect(client.createCalls, 1);
+      expect(client.categories, ['Rentals']);
+    },
+  );
+
   test(
     'search sends the existing endpoint and renders source documents',
     () async {

@@ -48,6 +48,28 @@ class ReminderResult {
   final String? dueTime;
 }
 
+enum CategoryResolutionType { found, missing, ambiguous }
+
+class CategoryResolution {
+  const CategoryResolution._(
+    this.type, {
+    this.category,
+    this.matches = const [],
+  });
+
+  const CategoryResolution.found(String category)
+    : this._(CategoryResolutionType.found, category: category);
+
+  const CategoryResolution.missing() : this._(CategoryResolutionType.missing);
+
+  const CategoryResolution.ambiguous(List<String> matches)
+    : this._(CategoryResolutionType.ambiguous, matches: matches);
+
+  final CategoryResolutionType type;
+  final String? category;
+  final List<String> matches;
+}
+
 class AnalysisJob {
   const AnalysisJob({
     required this.id,
@@ -213,6 +235,36 @@ class HomeService {
             .whereType<String>()
             .toList() ??
         const [];
+  }
+
+  Future<CategoryResolution> resolveCategory(String requested) async {
+    return resolveCategoryName(requested, await categories());
+  }
+
+  Future<String> createCategory(String requested) async {
+    final categoryName = canonicalCategoryName(requested);
+    final existing = await resolveCategory(categoryName);
+    if (existing.type == CategoryResolutionType.found) {
+      return existing.category!;
+    }
+    final response = await _post('/rest/rpc/create_category', {
+      'category_name': categoryName,
+    });
+    final payload = _json(response.body);
+    if (response.statusCode == 200 && payload['name'] != null) {
+      return payload['name'].toString();
+    }
+    // A repeated confirmation can race a successful first request. Resolve the
+    // Family-scoped list again before reporting failure.
+    final afterRetry = await resolveCategory(categoryName);
+    if (afterRetry.type == CategoryResolutionType.found) {
+      return afterRetry.category!;
+    }
+    throw HomeServiceException(
+      response.statusCode == 401 || response.statusCode == 403
+          ? 'Only a Family owner or admin can create categories.'
+          : 'That category could not be created. Try again.',
+    );
   }
 
   Future<void> categorizeAnalysisJob(String id, String category) async {
@@ -397,4 +449,79 @@ class HomeService {
               ?.toString(),
     );
   }
+}
+
+CategoryResolution resolveCategoryName(
+  String requested,
+  Iterable<String> categories,
+) {
+  final names = categories
+      .map((name) => name.trim())
+      .where((name) => name.isNotEmpty)
+      .toList();
+  final requestedKey = _categoryKey(requested);
+  if (requestedKey.isEmpty) return const CategoryResolution.missing();
+
+  final alias = _categoryAlias(requestedKey);
+  if (alias != null) {
+    final matches = names
+        .where((name) => name.toLowerCase() == alias.toLowerCase())
+        .toList();
+    return switch (matches.length) {
+      0 => const CategoryResolution.missing(),
+      1 => CategoryResolution.found(matches.single),
+      _ => CategoryResolution.ambiguous(matches),
+    };
+  }
+
+  final exact = names
+      .where((name) => _categoryKey(name) == requestedKey)
+      .toList();
+  if (exact.length == 1) return CategoryResolution.found(exact.single);
+  if (exact.length > 1) return CategoryResolution.ambiguous(exact);
+
+  final matches = names.where((name) {
+    final key = _categoryKey(name);
+    return key.contains(requestedKey) || requestedKey.contains(key);
+  }).toList();
+  return switch (matches.length) {
+    0 => const CategoryResolution.missing(),
+    1 => CategoryResolution.found(matches.single),
+    _ => CategoryResolution.ambiguous(matches),
+  };
+}
+
+String canonicalCategoryName(String requested) {
+  final key = _categoryKey(requested);
+  return _categoryAlias(key) ??
+      requested.trim().replaceFirst(
+        RegExp(r'^(?:this\s+)?(?:as\s+)?', caseSensitive: false),
+        '',
+      );
+}
+
+String? _categoryAlias(String key) {
+  if ({'rental', 'rental property'}.contains(key)) return 'Rentals';
+  if (key == 'travel') return 'Travel';
+  if (key == 'document') return 'Documents';
+  return null;
+}
+
+String _categoryKey(String value) {
+  var key = value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9& ]+'), ' ')
+      .replaceFirst(RegExp(r'^(?:this\s+)?(?:as\s+)?'), '')
+      .replaceAll(
+        RegExp(r'\b(?:document|documents|category|collection)\b'),
+        ' ',
+      )
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  if (key.endsWith('ies') && key.length > 3) {
+    key = '${key.substring(0, key.length - 3)}y';
+  } else if (key.endsWith('s') && !key.endsWith('ss') && key.length > 3) {
+    key = key.substring(0, key.length - 1);
+  }
+  return key;
 }

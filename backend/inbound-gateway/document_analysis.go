@@ -156,27 +156,12 @@ func documentSaveHandler(api, allowedOrigin string) http.HandlerFunc {
 			jsonReply(w, http.StatusBadGateway, map[string]string{"error": "organisation_unavailable"})
 			return
 		}
-		var categoryID, categoryName string
-		requested := strings.ToLower(strings.TrimSpace(input.Category))
-		for _, category := range snapshot.Categories {
-			if strings.EqualFold(strings.TrimSpace(category.Name), strings.TrimSpace(input.Category)) {
-				categoryID, categoryName = category.ID, category.Name
-				break
-			}
-		}
+		categoryID, categoryName, matches := resolveDocumentCategory(input.Category, snapshot.Categories)
 		if categoryID == "" {
-			var matches []struct{ id, name string }
-			for _, category := range snapshot.Categories {
-				name := strings.ToLower(category.Name)
-				if strings.Contains(requested, name) || strings.Contains(name, requested) || (strings.Contains(requested, "rental") && strings.Contains(name, "rental")) {
-					matches = append(matches, struct{ id, name string }{category.ID, category.Name})
-				}
+			if len(matches) > 1 {
+				jsonReply(w, http.StatusUnprocessableEntity, map[string]any{"error": "category_ambiguous", "matches": matches})
+				return
 			}
-			if len(matches) == 1 {
-				categoryID, categoryName = matches[0].id, matches[0].name
-			}
-		}
-		if categoryID == "" {
 			jsonReply(w, http.StatusUnprocessableEntity, map[string]string{"error": "category_not_found"})
 			return
 		}
@@ -194,6 +179,71 @@ func documentSaveHandler(api, allowedOrigin string) http.HandlerFunc {
 		}
 		jsonReply(w, http.StatusOK, map[string]any{"status": "saved", "document_id": saved.DocumentID, "title": saved.Title, "category": categoryName, "tags": []string{}, "pages": 0})
 	}
+}
+
+func resolveDocumentCategory(requested string, categories []struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}) (string, string, []string) {
+	key := categoryKey(requested)
+	if key == "" {
+		return "", "", nil
+	}
+	if key == "rental" || key == "rental property" {
+		for _, category := range categories {
+			if strings.EqualFold(strings.TrimSpace(category.Name), "Rentals") {
+				return category.ID, category.Name, nil
+			}
+		}
+		return "", "", nil
+	}
+	var exact []analysedCategory
+	for _, category := range categories {
+		if categoryKey(category.Name) == key {
+			exact = append(exact, analysedCategory{ID: category.ID, Name: category.Name})
+		}
+	}
+	if len(exact) == 1 {
+		return exact[0].ID, exact[0].Name, nil
+	}
+	if len(exact) > 1 {
+		return "", "", categoryNames(exact)
+	}
+	var partial []analysedCategory
+	for _, category := range categories {
+		candidate := categoryKey(category.Name)
+		if strings.Contains(candidate, key) || strings.Contains(key, candidate) {
+			partial = append(partial, analysedCategory{ID: category.ID, Name: category.Name})
+		}
+	}
+	if len(partial) == 1 {
+		return partial[0].ID, partial[0].Name, nil
+	}
+	return "", "", categoryNames(partial)
+}
+
+func categoryKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = regexp.MustCompile(`[^a-z0-9& ]+`).ReplaceAllString(value, " ")
+	value = regexp.MustCompile(`^(this\s+)?(as\s+)?`).ReplaceAllString(value, "")
+	value = regexp.MustCompile(`\b(documents?|category|collection)\b`).ReplaceAllString(value, " ")
+	value = strings.Join(strings.Fields(value), " ")
+	if strings.HasSuffix(value, "ies") && len(value) > 3 {
+		return value[:len(value)-3] + "y"
+	}
+	if strings.HasSuffix(value, "s") && !strings.HasSuffix(value, "ss") && len(value) > 3 {
+		return value[:len(value)-1]
+	}
+	return value
+}
+
+func categoryNames(categories []analysedCategory) []string {
+	names := make([]string, 0, len(categories))
+	for _, category := range categories {
+		names = append(names, category.Name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 var hashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
