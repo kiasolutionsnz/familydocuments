@@ -78,16 +78,40 @@ class AnalysisJob {
     this.result,
     this.failure,
     this.retryAllowed = false,
+    this.displayTitle,
+    this.category,
+    this.tags = const [],
+    this.createdAt,
+    this.updatedAt,
   });
   final String id, documentId, status;
   final OrganisedDocument? result;
   final String? failure;
   final bool retryAllowed;
+  final String? displayTitle;
+  final String? category;
+  final List<String> tags;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
   bool get terminal =>
       status == 'succeeded' ||
       status == 'failed' ||
       status == 'permanent_failed' ||
       status == 'dismissed';
+
+  AnalysisJob withDisplayTitle(String title) => AnalysisJob(
+    id: id,
+    documentId: documentId,
+    status: status,
+    result: result,
+    failure: failure,
+    retryAllowed: retryAllowed,
+    displayTitle: title,
+    category: category,
+    tags: tags,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+  );
 }
 
 class HomeService {
@@ -389,6 +413,23 @@ class HomeService {
       result: result,
       failure: payload['failure']?.toString(),
       retryAllowed: payload['retry_allowed'] == true,
+      displayTitle: payload['title']?.toString(),
+      category: payload['category']?.toString(),
+      tags:
+          (payload['tags'] as List?)
+              ?.map((value) => value.toString())
+              .toList() ??
+          const [],
+      createdAt: DateTime.tryParse(payload['created_at']?.toString() ?? '')
+          ?.toLocal(),
+      updatedAt: DateTime.tryParse(
+        (payload['completed_at'] ??
+                    payload['updated_at'] ??
+                    payload['started_at'] ??
+                    payload['created_at'])
+                ?.toString() ??
+            '',
+      )?.toLocal(),
     );
   }
 

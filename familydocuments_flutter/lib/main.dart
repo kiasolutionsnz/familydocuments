@@ -8,6 +8,8 @@ import 'core/auth/auth_service.dart';
 import 'core/home/home_intent.dart';
 import 'core/home/home_service.dart';
 import 'core/home/reminder_parser.dart';
+import 'features/timeline/data/timeline_service.dart';
+import 'features/timeline/timeline_page.dart';
 
 void main() => runApp(const FamilyDocumentsApp());
 
@@ -22,10 +24,12 @@ class FamilyDocumentsApp extends StatefulWidget {
     super.key,
     this.auth,
     this.homeService,
+    this.timelineService,
     this.pickUpload,
   });
   final AuthService? auth;
   final HomeService? homeService;
+  final TimelineService? timelineService;
   final Future<SelectedUpload?> Function()? pickUpload;
   @override
   State<FamilyDocumentsApp> createState() => _AppState();
@@ -35,6 +39,7 @@ class _AppState extends State<FamilyDocumentsApp> {
   final navigatorKey = GlobalKey<NavigatorState>();
   late final AuthService auth;
   late final HomeService homeService;
+  late final TimelineService timelineService;
   bool checking = true, signingIn = false, busy = false;
   String? error, message, retryAction;
   SearchResponse? searchResponse;
@@ -48,7 +53,7 @@ class _AppState extends State<FamilyDocumentsApp> {
   Timer? analysisTimer;
   String? analysisRequestId;
   String? reminderRequestId, reminderInstruction;
-  int analysisPolls = 0;
+  final Set<String> notifiedAnalysisJobs = {};
   int tab = 0;
   final query = TextEditingController();
   @override
@@ -56,6 +61,7 @@ class _AppState extends State<FamilyDocumentsApp> {
     super.initState();
     auth = widget.auth ?? AuthService();
     homeService = widget.homeService ?? HomeService(auth);
+    timelineService = widget.timelineService ?? TimelineService(auth);
     _restore();
   }
 
@@ -273,12 +279,15 @@ class _AppState extends State<FamilyDocumentsApp> {
       if (needsAnalysis) {
         analysisRequestId ??=
             'ocr-${auth.session?.userId ?? 'user'}-${DateTime.now().microsecondsSinceEpoch}';
-        final job = await homeService.submitAnalysisJob(
+        final submittedJob = await homeService.submitAnalysisJob(
           name: name,
           mimeType: mimeType,
           bytes: bytes,
           invoice: intent.type == HomeIntentType.invoiceAttachment,
           idempotencyKey: analysisRequestId!,
+        );
+        final job = submittedJob.withDisplayTitle(
+          name.replaceFirst(RegExp(r'\.[^.]+$'), ''),
         );
         if (mounted) {
           setState(() {
@@ -356,8 +365,10 @@ class _AppState extends State<FamilyDocumentsApp> {
       final jobs = await homeService.pendingAnalysisJobs();
       if (!mounted || jobs.isEmpty) return;
       setState(() {
+        analysisJobs.clear();
         for (final job in jobs) {
           analysisJobs[job.id] = job;
+          if (job.terminal) notifiedAnalysisJobs.add(job.id);
         }
         final completed = jobs
             .where((job) => job.status == 'succeeded' && job.result != null)
@@ -384,7 +395,6 @@ class _AppState extends State<FamilyDocumentsApp> {
 
   void _startAnalysisPolling() {
     if (analysisTimer?.isActive ?? false) return;
-    analysisPolls = 0;
     analysisTimer = Timer.periodic(
       const Duration(seconds: 2),
       (_) => _pollAnalysisJobs(),
@@ -402,19 +412,15 @@ class _AppState extends State<FamilyDocumentsApp> {
       _stopAnalysisPolling();
       return;
     }
-    if (++analysisPolls > 120) {
-      _stopAnalysisPolling();
-      if (mounted) {
-        setState(
-          () => message = 'Processing is still continuing. Return to Home to refresh its status.',
-        );
-      }
-      return;
-    }
     for (final current in active) {
       try {
         final job = await homeService.analysisJob(current.id);
         if (!mounted) return;
+        final completedNow =
+            !current.terminal &&
+            job.status == 'succeeded' &&
+            job.result != null &&
+            notifiedAnalysisJobs.add(job.id);
         setState(() {
           analysisJobs[job.id] = job;
           if (job.status == 'succeeded' && job.result != null) {
@@ -430,6 +436,7 @@ class _AppState extends State<FamilyDocumentsApp> {
                 : 'Reading and organising your document in the background…';
           }
         });
+        if (completedNow && tab != 1) _showAnalysisCompletion();
       } on AuthException {
         await auth.clear();
         _stopAnalysisPolling();
@@ -442,6 +449,60 @@ class _AppState extends State<FamilyDocumentsApp> {
   void _stopAnalysisPolling() {
     analysisTimer?.cancel();
     analysisTimer = null;
+  }
+
+  void _showAnalysisCompletion() {
+    final context = navigatorKey.currentContext;
+    if (context == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Finished reading your document.'),
+        action: SnackBarAction(
+          label: 'View',
+          onPressed: () => setState(() => tab = 1),
+        ),
+      ),
+    );
+  }
+
+  Future<void> refreshAnalysisJobs() => _restoreAnalysisJobs();
+
+  Future<void> retryAnalysisJob(String id) async {
+    final job = await homeService.retryAnalysisJob(id);
+    if (!mounted) return;
+    setState(() {
+      analysisJobs[id] = job;
+      error = null;
+      notifiedAnalysisJobs.remove(id);
+    });
+    _startAnalysisPolling();
+  }
+
+  Future<void> saveAnalysisWithoutReading(String id) async {
+    await homeService.dismissAnalysisJob(id);
+    if (mounted) setState(() => analysisJobs.remove(id));
+  }
+
+  Future<void> chooseAnalysisCategory(String id) async {
+    final categories = await homeService.categories();
+    if (!mounted) return;
+    final chosen = await showDialog<String>(
+      context: navigatorKey.currentContext!,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('Choose category'),
+        children: categories
+            .map(
+              (category) => SimpleDialogOption(
+                onPressed: () => Navigator.pop(dialogContext, category),
+                child: Text(category),
+              ),
+            )
+            .toList(),
+      ),
+    );
+    if (chosen == null) return;
+    await homeService.categorizeAnalysisJob(id, chosen);
+    if (mounted) setState(() => analysisJobs.remove(id));
   }
 
   Future<void> retry() async {
@@ -659,6 +720,7 @@ class _AppState extends State<FamilyDocumentsApp> {
   Future<void> signOut() async {
     _stopAnalysisPolling();
     analysisJobs.clear();
+    notifiedAnalysisJobs.clear();
     analysisRequestId = null;
     reminderRequestId = null;
     reminderInstruction = null;
@@ -691,6 +753,13 @@ class _AppState extends State<FamilyDocumentsApp> {
         : Shell(
             tab: tab,
             onTab: (v) => setState(() => tab = v),
+            timelineService: timelineService,
+            analysisJobs: analysisJobs.values.toList(),
+            onRefreshAnalysis: refreshAnalysisJobs,
+            onRetryAnalysisJob: retryAnalysisJob,
+            onSaveAnalysisWithoutReading: saveAnalysisWithoutReading,
+            onChooseAnalysisCategory: chooseAnalysisCategory,
+            onDismissAnalysisJob: saveAnalysisWithoutReading,
             query: query,
             busy: busy,
             message: message,
@@ -780,6 +849,13 @@ class Shell extends StatelessWidget {
     super.key,
     required this.tab,
     required this.onTab,
+    required this.timelineService,
+    required this.analysisJobs,
+    required this.onRefreshAnalysis,
+    required this.onRetryAnalysisJob,
+    required this.onSaveAnalysisWithoutReading,
+    required this.onChooseAnalysisCategory,
+    required this.onDismissAnalysisJob,
     required this.query,
     required this.busy,
     required this.message,
@@ -807,6 +883,13 @@ class Shell extends StatelessWidget {
   });
   final int tab;
   final ValueChanged<int> onTab;
+  final TimelineService timelineService;
+  final List<AnalysisJob> analysisJobs;
+  final Future<void> Function() onRefreshAnalysis;
+  final Future<void> Function(String) onRetryAnalysisJob;
+  final Future<void> Function(String) onSaveAnalysisWithoutReading;
+  final Future<void> Function(String) onChooseAnalysisCategory;
+  final Future<void> Function(String) onDismissAnalysisJob;
   final TextEditingController query;
   final bool busy;
   final String? message;
@@ -873,32 +956,43 @@ class Shell extends StatelessWidget {
   @override
   Widget build(BuildContext c) {
     final wide = MediaQuery.sizeOf(c).width >= 720;
-    final content = tab == 0
-        ? Home(
-            query: query,
-            busy: busy,
-            message: message,
-            error: error,
-            searchResponse: searchResponse,
-            organisedDocument: organisedDocument,
-            suggestedDestination: suggestedDestination,
-            unresolvedCategory: unresolvedCategory,
-            categoryMatchAmbiguous: categoryMatchAmbiguous,
-            uploadedName: uploadedName,
-            onSend: onSend,
-            onUpload: onUpload,
-            onClearAttachment: onClearAttachment,
-            onSaveSuggestion: onSaveSuggestion,
-            onCreateAndSaveCategory: onCreateAndSaveCategory,
-            onChooseUploadCategory: onChooseUploadCategory,
-            onCancelCategoryChoice: onCancelCategoryChoice,
-            onRetry: onRetry,
-            analysisFailure: analysisFailure,
-            onSaveWithoutReading: onSaveWithoutReading,
-            onChooseCategory: onChooseCategory,
-            onDismissAnalysis: onDismissAnalysis,
-          )
-        : Center(child: Text('${labels[tab]} will be connected in Phase 2.'));
+    final activeCount = analysisJobs.where((job) => !job.terminal).length;
+    final content = switch (tab) {
+      0 => Home(
+        query: query,
+        busy: busy,
+        message: message,
+        error: error,
+        searchResponse: searchResponse,
+        organisedDocument: organisedDocument,
+        suggestedDestination: suggestedDestination,
+        unresolvedCategory: unresolvedCategory,
+        categoryMatchAmbiguous: categoryMatchAmbiguous,
+        uploadedName: uploadedName,
+        onSend: onSend,
+        onUpload: onUpload,
+        onClearAttachment: onClearAttachment,
+        onSaveSuggestion: onSaveSuggestion,
+        onCreateAndSaveCategory: onCreateAndSaveCategory,
+        onChooseUploadCategory: onChooseUploadCategory,
+        onCancelCategoryChoice: onCancelCategoryChoice,
+        onRetry: onRetry,
+        analysisFailure: analysisFailure,
+        onSaveWithoutReading: onSaveWithoutReading,
+        onChooseCategory: onChooseCategory,
+        onDismissAnalysis: onDismissAnalysis,
+      ),
+      1 => TimelinePage(
+        service: timelineService,
+        processingJobs: analysisJobs,
+        onRefreshProcessing: onRefreshAnalysis,
+        onRetryJob: onRetryAnalysisJob,
+        onSaveWithoutReading: onSaveAnalysisWithoutReading,
+        onChooseCategory: onChooseAnalysisCategory,
+        onDismissJob: onDismissAnalysisJob,
+      ),
+      _ => Center(child: Text('${labels[tab]} will be connected in Phase 2.')),
+    };
     final main = Column(
       children: [
         Container(
@@ -910,15 +1004,32 @@ class Shell extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Text(
-                labels[tab],
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xff17233a),
+              Expanded(
+                child: Text(
+                  labels[tab],
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xff17233a),
+                  ),
                 ),
               ),
-              const Spacer(),
+              if (activeCount > 0) ...[
+                TextButton.icon(
+                  key: const ValueKey('processing-indicator'),
+                  onPressed: () => onTab(1),
+                  icon: const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  label: Text(
+                    '$activeCount document${activeCount == 1 ? '' : 's'} processing',
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
               profileMenu(c),
             ],
           ),

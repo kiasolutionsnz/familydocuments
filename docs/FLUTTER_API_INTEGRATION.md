@@ -26,3 +26,25 @@ Run Web locally: `flutter run -d chrome`. Build: `flutter build web`. Android: `
 - `GET /document-analysis/jobs/{id}` returns a tenant-filtered, user-safe status/result.
 - `POST /document-analysis/jobs/{id}/retry` retries terminal failures.
 - `POST /documents/analyse` remains unchanged for existing synchronous clients.
+
+# Phase 2A Timeline API
+
+`POST /rest/rpc/family_timeline` is the Timeline's unified, metadata-only data
+source. A single Family-scoped RPC is used instead of separately loading
+documents, reminders, saved links, imported messages and OCR jobs because those
+independent lists cannot provide stable cross-type ordering or cursor
+pagination. The RPC derives events from existing records; it does not create an
+audit log or invent retrieval activity.
+
+The request accepts `before_time`, `before_key`, `search_query` and
+`result_limit`. Results are newest first and include a stable next cursor.
+Document access and revocation, private/shared link visibility, reminder
+audience and admin-only imported-message visibility are applied at the database
+boundary using the authenticated user and Family membership. No client-supplied
+Family identifier is accepted. List responses contain metadata only and never
+include file bytes, full OCR text, message bodies, credentials or tokens.
+
+Flutter keeps the Phase 1B OCR polling loop as the single live source for Home,
+the authenticated shell indicator and Timeline. Timeline overlays those live
+states on the matching server item by job ID, so queued, reading, completed and
+failed states update in place without duplicate entries.

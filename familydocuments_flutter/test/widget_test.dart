@@ -9,6 +9,8 @@ import 'package:familydocuments_flutter/main.dart';
 import 'package:familydocuments_flutter/core/auth/auth_service.dart';
 import 'package:familydocuments_flutter/core/auth/session_store.dart';
 import 'package:familydocuments_flutter/core/home/home_service.dart';
+import 'package:familydocuments_flutter/features/timeline/data/timeline_service.dart';
+import 'package:familydocuments_flutter/features/timeline/models/timeline_item.dart';
 
 class Store implements SessionStore {
   String? value;
@@ -71,6 +73,7 @@ class FakeHomeService extends HomeService {
   int categorizeCalls = 0;
   int restoreCalls = 0;
   int retryAnalysisCalls = 0;
+  int pollCalls = 0;
   String? savedCategory;
   Uint8List? savedBytes;
   final List<String> analysisRequestIds = [];
@@ -148,13 +151,15 @@ class FakeHomeService extends HomeService {
   }
 
   @override
-  Future<AnalysisJob> analysisJob(String id) async =>
-      pollingResult ??
-      const AnalysisJob(
-        id: 'job-1',
-        documentId: 'document-1',
-        status: 'processing',
-      );
+  Future<AnalysisJob> analysisJob(String id) async {
+    pollCalls++;
+    return pollingResult ??
+        const AnalysisJob(
+          id: 'job-1',
+          documentId: 'document-1',
+          status: 'processing',
+        );
+  }
 
   @override
   Future<AnalysisJob> retryAnalysisJob(String id) async {
@@ -193,6 +198,22 @@ class FakeHomeService extends HomeService {
       dueDate: dueDate,
       dueTime: dueTime,
     );
+  }
+}
+
+class FakeTimelineService extends TimelineService {
+  FakeTimelineService(super.auth, {this.timelineItems = const []});
+  final List<TimelineItem> timelineItems;
+  int calls = 0;
+
+  @override
+  Future<TimelinePageData> load({
+    String query = '',
+    TimelineCursor? cursor,
+    int limit = 40,
+  }) async {
+    calls++;
+    return TimelinePageData(items: timelineItems, hasMore: false);
   }
 }
 
@@ -757,5 +778,157 @@ void main() {
       find.text('I couldn’t read the selected file. Please choose it again.'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('app-wide processing indicator opens Timeline', (t) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(
+      auth,
+      pendingJobs: const [
+        AnalysisJob(
+          id: 'job-1',
+          documentId: 'document-1',
+          status: 'processing',
+          displayTitle: 'Electricity bill',
+        ),
+      ],
+      pollingResult: const AnalysisJob(
+        id: 'job-1',
+        documentId: 'document-1',
+        status: 'processing',
+        displayTitle: 'Electricity bill',
+      ),
+    );
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: home,
+        timelineService: FakeTimelineService(auth),
+      ),
+    );
+    await t.pump(const Duration(milliseconds: 100));
+    expect(find.text('1 document processing'), findsOneWidget);
+    await t.tap(find.byKey(const ValueKey('processing-indicator')));
+    await t.pump(const Duration(milliseconds: 100));
+    await t.pump();
+    expect(
+      find.text('Everything you’ve saved and received, newest first.'),
+      findsOneWidget,
+    );
+    expect(find.text('Reading Electricity bill…'), findsOneWidget);
+    await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('OCR completion notification appears once and opens Timeline', (
+    t,
+  ) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(
+      auth,
+      pendingJobs: const [
+        AnalysisJob(
+          id: 'job-1',
+          documentId: 'document-1',
+          status: 'processing',
+        ),
+      ],
+      pollingResult: const AnalysisJob(
+        id: 'job-1',
+        documentId: 'document-1',
+        status: 'succeeded',
+        result: OrganisedDocument(
+          title: 'Electricity bill',
+          category: 'Home',
+          tags: ['invoice'],
+          pageCount: 1,
+        ),
+      ),
+    );
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: home,
+        timelineService: FakeTimelineService(auth),
+      ),
+    );
+    await t.pump(const Duration(milliseconds: 100));
+    expect(find.text('Finished reading your document.'), findsOneWidget);
+    expect(find.text('Finished reading your document.'), findsNWidgets(1));
+    t.widget<SnackBarAction>(find.byType(SnackBarAction)).onPressed();
+    await t.pump(const Duration(milliseconds: 100));
+    expect(find.text('Timeline'), findsWidgets);
+    await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('refresh restores pending jobs in Timeline without duplicates', (
+    t,
+  ) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(
+      auth,
+      pendingJobs: const [
+        AnalysisJob(
+          id: 'job-1',
+          documentId: 'document-1',
+          status: 'queued',
+          displayTitle: 'Passport',
+        ),
+      ],
+      pollingResult: const AnalysisJob(
+        id: 'job-1',
+        documentId: 'document-1',
+        status: 'queued',
+        displayTitle: 'Passport',
+      ),
+    );
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: home,
+        timelineService: FakeTimelineService(auth),
+      ),
+    );
+    await t.pump(const Duration(milliseconds: 100));
+    await t.tap(find.text('Timeline').first);
+    await t.pump(const Duration(milliseconds: 100));
+    await t.pump();
+    expect(find.text('Passport queued for reading'), findsOneWidget);
+    await t.tap(find.byTooltip('Refresh Timeline'));
+    await t.pump(const Duration(milliseconds: 100));
+    await t.pump();
+    expect(find.text('Passport queued for reading'), findsOneWidget);
+    expect(home.restoreCalls, 2);
+    await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('sign out stops background polling', (t) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(
+      auth,
+      pendingJobs: const [
+        AnalysisJob(
+          id: 'job-1',
+          documentId: 'document-1',
+          status: 'processing',
+        ),
+      ],
+    );
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: home,
+        timelineService: FakeTimelineService(auth),
+      ),
+    );
+    await t.pump(const Duration(milliseconds: 100));
+    final menu = t.widget<PopupMenuButton<String>>(
+      find.byKey(const ValueKey('profile-avatar')),
+    );
+    menu.onSelected!('signout');
+    await t.pump(const Duration(milliseconds: 100));
+    final callsAfterSignOut = home.pollCalls;
+    await t.pump(const Duration(seconds: 3));
+    expect(home.pollCalls, callsAfterSignOut);
+    expect(find.text('Sign in'), findsOneWidget);
   });
 }
