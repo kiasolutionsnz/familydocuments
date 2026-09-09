@@ -9,6 +9,8 @@ import 'core/home/home_intent.dart';
 import 'core/home/home_service.dart';
 import 'core/home/reminder_parser.dart';
 import 'core/navigation/destination_state.dart';
+import 'features/library/data/library_service.dart';
+import 'features/library/library_page.dart';
 import 'features/timeline/data/timeline_service.dart';
 import 'features/timeline/timeline_page.dart';
 
@@ -26,12 +28,14 @@ class FamilyDocumentsApp extends StatefulWidget {
     this.auth,
     this.homeService,
     this.timelineService,
+    this.libraryService,
     this.pickUpload,
     this.destinationState,
   });
   final AuthService? auth;
   final HomeService? homeService;
   final TimelineService? timelineService;
+  final LibraryService? libraryService;
   final Future<SelectedUpload?> Function()? pickUpload;
   final DestinationState? destinationState;
   @override
@@ -43,6 +47,7 @@ class _AppState extends State<FamilyDocumentsApp> {
   late final AuthService auth;
   late final HomeService homeService;
   late final TimelineService timelineService;
+  late final LibraryService libraryService;
   late final DestinationState destinationState;
   StreamSubscription<PrimaryDestination>? destinationSubscription;
   late final bool ownsDestinationState;
@@ -68,6 +73,7 @@ class _AppState extends State<FamilyDocumentsApp> {
     auth = widget.auth ?? AuthService();
     homeService = widget.homeService ?? HomeService(auth);
     timelineService = widget.timelineService ?? TimelineService(auth);
+    libraryService = widget.libraryService ?? LibraryService(auth);
     ownsDestinationState = widget.destinationState == null;
     destinationState = widget.destinationState ?? createDestinationState();
     destinationSubscription = destinationState.changes.listen((destination) {
@@ -779,12 +785,14 @@ class _AppState extends State<FamilyDocumentsApp> {
             tab: tab,
             onTab: _selectTab,
             timelineService: timelineService,
+            libraryService: libraryService,
             analysisJobs: analysisJobs.values.toList(),
             onRefreshAnalysis: refreshAnalysisJobs,
             onRetryAnalysisJob: retryAnalysisJob,
             onSaveAnalysisWithoutReading: saveAnalysisWithoutReading,
             onChooseAnalysisCategory: chooseAnalysisCategory,
             onDismissAnalysisJob: saveAnalysisWithoutReading,
+            onLibraryMetadataChanged: _invalidateDocumentResults,
             query: query,
             busy: busy,
             message: message,
@@ -816,6 +824,14 @@ class _AppState extends State<FamilyDocumentsApp> {
     if (value < 0 || value >= PrimaryDestination.values.length) return;
     setState(() => tab = value);
     destinationState.select(PrimaryDestination.values[value]);
+  }
+
+  void _invalidateDocumentResults() {
+    if (!mounted) return;
+    setState(() {
+      searchResponse = null;
+      organisedDocument = null;
+    });
   }
 }
 
@@ -881,12 +897,14 @@ class Shell extends StatelessWidget {
     required this.tab,
     required this.onTab,
     required this.timelineService,
+    required this.libraryService,
     required this.analysisJobs,
     required this.onRefreshAnalysis,
     required this.onRetryAnalysisJob,
     required this.onSaveAnalysisWithoutReading,
     required this.onChooseAnalysisCategory,
     required this.onDismissAnalysisJob,
+    required this.onLibraryMetadataChanged,
     required this.query,
     required this.busy,
     required this.message,
@@ -915,12 +933,14 @@ class Shell extends StatelessWidget {
   final int tab;
   final ValueChanged<int> onTab;
   final TimelineService timelineService;
+  final LibraryService libraryService;
   final List<AnalysisJob> analysisJobs;
   final Future<void> Function() onRefreshAnalysis;
   final Future<void> Function(String) onRetryAnalysisJob;
   final Future<void> Function(String) onSaveAnalysisWithoutReading;
   final Future<void> Function(String) onChooseAnalysisCategory;
   final Future<void> Function(String) onDismissAnalysisJob;
+  final VoidCallback onLibraryMetadataChanged;
   final TextEditingController query;
   final bool busy;
   final String? message;
@@ -1021,6 +1041,12 @@ class Shell extends StatelessWidget {
         onSaveWithoutReading: onSaveAnalysisWithoutReading,
         onChooseCategory: onChooseAnalysisCategory,
         onDismissJob: onDismissAnalysisJob,
+      ),
+      2 => LibraryPage(
+        service: libraryService,
+        processingJobs: analysisJobs,
+        onRefreshProcessing: onRefreshAnalysis,
+        onMetadataChanged: onLibraryMetadataChanged,
       ),
       _ => Center(child: Text('${labels[tab]} will be connected in Phase 2.')),
     };

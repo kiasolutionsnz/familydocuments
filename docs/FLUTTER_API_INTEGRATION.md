@@ -48,3 +48,28 @@ Flutter keeps the Phase 1B OCR polling loop as the single live source for Home,
 the authenticated shell indicator and Timeline. Timeline overlays those live
 states on the matching server item by job ID, so queued, reading, completed and
 failed states update in place without duplicate entries.
+
+# Phase 2B Library API
+
+`POST /rest/rpc/library_workspace` is the Library's unified metadata-only data
+source. It derives the active Family from the authenticated membership and
+returns authorised document summaries, real collection/category counts, tags,
+trip and rental groupings, and visible saved links. It accepts optional
+`search_query`, `category_filter`, `tag_filter`, `sort_order`, `result_limit`
+and `result_offset` values. Search is a predictable, case-insensitive metadata
+filter; file bytes, full OCR text, storage keys and internal processing details
+are not returned in collection lists.
+
+`POST /rest/rpc/update_library_document` changes a document category and its
+normalised, de-duplicated tags in one guarded operation. The RPC rejects
+categories outside the authenticated Family, requires edit permission and uses
+`expected_updated_at` to prevent lost updates. It does not enqueue OCR.
+Category creation continues to use the existing explicit `create_category`
+confirmation flow. Opening locally stored source files continues to use
+`document_source`; externally connected files retain the existing connected
+storage behavior.
+
+Flutter reuses the authenticated HTTP client, app-wide OCR job state and the
+existing primary-destination history. Library detail history is stored only in
+same-tab browser history state (not in the URL), so private record identifiers
+are not exposed in URLs.

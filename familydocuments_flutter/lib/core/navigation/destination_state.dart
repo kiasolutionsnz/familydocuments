@@ -7,7 +7,12 @@ import 'destination_state_factory_stub.dart'
 enum PrimaryDestination { home, timeline, library, inbox, reminders }
 
 PrimaryDestination destinationFromPath(String value) {
-  final path = value.trim().toLowerCase().replaceFirst(RegExp(r'^#?/?'), '');
+  final path = value
+      .trim()
+      .toLowerCase()
+      .replaceFirst(RegExp(r'^#?/?'), '')
+      .split('/')
+      .first;
   return PrimaryDestination.values.firstWhere(
     (destination) => destination.name == path,
     orElse: () => PrimaryDestination.home,

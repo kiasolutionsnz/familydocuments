@@ -1,15 +1,17 @@
 import {spawn} from 'node:child_process';
 import {randomBytes} from 'node:crypto';
-import {readFile, readdir} from 'node:fs/promises';
+import {readFile, readdir, mkdir, writeFile, open} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {createServer} from 'node:net';
 import {scannerVersion, assertFresh} from '../email-ingestion/clamd-client.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const docker = process.env.FD_DOCKER || 'docker';
-const prefix = `fd-test-${randomBytes(6).toString('hex')}`;
-const label = 'app.familydocuments.test-run';
-const containers = [], networks = [];
+const manualLibrary = process.argv.includes('--manual-library');
+const prefix = `${manualLibrary ? 'fd-library' : 'fd-test'}-${randomBytes(6).toString('hex')}`;
+const label = manualLibrary ? 'app.familydocuments.manual-runtime' : 'app.familydocuments.test-run';
+const containers = [], networks = [], processes = [];
+let keepManualRuntime = false;
 const reservedPorts = new Set();
 const env = {...process.env, FD_TEST_CONTEXT: 'isolated', FD_TEST_CONTAINER: `${prefix}-db`, GOTRUE_JWT_SECRET: randomBytes(48).toString('hex'), FD_TEST_HMAC_SECRET: randomBytes(32).toString('hex')};
 const password = randomBytes(32).toString('hex');
@@ -59,6 +61,9 @@ async function ready(url, timeout = 120000) {
 async function sql(text, user = 'postgres') {return command(docker, ['exec', '-i', env.FD_TEST_CONTAINER, 'psql', '-U', user, '-d', 'postgres', '-v', 'ON_ERROR_STOP=1'], {input: text, quiet: true});}
 async function cleanup() {
   // Only resources created by this run, with a matching ownership label, can be removed.
+  for (const child of processes.reverse()) {
+    if (child.exitCode === null) child.kill();
+  }
   for (const name of containers.reverse()) {
     const owner = await command(docker, ['inspect', '-f', `{{index .Config.Labels "${label}"}}`, name], {quiet: true}).catch(() => '');
     if (owner === prefix) await command(docker, ['rm', '-f', '-v', name], {quiet: true});
@@ -76,7 +81,7 @@ try {
     const name = `${prefix}_${scope}`;
     await command(docker, ['network', 'create', ...(scope === 'db' ? ['--internal'] : []), '--label', `${label}=${prefix}`, name], {quiet: true}); networks.push(name);
   }
-  const ports = Object.fromEntries(await Promise.all(['AUTH', 'API', 'MAIL', 'OCR', 'SEARCH', 'SMTP', 'GATEWAY', 'CLAMD'].map(async key => [key, await freePort()])));
+  const ports = Object.fromEntries(await Promise.all(['AUTH', 'API', 'MAIL', 'OCR', 'SEARCH', 'SMTP', 'GATEWAY', 'CLAMD', 'WEB'].map(async key => [key, await freePort()])));
   for (const [key, port] of Object.entries(ports)) env[`FD_${key}_URL`] = `http://127.0.0.1:${port}`;
   Object.assign(env, {FP_API_URL: env.FD_API_URL, FP_OCR_URL: env.FD_OCR_URL, FP_MAILPIT_URL: env.FD_MAIL_URL, FP_SEARCH_PORT: String(ports.SEARCH), FP_OLLAMA_URL: process.env.FD_TEST_OLLAMA_URL || 'http://127.0.0.1:1'});
   Object.assign(env, {FP_CLAMD_HOST: '127.0.0.1', FP_CLAMD_PORT: String(ports.CLAMD)});
@@ -101,11 +106,11 @@ try {
   console.log('All migrations replayed in disposable PostgreSQL.');
   await run('rest', images.rest, ['--network', `name=${networks[1]},alias=rest`, '--network', networks[0], '-p', `127.0.0.1:${ports.API}:3000`, '--read-only', '--cap-drop', 'ALL', '-e', `PGRST_DB_URI=postgres://authenticator:${password}@db:5432/postgres`, '-e', 'PGRST_DB_SCHEMAS=fp', '-e', 'PGRST_DB_ANON_ROLE=anon', '-e', `PGRST_JWT_SECRET=${env.GOTRUE_JWT_SECRET}`]);
   await ready(env.FD_API_URL);
-  await run('gateway', images.gateway, ['--network', networks[1], '-p', `127.0.0.1:${ports.GATEWAY}:8080`, '--read-only', '--cap-drop', 'ALL', '-e', `GOTRUE_JWT_SECRET=${env.GOTRUE_JWT_SECRET}`, '-e', `INGESTION_HMAC_SECRET=${env.FD_TEST_HMAC_SECRET}`, '-e', 'FP_API_URL=http://rest:3000', '-e', `AUTH_UPSTREAM_URL=http://${prefix}-auth:9999`, '-e', 'OCR_UPSTREAM_URL=http://ocr:8080', '-e', 'FRONTEND_ORIGIN=http://127.0.0.1:3300']);
+  await run('gateway', images.gateway, ['--network', networks[1], '-p', `127.0.0.1:${ports.GATEWAY}:8080`, '--read-only', '--cap-drop', 'ALL', '-e', `GOTRUE_JWT_SECRET=${env.GOTRUE_JWT_SECRET}`, '-e', `INGESTION_HMAC_SECRET=${env.FD_TEST_HMAC_SECRET}`, '-e', 'FP_API_URL=http://rest:3000', '-e', `AUTH_UPSTREAM_URL=http://${prefix}-auth:9999`, '-e', 'OCR_UPSTREAM_URL=http://ocr:8080', '-e', `FRONTEND_ORIGIN=http://127.0.0.1:${manualLibrary ? ports.WEB : 3300}`]);
   await ready(`${env.FD_GATEWAY_URL}/health`);
   env.FD_SEARCH_URL = `${env.FD_GATEWAY_URL}/search`;
   console.log(`Isolated database container: ${env.FD_TEST_CONTAINER}`);
-  const suites = process.argv.slice(2);
+  const suites = process.argv.slice(2).filter(value => value !== '--manual-library');
   const selected = suites.length ? suites : ['email-password-auth.mjs', 'family-foundation.mjs', 'totp-mfa-e2e.mjs', 'google-oauth-contract.mjs', 'email-ingestion-e2e.mjs', 'search-assistant-e2e.mjs', 'ocr-reminder-e2e.mjs', 'attachment-scanner-e2e.mjs', 'google-drive-exact-files.sql', 'operational-hardening.sql', 'ux-phase-a-original-sources.sql'];
   async function startOcr() {
     console.log('Starting isolated real PaddleOCR (models baked in cached image; no external AI).');
@@ -126,7 +131,108 @@ try {
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
-  for (const suite of selected) {
+  if (manualLibrary) {
+    const runtimeDir = fileURLToPath(new URL(`../supabase/.temp/phase2b-manual-${prefix}/`, import.meta.url));
+    await mkdir(runtimeDir, {recursive: true});
+    await startOcr();
+    const ollama = await fetch('http://127.0.0.1:11434/api/tags', {signal: AbortSignal.timeout(5000)}).then(response => response.json());
+    if (!ollama.models?.some(item => String(item.name).startsWith('qwen3:4b'))) throw new Error('Local qwen3:4b is unavailable');
+
+    async function createManualAccount(accountLabel) {
+      const suffix = `${Date.now()}-${randomBytes(4).toString('hex')}`;
+      const email = `${accountLabel}-${suffix}@family-passport.test`;
+      const accountPassword = `Synthetic-${randomBytes(10).toString('base64url')}!9a`;
+      const headers = {'content-type': 'application/json'};
+      const signup = await fetch(`${env.FD_AUTH_URL}/signup`, {method: 'POST', headers, body: JSON.stringify({email, password: accountPassword})});
+      if (!signup.ok) throw new Error(`Synthetic ${accountLabel} signup failed`);
+      let message;
+      for (let attempt = 0; attempt < 40 && !message; attempt++) {
+        const listing = await (await fetch(`${env.FD_MAIL_URL}/api/v1/messages`)).json();
+        message = listing.messages?.find(item => item.To?.some(to => to.Address === email));
+        if (!message) await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      if (!message) throw new Error(`Synthetic ${accountLabel} confirmation missing`);
+      const detail = await (await fetch(`${env.FD_MAIL_URL}/api/v1/message/${message.ID}`)).json();
+      const link = [detail.Text, detail.HTML].join('\n').match(/https?:\/\/[^\s"'<>]+\/verify\?[^\s"'<>]+/i)?.[0]?.replaceAll('&amp;', '&');
+      if (!link || new URL(link).origin !== env.FD_AUTH_URL) throw new Error('Synthetic confirmation was not disposable');
+      await fetch(link, {redirect: 'manual'});
+      const signin = await fetch(`${env.FD_AUTH_URL}/token?grant_type=password`, {method: 'POST', headers, body: JSON.stringify({email, password: accountPassword})});
+      const session = await signin.json();
+      if (!signin.ok) throw new Error(`Synthetic ${accountLabel} sign-in failed`);
+      return {email, password: accountPassword, userId: session.user.id, token: session.access_token};
+    }
+    async function rpc(account, name, payload = {}) {
+      const response = await fetch(`${env.FD_API_URL}/rpc/${name}`, {method: 'POST', headers: {authorization: `Bearer ${account.token}`, 'content-type': 'application/json'}, body: JSON.stringify(payload)});
+      const body = await response.json();
+      if (!response.ok) throw new Error(`Synthetic seed RPC ${name} failed`);
+      return body;
+    }
+
+    const owner = await createManualAccount('library-owner');
+    const viewer = await createManualAccount('library-viewer');
+    const outsider = await createManualAccount('library-outsider');
+    const ownerFamily = await rpc(owner, 'bootstrap_household', {household_name: 'Phase 2B synthetic Family', display_name: 'Synthetic owner'});
+    const outsiderFamily = await rpc(outsider, 'bootstrap_household', {household_name: 'Other synthetic Family', display_name: 'Synthetic outsider'});
+    await rpc(owner, 'create_category', {category_name: 'Documents'});
+    await rpc(owner, 'create_category', {category_name: 'Finance'});
+    const snapshot = await rpc(owner, 'household_snapshot');
+    const category = name => snapshot.categories.find(item => item.name === name)?.id;
+    const ids = Object.fromEntries(['passport','bill','flight','travelOther','rentalInsurance','rentalOther','medical','revocable','foreign','tripFiji','tripSydney','propertyOne','propertyTwo','linkCategory'].map(key => [key, crypto.randomUUID()]));
+    const familyId = ownerFamily.household.id;
+    const otherFamilyId = outsiderFamily.household.id;
+    const otherCategory = outsiderFamily.categories[0].id;
+    await sql(`
+      insert into fp.members(household_id,user_id,email,display_name,role) values('${familyId}','${viewer.userId}','${viewer.email}','Synthetic viewer','viewer');
+      insert into fp.documents(id,household_id,category_id,title,original_filename,mime_type,created_by,confirmation_status,tags,created_at) values
+        ('${ids.passport}','${familyId}','${category('Documents')}','Synthetic passport','synthetic-passport.pdf','application/pdf','${owner.userId}','confirmed','["identity","travel"]',now()),
+        ('${ids.bill}','${familyId}','${category('Finance')}','Synthetic electricity invoice','synthetic-bill.pdf','application/pdf','${owner.userId}','confirmed','["invoice","home"]',now()-interval '1 day'),
+        ('${ids.flight}','${familyId}','${category('Travel')}','Fiji flight booking','synthetic-flight.pdf','application/pdf','${owner.userId}','confirmed','["flight","fiji"]',now()-interval '2 days'),
+        ('${ids.travelOther}','${familyId}','${category('Travel')}','Unassigned travel notes','synthetic-travel-notes.pdf','application/pdf','${owner.userId}','confirmed','[]',now()-interval '3 days'),
+        ('${ids.rentalInsurance}','${familyId}','${category('Rental records')}','Rental insurance policy','synthetic-rental-insurance.pdf','application/pdf','${owner.userId}','confirmed','["insurance","rental"]',now()-interval '4 days'),
+        ('${ids.rentalOther}','${familyId}','${category('Rental records')}','Unassigned tenancy notes','synthetic-tenancy-notes.pdf','application/pdf','${owner.userId}','confirmed','[]',now()-interval '5 days'),
+        ('${ids.medical}','${familyId}','${category('Home')}','Family medical record','synthetic-medical.pdf','application/pdf','${owner.userId}','confirmed','["medical"]',now()-interval '6 days'),
+        ('${ids.revocable}','${familyId}','${category('Insurance')}','Revocable insurance document','synthetic-revocable.pdf','application/pdf','${owner.userId}','confirmed','["revocable"]',now()-interval '7 days'),
+        ('${ids.foreign}','${otherFamilyId}','${otherCategory}','Other Family private record','synthetic-private.pdf','application/pdf','${outsider.userId}','confirmed','["private"]',now());
+      insert into fp.document_permissions(document_id,member_user_id,access_level,granted_by) values('${ids.revocable}','${viewer.userId}','view','${owner.userId}');
+      insert into fp.travel_trips(id,household_id,name,destination,start_date,end_date,created_by) values
+        ('${ids.tripFiji}','${familyId}','Fiji — January 2027','Fiji','2027-01-10','2027-01-20','${owner.userId}'),
+        ('${ids.tripSydney}','${familyId}','Sydney — April 2027','Sydney','2027-04-02','2027-04-09','${owner.userId}');
+      insert into fp.travel_records(household_id,trip_id,document_id,travel_kind,confirmed_by) values('${familyId}','${ids.tripFiji}','${ids.flight}','flight','${owner.userId}');
+      insert into fp.entities(id,household_id,entity_type,name,created_by) values
+        ('${ids.propertyOne}','${familyId}','property','12 Example Street','${owner.userId}'),
+        ('${ids.propertyTwo}','${familyId}','property','8 Test Road','${owner.userId}');
+      insert into fp.rental_properties(entity_id,household_id,address,created_by) values
+        ('${ids.propertyOne}','${familyId}','12 Example Street, Wellington','${owner.userId}'),
+        ('${ids.propertyTwo}','${familyId}','8 Test Road, Auckland','${owner.userId}');
+      insert into fp.rental_bills(household_id,property_entity_id,document_id,expense_category,confirmed_by) values('${familyId}','${ids.propertyOne}','${ids.rentalInsurance}','insurance','${owner.userId}');
+      insert into fp.saved_link_categories(id,household_id,owner_user_id,name) values('${ids.linkCategory}','${familyId}','${owner.userId}','Research');
+      insert into fp.saved_links(household_id,owner_user_id,category_id,url,normalized_url_hash,source_host,title) values
+        ('${familyId}','${owner.userId}','${ids.linkCategory}','https://example.com/travel',repeat('8',64),'example.com','Synthetic travel research'),
+        ('${familyId}','${owner.userId}','${ids.linkCategory}','https://example.org/home',repeat('9',64),'example.org','Synthetic home reference');
+    `);
+
+    const workerLogPath = `${runtimeDir}\\worker.log`;
+    const flutterLogPath = `${runtimeDir}\\flutter.log`;
+    const workerLog = await open(workerLogPath, 'a');
+    const worker = spawn(process.execPath, ['document-analysis/worker.mjs', '--watch'], {cwd: root, env: {...env, FP_API_URL: env.FD_API_URL, FP_OCR_URL: env.FD_OCR_URL, FP_OLLAMA_URL: 'http://127.0.0.1:11434', FP_OLLAMA_MODEL: 'qwen3:4b'}, windowsHide: true, detached: true, stdio: ['ignore', workerLog.fd, workerLog.fd]});
+    processes.push(worker);
+    worker.unref();
+    await workerLog.close();
+    const flutterLog = await open(flutterLogPath, 'a');
+    const flutterCommand = process.env.FD_FLUTTER || 'C:\\src\\flutter\\bin\\flutter.bat';
+    const flutter = spawn(flutterCommand, ['run', '-d', 'web-server', '--web-hostname', '127.0.0.1', '--web-port', String(ports.WEB), `--dart-define=FAMILYDOCUMENTS_API_BASE_URL=${env.FD_GATEWAY_URL}`], {cwd: fileURLToPath(new URL('../../familydocuments_flutter/', import.meta.url)), env, shell: true, windowsHide: true, detached: true, stdio: ['ignore', flutterLog.fd, flutterLog.fd]});
+    processes.push(flutter);
+    flutter.unref();
+    await flutterLog.close();
+    await ready(`http://127.0.0.1:${ports.WEB}`, 240000);
+    const credentialsPath = `${runtimeDir}\\credentials.txt`;
+    await writeFile(credentialsPath, `Synthetic owner\nEmail: ${owner.email}\nPassword: ${owner.password}\n\nRead-only member\nEmail: ${viewer.email}\nPassword: ${viewer.password}\n`, {mode: 0o600});
+    const runtimePath = `${runtimeDir}\\runtime.json`;
+    await writeFile(runtimePath, JSON.stringify({runtime_id: prefix, label, created_at: new Date().toISOString(), containers, networks, processes: {worker: worker.pid, flutter: flutter.pid}, urls: {flutter: `http://127.0.0.1:${ports.WEB}`, gateway: env.FD_GATEWAY_URL, auth: env.FD_AUTH_URL, api: env.FD_API_URL, ocr: env.FD_OCR_URL}, logs: {worker: workerLogPath, flutter: flutterLogPath}, credentials_file: credentialsPath, fixtures: [fileURLToPath(new URL('../tests/fixtures/synthetic-bill.pdf', import.meta.url)), fileURLToPath(new URL('../tests/fixtures/synthetic-malformed.pdf', import.meta.url))], migration: '043_flutter_library.sql', seed: {documents: 8, trips: 2, rentals: 2, links: 2, read_only_member: true, inaccessible_family: true, revocable_document: ids.revocable}}, null, 2));
+    keepManualRuntime = true;
+    console.log(JSON.stringify({manual_library_runtime: 'READY', flutter_url: `http://127.0.0.1:${ports.WEB}`, credentials_file: credentialsPath, runtime_manifest: runtimePath, worker_pid: worker.pid, migration: '043_flutter_library.sql'}, null, 2));
+  }
+  for (const suite of manualLibrary ? [] : selected) {
     if (!/^[a-z0-9-]+\.(mjs|sql)$/.test(suite)) throw new Error('Invalid test suite name');
     console.log(`Running ${suite}`);
     try {
@@ -137,11 +243,16 @@ try {
       results.push({suite, status: 'PASS'});
     } catch (error) {results.push({suite, status: 'FAIL', message: error.message}); console.error(error.message);}
   }
-  if (!suites.length) {
+  if (!manualLibrary && !suites.length) {
     try {await command(process.execPath, ['--test', 'tests/relative-date.test.mjs', 'tests/notification-template.test.mjs', 'tests/ux-source-retention.test.mjs']); results.push({suite: 'unit-and-source-retention', status: 'PASS'});}
     catch (error) {results.push({suite: 'unit-and-source-retention', status: 'FAIL', message: error.message});}
   }
   console.log(JSON.stringify({isolated_results: results}, null, 2));
   if (results.some(result => result.status === 'FAIL')) process.exitCode = 1;
 } catch (error) {console.error(error.message); process.exitCode = 1;}
-finally {await cleanup(); console.log('Disposable test containers and networks removed; production was not changed.');}
+finally {
+  if (!keepManualRuntime) {
+    await cleanup();
+    console.log('Disposable test containers and networks removed; production was not changed.');
+  }
+}
