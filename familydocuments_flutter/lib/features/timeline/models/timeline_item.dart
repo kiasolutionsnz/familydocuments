@@ -1,5 +1,8 @@
 enum TimelineItemKind { document, link, message, reminder }
 
+String normalizeTimelineQuery(String value) =>
+    value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+
 class TimelineCursor {
   const TimelineCursor({required this.occurredAt, required this.key});
 
@@ -39,6 +42,15 @@ class TimelineItem {
   final List<String> tags;
   final String? url;
   final bool retryAllowed;
+
+  bool matchesSearch(String query) {
+    final needle = normalizeTimelineQuery(query);
+    if (needle.isEmpty) return true;
+    final metadata = normalizeTimelineQuery(
+      [title, context, category, ...tags, url].whereType<String>().join(' '),
+    );
+    return metadata.contains(needle);
+  }
 
   bool get isActive =>
       kind == TimelineItemKind.document &&

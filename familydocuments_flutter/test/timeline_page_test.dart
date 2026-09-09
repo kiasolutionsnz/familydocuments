@@ -32,11 +32,8 @@ class FakeTimelineService extends TimelineService {
     final page = cursor == null ? 0 : 1;
     final result = pages[page.clamp(0, pages.length - 1)];
     if (query.trim().isEmpty) return result;
-    final needle = query.toLowerCase();
     return TimelinePageData(
-      items: result.items
-          .where((item) => item.title.toLowerCase().contains(needle))
-          .toList(),
+      items: result.items.where((item) => item.matchesSearch(query)).toList(),
       hasMore: false,
     );
   }
@@ -76,20 +73,25 @@ TimelineItem item(
   String? status,
   String? category,
   List<String> tags = const [],
+  String? title,
+  String? context,
+  String? url,
 }) => TimelineItem(
   id: id,
   eventKey: '$kind:$id',
   kind: kind,
   eventType: '${kind.name}_event',
-  title: '$id title',
-  context: category ?? '${kind.name} context',
+  title: title ?? '$id title',
+  context: context ?? category ?? '${kind.name} context',
   occurredAt: when,
   documentId: kind == TimelineItemKind.document ? 'document-$id' : null,
   jobId: jobId,
   status: status,
   category: category,
   tags: tags,
-  url: kind == TimelineItemKind.link ? 'https://example.test/$id' : null,
+  url:
+      url ??
+      (kind == TimelineItemKind.link ? 'https://example.test/$id' : null),
   retryAllowed: status == 'failed',
 );
 
@@ -214,6 +216,132 @@ void main() {
     await t.pumpAndSettle();
     expect(service.queries.last, '');
     expect(find.text('invoice title'), findsOneWidget);
+  });
+
+  testWidgets('Timeline search is exact metadata filtering, not semantic', (
+    t,
+  ) async {
+    final service = FakeTimelineService(
+      items: [
+        item(
+          'passport',
+          TimelineItemKind.document,
+          now,
+          title: 'Family passport saved',
+          category: 'Travel Documents',
+          tags: const ['identity', 'fiji'],
+        ),
+        item(
+          'insurance',
+          TimelineItemKind.document,
+          now.subtract(const Duration(minutes: 1)),
+          title: 'Semantically related insurance summary',
+          tags: const ['policy'],
+        ),
+        item(
+          'reference',
+          TimelineItemKind.link,
+          now.subtract(const Duration(minutes: 2)),
+          title: 'Wellington tenancy guide saved',
+          category: 'Research',
+          url: 'https://tenancy.example.test/guide',
+        ),
+      ],
+    );
+    await t.pumpWidget(timelineHarness(service));
+    await t.pumpAndSettle();
+
+    Future<void> searchFor(String query) async {
+      await t.enterText(find.byKey(const ValueKey('timeline-search')), query);
+      await t.pump(const Duration(milliseconds: 350));
+      await t.pump();
+    }
+
+    await searchFor('  TRAVEL   DOCUMENTS  ');
+    expect(find.text('Family passport saved'), findsOneWidget);
+    await searchFor('fiji');
+    expect(find.text('Family passport saved'), findsOneWidget);
+    await searchFor('tenancy.example.test');
+    expect(find.text('Wellington tenancy guide saved'), findsOneWidget);
+    await searchFor('revoked passport');
+    expect(find.text('Nothing matched your search.'), findsOneWidget);
+    expect(find.text('Semantically related insurance summary'), findsNothing);
+    await t.tap(find.byTooltip('Clear Timeline search'));
+    await t.pumpAndSettle();
+    expect(find.text('Family passport saved'), findsOneWidget);
+    expect(find.text('Semantically related insurance summary'), findsOneWidget);
+  });
+
+  testWidgets('search preserves the selected type filter', (t) async {
+    final service = FakeTimelineService(
+      items: [
+        item(
+          'shared-doc',
+          TimelineItemKind.document,
+          now,
+          title: 'Shared record saved',
+        ),
+        item(
+          'shared-link',
+          TimelineItemKind.link,
+          now.subtract(const Duration(minutes: 1)),
+          title: 'Shared record saved',
+        ),
+      ],
+    );
+    await t.pumpWidget(timelineHarness(service));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Links'));
+    await t.enterText(
+      find.byKey(const ValueKey('timeline-search')),
+      'shared record',
+    );
+    await t.pump(const Duration(milliseconds: 350));
+    await t.pump();
+    expect(
+      find.byKey(
+        const ValueKey('timeline-item-TimelineItemKind.link:shared-link'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+        const ValueKey('timeline-item-TimelineItemKind.document:shared-doc'),
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('nonmatching restored OCR jobs do not leak into search results', (
+    t,
+  ) async {
+    await t.pumpWidget(
+      timelineHarness(
+        FakeTimelineService(),
+        jobs: const [
+          AnalysisJob(
+            id: 'job-1',
+            documentId: 'document-1',
+            status: 'succeeded',
+            result: OrganisedDocument(
+              title: 'Insurance summary',
+              category: 'Documents',
+              tags: ['policy'],
+              pageCount: 1,
+            ),
+          ),
+        ],
+      ),
+    );
+    await t.pumpAndSettle();
+    await t.enterText(
+      find.byKey(const ValueKey('timeline-search')),
+      'missing revoked record',
+    );
+    await t.pump(const Duration(milliseconds: 350));
+    await t.pump();
+    expect(find.text('Nothing matched your search.'), findsOneWidget);
+    expect(find.text('Finished reading Insurance summary'), findsNothing);
   });
 
   testWidgets('empty, filtered-empty and search-empty states are clear', (

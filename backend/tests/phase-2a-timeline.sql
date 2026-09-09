@@ -55,6 +55,15 @@ begin
   if not exists(select 1 from jsonb_array_elements(result->'items') x where x->>'kind'='message') then raise exception 'message missing';end if;
   if exists(select 1 from jsonb_array_elements(result->'items') x where x->>'title' like '%Foreign%') then raise exception 'cross-family document exposed';end if;
   if exists(select 1 from jsonb_array_elements(result->'items') x where x->>'event_key'='document:'||doc_id::text) then raise exception 'analysis document duplicated';end if;
+  if jsonb_array_length(fp.family_timeline(null,null,'does not exist',40)->'items')<>0 then raise exception 'nonmatching search returned items';end if;
+  if jsonb_array_length(fp.family_timeline(null,null,'insurance policy',40)->'items')<>0 then raise exception 'semantic nonmatch returned items';end if;
+  if not exists(select 1 from jsonb_array_elements(fp.family_timeline(null,null,'  TIMELINE   DOCUMENT ',40)->'items') x where x->>'job_id'=job_id::text) then raise exception 'normalised title search failed';end if;
+  if not exists(select 1 from jsonb_array_elements(fp.family_timeline(null,null,'Documents',40)->'items') x where x->>'job_id'=job_id::text) then raise exception 'category search failed';end if;
+  if not exists(select 1 from jsonb_array_elements(fp.family_timeline(null,null,'test',40)->'items') x where x->>'job_id'=job_id::text) then raise exception 'tag search failed';end if;
+  if not exists(select 1 from jsonb_array_elements(fp.family_timeline(null,null,'Timeline link',40)->'items') x where x->>'kind'='link') then raise exception 'link title search failed';end if;
+  if not exists(select 1 from jsonb_array_elements(fp.family_timeline(null,null,'example.test',40)->'items') x where x->>'kind'='link') then raise exception 'link domain search failed';end if;
+  if not exists(select 1 from jsonb_array_elements(fp.family_timeline(null,null,'sender@example.test',40)->'items') x where x->>'kind'='message') then raise exception 'message sender search failed';end if;
+  if not exists(select 1 from jsonb_array_elements(fp.family_timeline(null,null,'Timeline reminder',40)->'items') x where x->>'kind'='reminder') then raise exception 'reminder title search failed';end if;
 
   insert into fp.document_permissions(document_id,member_user_id,access_level,granted_by) values(doc_id,member_id,'view',owner_id);
   perform set_config('request.jwt.claims',jsonb_build_object('sub',member_id,'email','timeline-member@example.test','role','authenticated')::text,true);
@@ -62,6 +71,7 @@ begin
   if not exists(select 1 from jsonb_array_elements(fp.family_timeline(null,null,null,40)->'items') x where x->>'event_key'='reminder-created:'||(linked_reminder->>'id')) then raise exception 'permitted document reminder missing';end if;
   delete from fp.document_permissions where document_id=doc_id and member_user_id=member_id;
   if exists(select 1 from jsonb_array_elements(fp.family_timeline(null,null,null,40)->'items') x where x->>'job_id'=job_id::text) then raise exception 'revoked document remained visible';end if;
+  if jsonb_array_length(fp.family_timeline(null,null,'Timeline document',40)->'items')<>0 then raise exception 'revoked title search leaked or substituted items';end if;
   if exists(select 1 from jsonb_array_elements(fp.family_timeline(null,null,null,40)->'items') x where x->>'event_key'='reminder-created:'||(linked_reminder->>'id')) then raise exception 'revoked document reminder remained visible';end if;
 
   perform set_config('request.jwt.claims',jsonb_build_object('sub',other_id,'email','other-timeline@example.test','role','authenticated')::text,true);

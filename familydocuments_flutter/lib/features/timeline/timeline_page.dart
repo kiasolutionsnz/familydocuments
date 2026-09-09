@@ -131,7 +131,10 @@ class TimelinePageState extends State<TimelinePage> {
     }
     for (final job in widget.processingJobs) {
       final existing = byJob[job.id];
-      byJob[job.id] = _applyJob(existing, job);
+      final updated = _applyJob(existing, job);
+      if (existing != null || updated.matchesSearch(search.text)) {
+        byJob[job.id] = updated;
+      }
     }
     final combined = [...withoutJobs, ...byJob.values]..sort(_compareItems);
     return combined.where((item) {

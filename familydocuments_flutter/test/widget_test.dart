@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -9,6 +10,7 @@ import 'package:familydocuments_flutter/main.dart';
 import 'package:familydocuments_flutter/core/auth/auth_service.dart';
 import 'package:familydocuments_flutter/core/auth/session_store.dart';
 import 'package:familydocuments_flutter/core/home/home_service.dart';
+import 'package:familydocuments_flutter/core/navigation/destination_state.dart';
 import 'package:familydocuments_flutter/features/timeline/data/timeline_service.dart';
 import 'package:familydocuments_flutter/features/timeline/models/timeline_item.dart';
 
@@ -217,6 +219,35 @@ class FakeTimelineService extends TimelineService {
   }
 }
 
+class FakeDestinationState implements DestinationState {
+  FakeDestinationState([this.value = PrimaryDestination.home]);
+
+  PrimaryDestination value;
+  final controller = StreamController<PrimaryDestination>.broadcast();
+
+  @override
+  PrimaryDestination get current => value;
+
+  @override
+  Stream<PrimaryDestination> get changes => controller.stream;
+
+  @override
+  void select(PrimaryDestination destination) {
+    value = destination;
+  }
+
+  void simulateHistory(PrimaryDestination destination) {
+    value = destination;
+    controller.add(destination);
+  }
+
+  @override
+  void reset() => value = PrimaryDestination.home;
+
+  @override
+  void dispose() => controller.close();
+}
+
 FakeAuth authenticatedUser() => FakeAuth(
   Session(
     accessToken: 'access',
@@ -239,6 +270,122 @@ Future<void> attachAndSend(WidgetTester tester, String message) async {
 }
 
 void main() {
+  test('invalid destination paths fall back to Home', () {
+    expect(destinationFromPath('#/not-a-screen'), PrimaryDestination.home);
+  });
+
+  testWidgets('Timeline destination survives an authenticated app rebuild', (
+    t,
+  ) async {
+    final destination = FakeDestinationState(PrimaryDestination.timeline);
+    final auth = authenticatedUser();
+    final timeline = FakeTimelineService(auth);
+    final home = FakeHomeService(
+      auth,
+      pendingJobs: const [
+        AnalysisJob(
+          id: 'job-refresh',
+          documentId: 'document-refresh',
+          status: 'queued',
+          displayTitle: 'Refresh test bill',
+        ),
+      ],
+      pollingResult: const AnalysisJob(
+        id: 'job-refresh',
+        documentId: 'document-refresh',
+        status: 'queued',
+        displayTitle: 'Refresh test bill',
+      ),
+    );
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        key: UniqueKey(),
+        auth: auth,
+        homeService: home,
+        timelineService: timeline,
+        destinationState: destination,
+      ),
+    );
+    await t.pump(const Duration(milliseconds: 100));
+    await t.pump();
+    expect(
+      find.text('Everything you’ve saved and received, newest first.'),
+      findsOneWidget,
+    );
+    expect(find.text('Refresh test bill queued for reading'), findsOneWidget);
+    await t.pumpWidget(const SizedBox());
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        key: UniqueKey(),
+        auth: auth,
+        homeService: home,
+        timelineService: timeline,
+        destinationState: destination,
+      ),
+    );
+    await t.pump(const Duration(milliseconds: 100));
+    await t.pump();
+    expect(
+      find.text('Everything you’ve saved and received, newest first.'),
+      findsOneWidget,
+    );
+    expect(find.text('Refresh test bill queued for reading'), findsOneWidget);
+    await t.pumpWidget(const SizedBox());
+    await destination.controller.close();
+  });
+
+  testWidgets('destination history changes select the matching screen', (
+    t,
+  ) async {
+    final destination = FakeDestinationState();
+    final auth = authenticatedUser();
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: FakeHomeService(auth),
+        timelineService: FakeTimelineService(auth),
+        destinationState: destination,
+      ),
+    );
+    await t.pumpAndSettle();
+    destination.simulateHistory(PrimaryDestination.timeline);
+    await t.pumpAndSettle();
+    expect(
+      find.text('Everything you’ve saved and received, newest first.'),
+      findsOneWidget,
+    );
+    destination.simulateHistory(PrimaryDestination.home);
+    await t.pumpAndSettle();
+    expect(find.text('What do you need?'), findsOneWidget);
+    await t.pumpWidget(const SizedBox());
+    await destination.controller.close();
+  });
+
+  testWidgets('sign-out clears the restorable authenticated destination', (
+    t,
+  ) async {
+    final destination = FakeDestinationState(PrimaryDestination.timeline);
+    final auth = authenticatedUser();
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: FakeHomeService(auth),
+        timelineService: FakeTimelineService(auth),
+        destinationState: destination,
+      ),
+    );
+    await t.pumpAndSettle();
+    final menu = t.widget<PopupMenuButton<String>>(
+      find.byKey(const ValueKey('profile-avatar')),
+    );
+    menu.onSelected!('signout');
+    await t.pumpAndSettle();
+    expect(destination.current, PrimaryDestination.home);
+    expect(find.text('Sign in'), findsOneWidget);
+    await t.pumpWidget(const SizedBox());
+    await destination.controller.close();
+  });
+
   testWidgets('shows session check before sign in', (t) async {
     await t.pumpWidget(const FamilyDocumentsApp());
     expect(find.text('Checking your session…'), findsOneWidget);

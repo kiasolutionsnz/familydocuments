@@ -8,6 +8,7 @@ import 'core/auth/auth_service.dart';
 import 'core/home/home_intent.dart';
 import 'core/home/home_service.dart';
 import 'core/home/reminder_parser.dart';
+import 'core/navigation/destination_state.dart';
 import 'features/timeline/data/timeline_service.dart';
 import 'features/timeline/timeline_page.dart';
 
@@ -26,11 +27,13 @@ class FamilyDocumentsApp extends StatefulWidget {
     this.homeService,
     this.timelineService,
     this.pickUpload,
+    this.destinationState,
   });
   final AuthService? auth;
   final HomeService? homeService;
   final TimelineService? timelineService;
   final Future<SelectedUpload?> Function()? pickUpload;
+  final DestinationState? destinationState;
   @override
   State<FamilyDocumentsApp> createState() => _AppState();
 }
@@ -40,6 +43,9 @@ class _AppState extends State<FamilyDocumentsApp> {
   late final AuthService auth;
   late final HomeService homeService;
   late final TimelineService timelineService;
+  late final DestinationState destinationState;
+  StreamSubscription<PrimaryDestination>? destinationSubscription;
+  late final bool ownsDestinationState;
   bool checking = true, signingIn = false, busy = false;
   String? error, message, retryAction;
   SearchResponse? searchResponse;
@@ -62,6 +68,13 @@ class _AppState extends State<FamilyDocumentsApp> {
     auth = widget.auth ?? AuthService();
     homeService = widget.homeService ?? HomeService(auth);
     timelineService = widget.timelineService ?? TimelineService(auth);
+    ownsDestinationState = widget.destinationState == null;
+    destinationState = widget.destinationState ?? createDestinationState();
+    destinationSubscription = destinationState.changes.listen((destination) {
+      if (!mounted || auth.session == null) return;
+      final next = destination.index;
+      if (tab != next) setState(() => tab = next);
+    });
     _restore();
   }
 
@@ -69,7 +82,13 @@ class _AppState extends State<FamilyDocumentsApp> {
     try {
       await auth.restore();
     } catch (_) {}
-    if (auth.session != null) await _restoreAnalysisJobs();
+    if (auth.session != null) {
+      tab = destinationState.current.index;
+      await _restoreAnalysisJobs();
+    } else {
+      destinationState.reset();
+      tab = PrimaryDestination.home.index;
+    }
     if (mounted) setState(() => checking = false);
   }
 
@@ -77,6 +96,8 @@ class _AppState extends State<FamilyDocumentsApp> {
     setState(() => signingIn = true);
     try {
       await auth.signIn(e, p);
+      destinationState.reset();
+      tab = PrimaryDestination.home.index;
       await _restoreAnalysisJobs();
       if (mounted) setState(() => error = null);
     } on AuthException catch (x) {
@@ -726,6 +747,8 @@ class _AppState extends State<FamilyDocumentsApp> {
     reminderInstruction = null;
     unresolvedCategory = null;
     categoryMatchAmbiguous = false;
+    destinationState.reset();
+    tab = PrimaryDestination.home.index;
     setState(() => checking = true);
     await auth.signOut();
     if (mounted) setState(() => checking = false);
@@ -734,6 +757,8 @@ class _AppState extends State<FamilyDocumentsApp> {
   @override
   void dispose() {
     _stopAnalysisPolling();
+    destinationSubscription?.cancel();
+    if (ownsDestinationState) destinationState.dispose();
     query.dispose();
     super.dispose();
   }
@@ -752,7 +777,7 @@ class _AppState extends State<FamilyDocumentsApp> {
         ? Login(onSubmit: signIn, busy: signingIn, error: error)
         : Shell(
             tab: tab,
-            onTab: (v) => setState(() => tab = v),
+            onTab: _selectTab,
             timelineService: timelineService,
             analysisJobs: analysisJobs.values.toList(),
             onRefreshAnalysis: refreshAnalysisJobs,
@@ -786,6 +811,12 @@ class _AppState extends State<FamilyDocumentsApp> {
             onSignOut: signOut,
           ),
   );
+
+  void _selectTab(int value) {
+    if (value < 0 || value >= PrimaryDestination.values.length) return;
+    setState(() => tab = value);
+    destinationState.select(PrimaryDestination.values[value]);
+  }
 }
 
 class Login extends StatefulWidget {
