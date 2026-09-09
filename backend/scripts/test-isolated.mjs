@@ -8,8 +8,11 @@ import {scannerVersion, assertFresh} from '../email-ingestion/clamd-client.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const docker = process.env.FD_DOCKER || 'docker';
 const manualLibrary = process.argv.includes('--manual-library');
-const prefix = `${manualLibrary ? 'fd-library' : 'fd-test'}-${randomBytes(6).toString('hex')}`;
-const label = manualLibrary ? 'app.familydocuments.manual-runtime' : 'app.familydocuments.test-run';
+const manualInbox = process.argv.includes('--manual-inbox');
+if (manualLibrary && manualInbox) throw new Error('Choose one manual runtime');
+const manualRuntime = manualLibrary || manualInbox;
+const prefix = `${manualInbox ? 'fd-inbox' : manualLibrary ? 'fd-library' : 'fd-test'}-${randomBytes(6).toString('hex')}`;
+const label = manualRuntime ? 'app.familydocuments.manual-runtime' : 'app.familydocuments.test-run';
 const containers = [], networks = [], processes = [];
 let keepManualRuntime = false;
 const reservedPorts = new Set();
@@ -106,11 +109,11 @@ try {
   console.log('All migrations replayed in disposable PostgreSQL.');
   await run('rest', images.rest, ['--network', `name=${networks[1]},alias=rest`, '--network', networks[0], '-p', `127.0.0.1:${ports.API}:3000`, '--read-only', '--cap-drop', 'ALL', '-e', `PGRST_DB_URI=postgres://authenticator:${password}@db:5432/postgres`, '-e', 'PGRST_DB_SCHEMAS=fp', '-e', 'PGRST_DB_ANON_ROLE=anon', '-e', `PGRST_JWT_SECRET=${env.GOTRUE_JWT_SECRET}`]);
   await ready(env.FD_API_URL);
-  await run('gateway', images.gateway, ['--network', networks[1], '-p', `127.0.0.1:${ports.GATEWAY}:8080`, '--read-only', '--cap-drop', 'ALL', '-e', `GOTRUE_JWT_SECRET=${env.GOTRUE_JWT_SECRET}`, '-e', `INGESTION_HMAC_SECRET=${env.FD_TEST_HMAC_SECRET}`, '-e', 'FP_API_URL=http://rest:3000', '-e', `AUTH_UPSTREAM_URL=http://${prefix}-auth:9999`, '-e', 'OCR_UPSTREAM_URL=http://ocr:8080', '-e', `FRONTEND_ORIGIN=http://127.0.0.1:${manualLibrary ? ports.WEB : 3300}`]);
+  await run('gateway', images.gateway, ['--network', networks[1], '-p', `127.0.0.1:${ports.GATEWAY}:8080`, '--read-only', '--cap-drop', 'ALL', '-e', `GOTRUE_JWT_SECRET=${env.GOTRUE_JWT_SECRET}`, '-e', `INGESTION_HMAC_SECRET=${env.FD_TEST_HMAC_SECRET}`, '-e', 'FP_API_URL=http://rest:3000', '-e', `AUTH_UPSTREAM_URL=http://${prefix}-auth:9999`, '-e', 'OCR_UPSTREAM_URL=http://ocr:8080', '-e', `FRONTEND_ORIGIN=http://127.0.0.1:${manualRuntime ? ports.WEB : 3300}`]);
   await ready(`${env.FD_GATEWAY_URL}/health`);
   env.FD_SEARCH_URL = `${env.FD_GATEWAY_URL}/search`;
   console.log(`Isolated database container: ${env.FD_TEST_CONTAINER}`);
-  const suites = process.argv.slice(2).filter(value => value !== '--manual-library');
+  const suites = process.argv.slice(2).filter(value => value !== '--manual-library' && value !== '--manual-inbox');
   const selected = suites.length ? suites : ['email-password-auth.mjs', 'family-foundation.mjs', 'totp-mfa-e2e.mjs', 'google-oauth-contract.mjs', 'email-ingestion-e2e.mjs', 'search-assistant-e2e.mjs', 'ocr-reminder-e2e.mjs', 'attachment-scanner-e2e.mjs', 'google-drive-exact-files.sql', 'operational-hardening.sql', 'ux-phase-a-original-sources.sql'];
   async function startOcr() {
     console.log('Starting isolated real PaddleOCR (models baked in cached image; no external AI).');
@@ -131,8 +134,8 @@ try {
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
-  if (manualLibrary) {
-    const runtimeDir = fileURLToPath(new URL(`../supabase/.temp/phase2b-manual-${prefix}/`, import.meta.url));
+  if (manualRuntime) {
+    const runtimeDir = fileURLToPath(new URL(`../supabase/.temp/${manualInbox ? 'phase2c' : 'phase2b'}-manual-${prefix}/`, import.meta.url));
     await mkdir(runtimeDir, {recursive: true});
     await startOcr();
     const ollama = await fetch('http://127.0.0.1:11434/api/tags', {signal: AbortSignal.timeout(5000)}).then(response => response.json());
@@ -168,10 +171,10 @@ try {
       return body;
     }
 
-    const owner = await createManualAccount('library-owner');
-    const viewer = await createManualAccount('library-viewer');
-    const outsider = await createManualAccount('library-outsider');
-    const ownerFamily = await rpc(owner, 'bootstrap_household', {household_name: 'Phase 2B synthetic Family', display_name: 'Synthetic owner'});
+    const owner = await createManualAccount(`${manualInbox ? 'inbox' : 'library'}-owner`);
+    const viewer = await createManualAccount(`${manualInbox ? 'inbox' : 'library'}-viewer`);
+    const outsider = await createManualAccount(`${manualInbox ? 'inbox' : 'library'}-outsider`);
+    const ownerFamily = await rpc(owner, 'bootstrap_household', {household_name: `${manualInbox ? 'Phase 2C' : 'Phase 2B'} synthetic Family`, display_name: 'Synthetic owner'});
     const outsiderFamily = await rpc(outsider, 'bootstrap_household', {household_name: 'Other synthetic Family', display_name: 'Synthetic outsider'});
     await rpc(owner, 'create_category', {category_name: 'Documents'});
     await rpc(owner, 'create_category', {category_name: 'Finance'});
@@ -211,6 +214,31 @@ try {
         ('${familyId}','${owner.userId}','${ids.linkCategory}','https://example.org/home',repeat('9',64),'example.org','Synthetic home reference');
     `);
 
+    let inboxSeed = null;
+    if (manualInbox) {
+      const inboxIds = Object.fromEntries(['newAttachment','newLink','reviewed','earlier','foreign','attachment','billAttachment'].map(key => [key, crypto.randomUUID()]));
+      const billHex = Buffer.from(await readFile(new URL('../tests/fixtures/synthetic-bill.pdf', import.meta.url))).toString('hex');
+      await sql(`
+        insert into fp.inbound_sender_rules(household_id,sender_address,action,created_by) values
+          ('${familyId}','travel@example.test','allow','${owner.userId}'),
+          ('${familyId}','research@example.test','allow','${owner.userId}'),
+          ('${familyId}','clinic@example.test','allow','${owner.userId}'),
+          ('${familyId}','rentals@example.test','allow','${owner.userId}'),
+          ('${otherFamilyId}','private@example.test','allow','${outsider.userId}');
+        insert into fp.inbound_emails(id,household_id,inbox_alias_id,source_system,external_message_id,sender_address,recipient_addresses,subject,sent_at,raw_email,raw_sha256,raw_size_bytes,body_text,attachment_manifest,attachment_count,attachment_status,processing_status,sender_disposition,ingested_at,review_state) values
+          ('${inboxIds.newAttachment}','${familyId}',(select id from fp.household_inbox_aliases where household_id='${familyId}' limit 1),'cloudflare_email_worker','phase2c-attachment','travel@example.test','["${owner.email}"]','Synthetic travel attachment',now(),convert_to('synthetic attachment message','UTF8'),repeat('1',64),28,'Please save the attached synthetic travel insurance document.','[]',1,'quarantined_unscanned','needs_review','allowed',now(),'unreviewed'),
+          ('${inboxIds.newLink}','${familyId}',(select id from fp.household_inbox_aliases where household_id='${familyId}' limit 1),'cloudflare_email_worker','phase2c-link','research@example.test','["${owner.email}"]','Useful Family research link',now()-interval '1 hour',convert_to('synthetic link message','UTF8'),repeat('2',64),22,'A safe reference: https://example.com/family-research','[]',0,'none','needs_review','allowed',now()-interval '1 hour','unreviewed'),
+          ('${inboxIds.reviewed}','${familyId}',(select id from fp.household_inbox_aliases where household_id='${familyId}' limit 1),'cloudflare_email_worker','phase2c-reviewed','clinic@example.test','["${owner.email}"]','Doctor appointment follow-up',now()-interval '3 hours',convert_to('synthetic reviewed message','UTF8'),repeat('3',64),26,'Follow up about the synthetic appointment.','[]',0,'none','needs_review','allowed',now()-interval '3 hours','reviewed'),
+          ('${inboxIds.earlier}','${familyId}',(select id from fp.household_inbox_aliases where household_id='${familyId}' limit 1),'cloudflare_email_worker','phase2c-earlier','rentals@example.test','["${owner.email}"]','Earlier rental inspection',now()-interval '3 days',convert_to('synthetic earlier message','UTF8'),repeat('4',64),25,'An earlier synthetic rental message.','[]',0,'none','needs_review','allowed',now()-interval '3 days','unreviewed'),
+          ('${inboxIds.foreign}','${otherFamilyId}',(select id from fp.household_inbox_aliases where household_id='${otherFamilyId}' limit 1),'cloudflare_email_worker','phase2c-foreign','private@example.test','["${outsider.email}"]','Other Family private message',now(),convert_to('synthetic private message','UTF8'),repeat('5',64),25,'Other Family content.','[]',0,'none','needs_review','allowed',now(),'unreviewed');
+        insert into fp.inbound_attachments(id,inbound_email_id,household_id,mailpit_part_id,file_name,claimed_content_type,expected_size_bytes,expected_sha256,content,content_sha256,scan_status,scanned_at) values
+          ('${inboxIds.attachment}','${inboxIds.newAttachment}','${familyId}','part-1','synthetic-travel-document.pdf','application/pdf',octet_length(decode('${billHex}','hex')),encode(extensions.digest(decode('${billHex}','hex'),'sha256'),'hex'),decode('${billHex}','hex'),encode(extensions.digest(decode('${billHex}','hex'),'sha256'),'hex'),'clean',now()),
+          ('${inboxIds.billAttachment}','${inboxIds.newAttachment}','${familyId}','part-2','synthetic-bill.pdf','application/pdf',octet_length(decode('${billHex}','hex')),encode(extensions.digest(decode('${billHex}','hex'),'sha256'),'hex'),decode('${billHex}','hex'),encode(extensions.digest(decode('${billHex}','hex'),'sha256'),'hex'),'clean',now());
+        update fp.inbound_emails set attachment_count=2 where id='${inboxIds.newAttachment}';
+      `);
+      inboxSeed = {emails: 4, attachments: 2, reviewed: 1, unreviewed: 3, inaccessible_family: true, revocable_message: inboxIds.earlier};
+    }
+
     const workerLogPath = `${runtimeDir}\\worker.log`;
     const flutterLogPath = `${runtimeDir}\\flutter.log`;
     const workerLog = await open(workerLogPath, 'a');
@@ -228,11 +256,12 @@ try {
     const credentialsPath = `${runtimeDir}\\credentials.txt`;
     await writeFile(credentialsPath, `Synthetic owner\nEmail: ${owner.email}\nPassword: ${owner.password}\n\nRead-only member\nEmail: ${viewer.email}\nPassword: ${viewer.password}\n`, {mode: 0o600});
     const runtimePath = `${runtimeDir}\\runtime.json`;
-    await writeFile(runtimePath, JSON.stringify({runtime_id: prefix, label, created_at: new Date().toISOString(), containers, networks, processes: {worker: worker.pid, flutter: flutter.pid}, urls: {flutter: `http://127.0.0.1:${ports.WEB}`, gateway: env.FD_GATEWAY_URL, auth: env.FD_AUTH_URL, api: env.FD_API_URL, ocr: env.FD_OCR_URL}, logs: {worker: workerLogPath, flutter: flutterLogPath}, credentials_file: credentialsPath, fixtures: [fileURLToPath(new URL('../tests/fixtures/synthetic-bill.pdf', import.meta.url)), fileURLToPath(new URL('../tests/fixtures/synthetic-malformed.pdf', import.meta.url))], migration: '043_flutter_library.sql', seed: {documents: 8, trips: 2, rentals: 2, links: 2, read_only_member: true, inaccessible_family: true, revocable_document: ids.revocable}}, null, 2));
+    const migration = manualInbox ? '044_flutter_inbox.sql' : '043_flutter_library.sql';
+    await writeFile(runtimePath, JSON.stringify({runtime_id: prefix, label, created_at: new Date().toISOString(), containers, networks, processes: {worker: worker.pid, flutter: flutter.pid}, urls: {flutter: `http://127.0.0.1:${ports.WEB}`, gateway: env.FD_GATEWAY_URL, auth: env.FD_AUTH_URL, api: env.FD_API_URL, ocr: env.FD_OCR_URL}, logs: {worker: workerLogPath, flutter: flutterLogPath}, credentials_file: credentialsPath, fixtures: [fileURLToPath(new URL('../tests/fixtures/synthetic-bill.pdf', import.meta.url)), fileURLToPath(new URL('../tests/fixtures/synthetic-malformed.pdf', import.meta.url))], migration, seed: inboxSeed ?? {documents: 8, trips: 2, rentals: 2, links: 2, read_only_member: true, inaccessible_family: true, revocable_document: ids.revocable}}, null, 2));
     keepManualRuntime = true;
-    console.log(JSON.stringify({manual_library_runtime: 'READY', flutter_url: `http://127.0.0.1:${ports.WEB}`, credentials_file: credentialsPath, runtime_manifest: runtimePath, worker_pid: worker.pid, migration: '043_flutter_library.sql'}, null, 2));
+    console.log(JSON.stringify({[manualInbox ? 'manual_inbox_runtime' : 'manual_library_runtime']: 'READY', flutter_url: `http://127.0.0.1:${ports.WEB}`, credentials_file: credentialsPath, runtime_manifest: runtimePath, worker_pid: worker.pid, migration}, null, 2));
   }
-  for (const suite of manualLibrary ? [] : selected) {
+  for (const suite of manualRuntime ? [] : selected) {
     if (!/^[a-z0-9-]+\.(mjs|sql)$/.test(suite)) throw new Error('Invalid test suite name');
     console.log(`Running ${suite}`);
     try {
@@ -243,7 +272,7 @@ try {
       results.push({suite, status: 'PASS'});
     } catch (error) {results.push({suite, status: 'FAIL', message: error.message}); console.error(error.message);}
   }
-  if (!manualLibrary && !suites.length) {
+  if (!manualRuntime && !suites.length) {
     try {await command(process.execPath, ['--test', 'tests/relative-date.test.mjs', 'tests/notification-template.test.mjs', 'tests/ux-source-retention.test.mjs']); results.push({suite: 'unit-and-source-retention', status: 'PASS'});}
     catch (error) {results.push({suite: 'unit-and-source-retention', status: 'FAIL', message: error.message});}
   }

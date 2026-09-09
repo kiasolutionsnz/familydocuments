@@ -9,6 +9,8 @@ import 'core/home/home_intent.dart';
 import 'core/home/home_service.dart';
 import 'core/home/reminder_parser.dart';
 import 'core/navigation/destination_state.dart';
+import 'features/inbox/data/inbox_service.dart';
+import 'features/inbox/inbox_page.dart';
 import 'features/library/data/library_service.dart';
 import 'features/library/library_page.dart';
 import 'features/timeline/data/timeline_service.dart';
@@ -29,6 +31,7 @@ class FamilyDocumentsApp extends StatefulWidget {
     this.homeService,
     this.timelineService,
     this.libraryService,
+    this.inboxService,
     this.pickUpload,
     this.destinationState,
   });
@@ -36,6 +39,7 @@ class FamilyDocumentsApp extends StatefulWidget {
   final HomeService? homeService;
   final TimelineService? timelineService;
   final LibraryService? libraryService;
+  final InboxService? inboxService;
   final Future<SelectedUpload?> Function()? pickUpload;
   final DestinationState? destinationState;
   @override
@@ -48,6 +52,7 @@ class _AppState extends State<FamilyDocumentsApp> {
   late final HomeService homeService;
   late final TimelineService timelineService;
   late final LibraryService libraryService;
+  late final InboxService inboxService;
   late final DestinationState destinationState;
   StreamSubscription<PrimaryDestination>? destinationSubscription;
   late final bool ownsDestinationState;
@@ -74,6 +79,7 @@ class _AppState extends State<FamilyDocumentsApp> {
     homeService = widget.homeService ?? HomeService(auth);
     timelineService = widget.timelineService ?? TimelineService(auth);
     libraryService = widget.libraryService ?? LibraryService(auth);
+    inboxService = widget.inboxService ?? InboxService(auth);
     ownsDestinationState = widget.destinationState == null;
     destinationState = widget.destinationState ?? createDestinationState();
     destinationSubscription = destinationState.changes.listen((destination) {
@@ -786,6 +792,7 @@ class _AppState extends State<FamilyDocumentsApp> {
             onTab: _selectTab,
             timelineService: timelineService,
             libraryService: libraryService,
+            inboxService: inboxService,
             analysisJobs: analysisJobs.values.toList(),
             onRefreshAnalysis: refreshAnalysisJobs,
             onRetryAnalysisJob: retryAnalysisJob,
@@ -898,6 +905,7 @@ class Shell extends StatelessWidget {
     required this.onTab,
     required this.timelineService,
     required this.libraryService,
+    required this.inboxService,
     required this.analysisJobs,
     required this.onRefreshAnalysis,
     required this.onRetryAnalysisJob,
@@ -934,6 +942,7 @@ class Shell extends StatelessWidget {
   final ValueChanged<int> onTab;
   final TimelineService timelineService;
   final LibraryService libraryService;
+  final InboxService inboxService;
   final List<AnalysisJob> analysisJobs;
   final Future<void> Function() onRefreshAnalysis;
   final Future<void> Function(String) onRetryAnalysisJob;
@@ -1047,6 +1056,11 @@ class Shell extends StatelessWidget {
         processingJobs: analysisJobs,
         onRefreshProcessing: onRefreshAnalysis,
         onMetadataChanged: onLibraryMetadataChanged,
+      ),
+      3 => InboxPage(
+        service: inboxService,
+        onDataChanged: onLibraryMetadataChanged,
+        onOcrRequested: onRefreshAnalysis,
       ),
       _ => Center(child: Text('${labels[tab]} will be connected in Phase 2.')),
     };

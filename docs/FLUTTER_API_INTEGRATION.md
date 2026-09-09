@@ -73,3 +73,37 @@ Flutter reuses the authenticated HTTP client, app-wide OCR job state and the
 existing primary-destination history. Library detail history is stored only in
 same-tab browser history state (not in the URL), so private record identifiers
 are not exposed in URLs.
+
+# Phase 2C Inbox API
+
+`POST /rest/rpc/inbox_workspace` supplies a paginated, newest-first review
+queue using imported-message metadata already stored by the email pipeline. It
+derives the Family from the authenticated member and supports literal sender,
+subject and safe-preview search plus All, Unreviewed, With attachments, With
+links and Reviewed filters. Dismissed messages leave the active queue. The RPC
+does not return raw RFC822 sources, attachment bytes, headers or credentials.
+
+`POST /rest/rpc/inbox_message_detail` returns plain, sanitised message text,
+safe attachment metadata, extracted HTTPS links and completed-action summaries.
+Flutter renders message text as text only; it never renders message HTML,
+scripts, remote images or tracking pixels. External links use the existing
+explicit safe-opening control.
+
+Review changes use `set_inbox_review_state`. `inbox_save_attachment` saves a
+clean scanned attachment into the existing document/source model and creates a
+durable OCR job only when the user explicitly asks for reading. Category and
+normalised tags alone never start OCR. `inbox_create_reminder` and
+`inbox_save_link` wrap the existing reminder and saved-link services. All three
+actions use durable request IDs recorded in `inbox_actions`, so retries cannot
+duplicate their result. Authorised edits are limited to owner, Family admin,
+adult member and contributor roles; viewers remain read-only. There is no
+stored chat-message source in the current schema, so this phase displays real
+email sources only until a chat integration persists messages in an authorised
+Family-scoped source.
+
+Migration 044 is forward-compatible: existing messages default to Unreviewed
+and existing ingestion continues unchanged. Recovery is to correct and replay
+the idempotent migration. Rollback requires first preserving any review state
+and `inbox_actions` results that must remain auditable, then removing the Inbox
+RPCs/table/indexes and the four review columns; dropping those records loses
+only Inbox review/action history, not imported messages or saved documents.

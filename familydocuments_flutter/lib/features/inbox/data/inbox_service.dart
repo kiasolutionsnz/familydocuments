@@ -1,0 +1,213 @@
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
+
+import '../../../core/auth/auth_service.dart';
+import '../models/inbox_models.dart';
+
+class InboxServiceException implements Exception {
+  const InboxServiceException(this.message, {this.accessRevoked = false});
+  final String message;
+  final bool accessRevoked;
+}
+
+class InboxService {
+  InboxService(this._auth, {http.Client? client})
+    : _client = client ?? http.Client();
+  final AuthService _auth;
+  final http.Client _client;
+
+  Future<http.Response> _post(String path, Map<String, dynamic> body) async {
+    Future<http.Response> send() async => _client.post(
+      Uri.parse('$familyDocumentsApiBaseUrl$path'),
+      headers: {
+        'authorization': 'Bearer ${await _auth.validAccessToken()}',
+        'content-type': 'application/json',
+      },
+      body: jsonEncode(body),
+    );
+    try {
+      var response = await send();
+      if (response.statusCode == 401) {
+        await _auth.refresh();
+        response = await send();
+      }
+      return response;
+    } on AuthException {
+      rethrow;
+    } catch (_) {
+      throw const InboxServiceException(
+        'Inbox could not be reached. Try again.',
+      );
+    }
+  }
+
+  Future<InboxData> load({
+    String query = '',
+    InboxFilter filter = InboxFilter.all,
+    int limit = 30,
+    int offset = 0,
+  }) async {
+    final response = await _post('/rest/rpc/inbox_workspace', {
+      'search_query': query.trim().isEmpty ? null : query.trim(),
+      'state_filter': filter.name,
+      'result_limit': limit,
+      'result_offset': offset,
+    });
+    if (response.statusCode != 200) {
+      throw const InboxServiceException(
+        'Inbox could not be loaded. Try again.',
+      );
+    }
+    try {
+      return InboxData.fromJson(jsonDecode(response.body) as Map);
+    } catch (_) {
+      throw const InboxServiceException(
+        'Inbox returned an unexpected response.',
+      );
+    }
+  }
+
+  Future<InboxMessage> detail(String id) async {
+    final response = await _post('/rest/rpc/inbox_message_detail', {
+      'message': id,
+    });
+    if ({401, 403, 404}.contains(response.statusCode)) {
+      throw const InboxServiceException(
+        'You no longer have access to this item.',
+        accessRevoked: true,
+      );
+    }
+    if (response.statusCode != 200) {
+      throw const InboxServiceException('This message could not be opened.');
+    }
+    return InboxMessage.fromJson(jsonDecode(response.body) as Map);
+  }
+
+  Future<void> setReviewState(InboxMessage message, String state) async {
+    final response = await _post('/rest/rpc/set_inbox_review_state', {
+      'message': message.id,
+      'new_state': state,
+      'expected_updated_at': message.updatedAt.toUtc().toIso8601String(),
+    });
+    if ({401, 403, 404}.contains(response.statusCode)) {
+      throw const InboxServiceException(
+        'You cannot change this message.',
+        accessRevoked: true,
+      );
+    }
+    if (response.statusCode != 200) {
+      throw const InboxServiceException(
+        'The review state could not be changed. Try again.',
+      );
+    }
+  }
+
+  Future<InboxActionResult> saveAttachment({
+    required String messageId,
+    required String attachmentId,
+    required String categoryId,
+    required List<String> tags,
+    required bool requestOcr,
+    required String requestId,
+  }) async {
+    final normalized = tags
+        .map((x) => x.trim().toLowerCase())
+        .where((x) => x.isNotEmpty)
+        .toSet()
+        .toList();
+    final response = await _post('/rest/rpc/inbox_save_attachment', {
+      'message': messageId,
+      'attachment': attachmentId,
+      'category': categoryId,
+      'selected_tags': normalized,
+      'request_id': requestId,
+      'request_ocr': requestOcr,
+    });
+    if ({401, 403, 404}.contains(response.statusCode)) {
+      throw const InboxServiceException(
+        'This attachment is no longer available.',
+        accessRevoked: true,
+      );
+    }
+    if (response.statusCode != 200) {
+      throw const InboxServiceException(
+        'The attachment could not be saved. Try again.',
+      );
+    }
+    final body = jsonDecode(response.body) as Map;
+    return InboxActionResult(
+      documentId: body['document_id']?.toString(),
+      jobId: body['job_id']?.toString(),
+      duplicate: body['duplicate'] == true,
+    );
+  }
+
+  Future<void> createReminder({
+    required String messageId,
+    required String title,
+    required String date,
+    String? time,
+    required String recurrence,
+    required String requestId,
+  }) async {
+    final response = await _post('/rest/rpc/inbox_create_reminder', {
+      'message': messageId,
+      'reminder_title': title.trim(),
+      'due_date': date,
+      'due_time_value': time,
+      'repeat': recurrence,
+      'request_id': requestId,
+    });
+    if (response.statusCode != 200) {
+      throw const InboxServiceException(
+        'The reminder could not be added. Check the date and time.',
+      );
+    }
+  }
+
+  Future<void> saveLink({
+    required String messageId,
+    required String url,
+    required String title,
+    required String categoryId,
+    required String requestId,
+  }) async {
+    final response = await _post('/rest/rpc/inbox_save_link', {
+      'message': messageId,
+      'link_url': url,
+      'link_title': title.trim(),
+      'category': categoryId,
+      'request_id': requestId,
+    });
+    if (response.statusCode != 200) {
+      throw const InboxServiceException(
+        'The link could not be saved. Try again.',
+      );
+    }
+  }
+
+  Future<InboxCategory> createCategory(String name) async {
+    final response = await _post('/rest/rpc/create_category', {
+      'category_name': name.trim(),
+    });
+    if (response.statusCode != 200) {
+      throw const InboxServiceException(
+        'That category could not be created. Choose another name.',
+      );
+    }
+    return InboxCategory.fromJson(jsonDecode(response.body) as Map);
+  }
+
+  Future<InboxCategory> createLinkCategory(String name) async {
+    final response = await _post('/rest/rpc/create_saved_link_category', {
+      'category_name': name.trim(),
+    });
+    if (response.statusCode != 200) {
+      throw const InboxServiceException(
+        'That link category could not be created. Choose another name.',
+      );
+    }
+    return InboxCategory.fromJson(jsonDecode(response.body) as Map);
+  }
+}
