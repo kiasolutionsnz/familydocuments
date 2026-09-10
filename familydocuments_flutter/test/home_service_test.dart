@@ -154,6 +154,39 @@ class CategoryClient extends http.BaseClient {
       );
 }
 
+class LinkClient extends http.BaseClient {
+  final List<http.Request> requests = [];
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    requests.add(request as http.Request);
+    final (status, body) = switch (request.url.path) {
+      '/rest/rpc/saved_link_workspace' => (
+        200,
+        {
+          'categories': [
+            {'id': 'category-1', 'name': 'Research'},
+          ],
+          'links': [],
+        },
+      ),
+      '/rest/rpc/create_saved_link_category' => (
+        200,
+        {'id': 'category-2', 'name': 'Recipes'},
+      ),
+      '/rest/rpc/create_saved_link' => (
+        200,
+        {'id': 'link-1', 'title': 'FamilyDocuments', 'duplicate_of': null},
+      ),
+      _ => (404, {'error': 'not_found'}),
+    };
+    return http.StreamedResponse(
+      Stream.value(utf8.encode(jsonEncode(body))),
+      status,
+    );
+  }
+}
+
 String _token() {
   final expiry =
       DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/
@@ -171,6 +204,32 @@ Future<AuthService> signedInAuth() async {
 }
 
 void main() {
+  test('saved-link calls use existing private link RPCs', () async {
+    final client = LinkClient();
+    final service = HomeService(await signedInAuth(), client: client);
+    final categories = await service.linkCategories();
+    expect(categories.single.name, 'Research');
+    final created = await service.createLinkCategory('Recipes');
+    expect(created.name, 'Recipes');
+    final saved = await service.saveLink(
+      url: 'https://familydocuments.app/',
+      title: 'FamilyDocuments',
+      category: categories.single,
+    );
+    expect(saved.title, 'FamilyDocuments');
+    expect(
+      client.requests.map((request) => request.url.path),
+      containsAll([
+        '/rest/rpc/saved_link_workspace',
+        '/rest/rpc/create_saved_link_category',
+        '/rest/rpc/create_saved_link',
+      ]),
+    );
+    final saveBody = jsonDecode(client.requests.last.body);
+    expect(saveBody['link_url'], 'https://familydocuments.app/');
+    expect(saveBody['category'], 'category-1');
+  });
+
   test('category matching handles case, plural and Rentals aliases', () {
     const categories = ['Rentals', 'Rental records', 'Travel'];
     for (final requested in [

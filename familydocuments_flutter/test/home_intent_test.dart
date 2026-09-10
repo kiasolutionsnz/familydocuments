@@ -54,4 +54,33 @@ void main() {
       HomeIntentType.clarification,
     );
   });
+
+  test('pasted web link is recognised as a saved-link request', () {
+    final intent = parseHomeIntent(
+      'Save this link - https://familydocuments.app/',
+      hasAttachment: false,
+    );
+    expect(intent.type, HomeIntentType.saveLink);
+    expect(intent.linkUrl, 'https://familydocuments.app/');
+    expect(intent.linkTitle, 'familydocuments.app');
+  });
+
+  test('link parser excludes trailing sentence punctuation', () {
+    final intent = parseHomeIntent(
+      'Keep https://example.com/article.',
+      hasAttachment: false,
+    );
+    expect(intent.type, HomeIntentType.saveLink);
+    expect(intent.linkUrl, 'https://example.com/article');
+  });
+
+  test('markdown-formatted pasted link uses the URL and host title', () {
+    final intent = parseHomeIntent(
+      'Save this link - [https://familydocuments.app/](https://familydocuments.app/)',
+      hasAttachment: false,
+    );
+    expect(intent.type, HomeIntentType.saveLink);
+    expect(intent.linkUrl, 'https://familydocuments.app/');
+    expect(intent.linkTitle, 'familydocuments.app');
+  });
 }

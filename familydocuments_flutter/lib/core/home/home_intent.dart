@@ -5,15 +5,24 @@ enum HomeIntentType {
   invoiceAttachment,
   vagueAttachment,
   reminder,
+  saveLink,
   viewCategory,
   clarification,
 }
 
 class HomeIntent {
-  const HomeIntent(this.type, {this.destination, this.reminderTitle});
+  const HomeIntent(
+    this.type, {
+    this.destination,
+    this.reminderTitle,
+    this.linkUrl,
+    this.linkTitle,
+  });
   final HomeIntentType type;
   final String? destination;
   final String? reminderTitle;
+  final String? linkUrl;
+  final String? linkTitle;
 }
 
 /// Deliberately small and deterministic. This only recognises actions which
@@ -39,6 +48,15 @@ HomeIntent parseHomeIntent(String message, {required bool hasAttachment}) {
     if (asksInvoice) return const HomeIntent(HomeIntentType.invoiceAttachment);
     if (asksRead) return const HomeIntent(HomeIntentType.readAttachment);
     return const HomeIntent(HomeIntentType.vagueAttachment);
+  }
+
+  final link = _httpLink(text);
+  if (link != null) {
+    return HomeIntent(
+      HomeIntentType.saveLink,
+      linkUrl: link.toString(),
+      linkTitle: _linkTitle(text, link),
+    );
   }
 
   if (lower.startsWith('remind me') ||
@@ -67,6 +85,49 @@ HomeIntent parseHomeIntent(String message, {required bool hasAttachment}) {
     return const HomeIntent(HomeIntentType.viewCategory);
   }
   return const HomeIntent(HomeIntentType.clarification);
+}
+
+Uri? _httpLink(String text) {
+  final match = RegExp(
+    r'https?://[^\s<>"\x27\[\]\(\)]+',
+    caseSensitive: false,
+  ).firstMatch(text);
+  if (match == null) return null;
+  var value = match.group(0)!;
+  while (value.isNotEmpty && '.,!?;:)'.contains(value[value.length - 1])) {
+    value = value.substring(0, value.length - 1);
+  }
+  final uri = Uri.tryParse(value);
+  if (uri == null ||
+      (uri.scheme != 'http' && uri.scheme != 'https') ||
+      uri.host.isEmpty) {
+    return null;
+  }
+  return uri;
+}
+
+String _linkTitle(String text, Uri link) {
+  final withoutUrl = text
+      .replaceAll(
+        RegExp(r'https?://[^\s<>"\x27\[\]\(\)]+', caseSensitive: false),
+        ' ',
+      )
+      .replaceAll(RegExp(r'[\[\]\(\)]'), ' ');
+  final cleaned = withoutUrl
+      .replaceFirst(
+        RegExp(
+          r'^\s*(?:please\s+)?(?:save|keep|add)\s+(?:this\s+)?(?:link\s*)?(?:[-:]\s*)?',
+          caseSensitive: false,
+        ),
+        '',
+      )
+      .trim()
+      .replaceFirst(RegExp(r'^[-:]\s*'), '')
+      .replaceFirst(RegExp(r'\s*[-:]$'), '')
+      .trim();
+  return !RegExp(r'[a-z0-9]', caseSensitive: false).hasMatch(cleaned)
+      ? link.host
+      : cleaned;
 }
 
 String? metadataCategoryHint(String filename) {

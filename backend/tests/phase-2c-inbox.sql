@@ -8,7 +8,7 @@ declare
   family_id uuid:=gen_random_uuid();other_family uuid:=gen_random_uuid();alias_id uuid:=gen_random_uuid();other_alias uuid:=gen_random_uuid();
   category_id uuid:=gen_random_uuid();other_category uuid:=gen_random_uuid();link_category uuid:=gen_random_uuid();
   message_one uuid:=gen_random_uuid();message_two uuid:=gen_random_uuid();foreign_message uuid:=gen_random_uuid();attachment_id uuid:=gen_random_uuid();
-  pdf bytea:=convert_to('%PDF-1.4'||chr(10)||'1 0 obj<</Type/Catalog>>endobj'||chr(10)||'%%EOF','UTF8');result jsonb;first_document uuid;
+  pdf bytea:=convert_to('%PDF-1.4'||chr(10)||'1 0 obj<</Type/Catalog>>endobj'||chr(10)||'%%EOF','UTF8');result jsonb;first_document uuid;home_document uuid;
 begin
   insert into fp.households(id,name,owner_user_id) values(family_id,'Inbox family',owner_id),(other_family,'Other inbox family',outsider_id);
   insert into fp.members(household_id,user_id,email,role) values
@@ -42,6 +42,11 @@ begin
   result:=fp.inbox_save_attachment(message_one,attachment_id,category_id,'["invoice"]','ocr-request-0001',true);
   perform fp.inbox_save_attachment(message_one,attachment_id,category_id,'["invoice"]','ocr-request-0001',true);
   if (select count(*) from fp.document_analysis_jobs where idempotency_key='ocr-request-0001')<>1 then raise exception 'OCR idempotency failed';end if;
+  result:=fp.create_document_analysis_job('reselected.pdf','application/pdf',encode(pdf,'base64'),'document','home-dedupe-0001');
+  home_document:=(result->>'document_id')::uuid;
+  result:=fp.create_document_analysis_job('reselected.pdf','application/pdf',encode(pdf,'base64'),'document','home-dedupe-0002');
+  if (result->>'document_id')::uuid<>home_document or result->>'duplicate'<>'true' then raise exception 'Home content deduplication failed';end if;
+  if (select count(*) from fp.document_analysis_jobs where document_id=home_document)<>1 then raise exception 'Home duplicate OCR job created';end if;
   perform fp.inbox_create_reminder(message_one,'Review insurance','2027-01-20','14:00','none','reminder-request-0001');
   perform fp.inbox_create_reminder(message_one,'Review insurance','2027-01-20','14:00','none','reminder-request-0001');
   if (select count(*) from fp.reminders where client_request_id='reminder-request-0001')<>1 then raise exception 'reminder idempotency failed';end if;

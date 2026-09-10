@@ -48,6 +48,25 @@ class ReminderResult {
   final String? dueTime;
 }
 
+class SavedLinkCategory {
+  const SavedLinkCategory({required this.id, required this.name});
+  final String id;
+  final String name;
+}
+
+class SavedLinkResult {
+  const SavedLinkResult({
+    required this.id,
+    required this.title,
+    required this.category,
+    required this.duplicate,
+  });
+  final String id;
+  final String title;
+  final String category;
+  final bool duplicate;
+}
+
 enum CategoryResolutionType { found, missing, ambiguous }
 
 class CategoryResolution {
@@ -189,6 +208,70 @@ class HomeService {
       title: payload['title']?.toString() ?? title,
       dueDate: payload['due_at']?.toString() ?? dueDate,
       dueTime: payload['due_time']?.toString(),
+    );
+  }
+
+  Future<List<SavedLinkCategory>> linkCategories() async {
+    final response = await _post('/rest/rpc/saved_link_workspace', const {
+      'search_query': null,
+      'category': null,
+      'visibility': 'mine',
+      'result_limit': 1,
+    });
+    final payload = _json(response.body);
+    if (response.statusCode != 200) {
+      throw HomeServiceException('Link categories are unavailable. Try again.');
+    }
+    return (payload['categories'] as List?)
+            ?.whereType<Map>()
+            .map(
+              (value) => SavedLinkCategory(
+                id: value['id']?.toString() ?? '',
+                name: value['name']?.toString() ?? '',
+              ),
+            )
+            .where((value) => value.id.isNotEmpty && value.name.isNotEmpty)
+            .toList() ??
+        const [];
+  }
+
+  Future<SavedLinkCategory> createLinkCategory(String name) async {
+    final response = await _post('/rest/rpc/create_saved_link_category', {
+      'category_name': name.trim(),
+    });
+    final payload = _json(response.body);
+    if (response.statusCode != 200 || payload['id'] == null) {
+      throw HomeServiceException(
+        'That link category could not be created. Try another name.',
+      );
+    }
+    return SavedLinkCategory(
+      id: payload['id'].toString(),
+      name: payload['name']?.toString() ?? name.trim(),
+    );
+  }
+
+  Future<SavedLinkResult> saveLink({
+    required String url,
+    required String title,
+    required SavedLinkCategory category,
+  }) async {
+    final response = await _post('/rest/rpc/create_saved_link', {
+      'link_url': url,
+      'link_title': title,
+      'link_note': null,
+      'category': category.id,
+    });
+    final payload = _json(response.body);
+    if (response.statusCode != 200 || payload['id'] == null) {
+      throw HomeServiceException('That link could not be saved. Try again.');
+    }
+    return SavedLinkResult(
+      id: payload['id'].toString(),
+      title: payload['title']?.toString() ?? title,
+      category: category.name,
+      duplicate:
+          payload['duplicate_of'] != null || payload['duplicate'] == true,
     );
   }
 

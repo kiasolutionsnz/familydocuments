@@ -58,15 +58,23 @@ class FakeHomeService extends HomeService {
     this.failFirstReminder = false,
     List<AnalysisJob> pendingJobs = const [],
     List<String> categories = const ['Documents', 'Home'],
+    List<SavedLinkCategory> linkCategories = const [
+      SavedLinkCategory(id: 'links-research', name: 'Research'),
+      SavedLinkCategory(id: 'links-travel', name: 'Travel ideas'),
+    ],
     this.pollingResult,
+    this.submissionResult,
     this.failFirstAnalysisSubmit = false,
   }) : pendingJobs = List.of(pendingJobs),
-       categoryNames = List.of(categories);
+       categoryNames = List.of(categories),
+       savedLinkCategories = List.of(linkCategories);
   int reminderCalls = 0;
   final bool failFirstReminder;
   final List<AnalysisJob> pendingJobs;
   final List<String> categoryNames;
+  final List<SavedLinkCategory> savedLinkCategories;
   final AnalysisJob? pollingResult;
+  final AnalysisJob? submissionResult;
   final bool failFirstAnalysisSubmit;
   int dismissCalls = 0;
   int saveCalls = 0;
@@ -76,7 +84,11 @@ class FakeHomeService extends HomeService {
   int restoreCalls = 0;
   int retryAnalysisCalls = 0;
   int pollCalls = 0;
+  int linkSaveCalls = 0;
+  int linkCategoryCreateCalls = 0;
   String? savedCategory;
+  String? savedLinkUrl;
+  String? savedLinkTitle;
   Uint8List? savedBytes;
   final List<String> analysisRequestIds = [];
   final List<String> reminderRequestIds = [];
@@ -94,6 +106,39 @@ class FakeHomeService extends HomeService {
 
   @override
   Future<List<String>> categories() async => List.of(categoryNames);
+
+  @override
+  Future<List<SavedLinkCategory>> linkCategories() async =>
+      List.of(savedLinkCategories);
+
+  @override
+  Future<SavedLinkCategory> createLinkCategory(String name) async {
+    linkCategoryCreateCalls++;
+    final category = SavedLinkCategory(
+      id: 'links-${savedLinkCategories.length + 1}',
+      name: name,
+    );
+    savedLinkCategories.add(category);
+    return category;
+  }
+
+  @override
+  Future<SavedLinkResult> saveLink({
+    required String url,
+    required String title,
+    required SavedLinkCategory category,
+  }) async {
+    linkSaveCalls++;
+    savedLinkUrl = url;
+    savedLinkTitle = title;
+    savedCategory = category.name;
+    return SavedLinkResult(
+      id: 'saved-link-1',
+      title: title,
+      category: category.name,
+      duplicate: false,
+    );
+  }
 
   @override
   Future<CategoryResolution> resolveCategory(String requested) async =>
@@ -145,11 +190,12 @@ class FakeHomeService extends HomeService {
       );
     }
     savedBytes = bytes;
-    return const AnalysisJob(
-      id: 'job-1',
-      documentId: 'document-1',
-      status: 'queued',
-    );
+    return submissionResult ??
+        const AnalysisJob(
+          id: 'job-1',
+          documentId: 'document-1',
+          status: 'queued',
+        );
   }
 
   @override
@@ -504,6 +550,66 @@ void main() {
       find.text('Reminder added: Doctor appointment — tomorrow at 2:00 pm'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('pasted link is saved after a conversational category choice', (
+    t,
+  ) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(auth);
+    await t.pumpWidget(FamilyDocumentsApp(auth: auth, homeService: home));
+    await t.pump();
+    await t.enterText(
+      find.byType(TextField).last,
+      'Save this link - https://familydocuments.app/',
+    );
+    await t.tap(find.byTooltip('Send').last);
+    await t.pumpAndSettle();
+    expect(
+      find.text('Which category should I save this link in?'),
+      findsOneWidget,
+    );
+    expect(find.text('Research'), findsOneWidget);
+
+    await t.enterText(find.byType(TextField).last, '  research  ');
+    await t.tap(find.byTooltip('Send').last);
+    await t.pumpAndSettle();
+    expect(home.linkSaveCalls, 1);
+    expect(home.savedLinkUrl, 'https://familydocuments.app/');
+    expect(home.savedLinkTitle, 'familydocuments.app');
+    expect(home.savedCategory, 'Research');
+    expect(find.text('Saved familydocuments.app in Research.'), findsOneWidget);
+  });
+
+  testWidgets('unknown link category is confirmed in the conversation', (
+    t,
+  ) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(auth);
+    await t.pumpWidget(FamilyDocumentsApp(auth: auth, homeService: home));
+    await t.pump();
+    await t.enterText(
+      find.byType(TextField).last,
+      'https://example.com/article',
+    );
+    await t.tap(find.byTooltip('Send').last);
+    await t.pumpAndSettle();
+    await t.enterText(find.byType(TextField).last, 'Recipes for later');
+    await t.tap(find.byTooltip('Send').last);
+    await t.pumpAndSettle();
+    expect(
+      find.text(
+        'I couldn’t find that link category. Would you like me to create “Recipes for later”?',
+      ),
+      findsOneWidget,
+    );
+    expect(home.linkSaveCalls, 0);
+
+    await t.tap(find.text('Create and save'));
+    await t.pumpAndSettle();
+    expect(home.linkCategoryCreateCalls, 1);
+    expect(home.linkSaveCalls, 1);
+    expect(home.savedCategory, 'Recipes for later');
   });
 
   testWidgets('failed analysis can be saved without reading', (t) async {
@@ -904,6 +1010,69 @@ void main() {
     await t.pump();
     expect(home.analysisCalls, 2);
     expect(home.analysisRequestIds.toSet(), hasLength(1));
+    await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('reselecting the same file reuses its OCR idempotency key', (
+    t,
+  ) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(auth);
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: home,
+        pickUpload: () async => syntheticUpload('synthetic-bill.pdf'),
+      ),
+    );
+    await t.pump();
+    await attachAndSend(t, 'Scan this document for OCR');
+    await t.pumpWidget(const SizedBox());
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        key: UniqueKey(),
+        auth: auth,
+        homeService: home,
+        pickUpload: () async => syntheticUpload('synthetic-bill.pdf'),
+      ),
+    );
+    await t.pump();
+    await attachAndSend(t, 'Scan this document for OCR');
+    await t.pump();
+    expect(home.analysisCalls, 2);
+    expect(home.analysisRequestIds.toSet(), hasLength(1));
+    await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('reused completed OCR is displayed immediately', (t) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(
+      auth,
+      submissionResult: const AnalysisJob(
+        id: 'job-existing',
+        documentId: 'document-existing',
+        status: 'succeeded',
+        result: OrganisedDocument(
+          title: 'Synthetic electricity bill',
+          category: 'Finance',
+          tags: ['invoice'],
+          pageCount: 1,
+        ),
+      ),
+    );
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: home,
+        pickUpload: () async => syntheticUpload('synthetic-bill.pdf'),
+      ),
+    );
+    await t.pump();
+    await attachAndSend(t, 'Scan this document for OCR');
+    await t.pump();
+    expect(find.text('Finished reading your document'), findsOneWidget);
+    expect(find.text('Synthetic electricity bill'), findsOneWidget);
+    expect(home.pollCalls, 0);
     await t.pumpWidget(const SizedBox());
   });
 

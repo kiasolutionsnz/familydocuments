@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
@@ -69,6 +70,9 @@ class _AppState extends State<FamilyDocumentsApp> {
   Timer? analysisTimer;
   String? analysisRequestId;
   String? reminderRequestId, reminderInstruction;
+  String? pendingLinkUrl, pendingLinkTitle, unresolvedLinkCategory;
+  List<SavedLinkCategory> pendingLinkCategories = const [];
+  SavedLinkCategory? pendingLinkSaveCategory;
   final Set<String> notifiedAnalysisJobs = {};
   int tab = 0;
   final query = TextEditingController();
@@ -123,11 +127,15 @@ class _AppState extends State<FamilyDocumentsApp> {
     if (busy) return;
     if (uploadedBytes != null) return _sendAttachment();
     final instruction = query.text.trim();
-    switch (parseHomeIntent(instruction, hasAttachment: false).type) {
+    if (pendingLinkUrl != null) return _continueLinkConversation(instruction);
+    final intent = parseHomeIntent(instruction, hasAttachment: false);
+    switch (intent.type) {
       case HomeIntentType.search:
         return search();
       case HomeIntentType.reminder:
         return _createReminder(instruction);
+      case HomeIntentType.saveLink:
+        return _startLinkConversation(intent);
       case HomeIntentType.viewCategory:
         setState(() {
           message =
@@ -143,6 +151,143 @@ class _AppState extends State<FamilyDocumentsApp> {
         return;
     }
   }
+
+  Future<void> _startLinkConversation(HomeIntent intent) async {
+    setState(() {
+      busy = true;
+      error = null;
+      message = 'Finding your link categories…';
+      pendingLinkUrl = intent.linkUrl;
+      pendingLinkTitle = intent.linkTitle;
+      unresolvedLinkCategory = null;
+      retryAction = 'link-start';
+    });
+    try {
+      final categories = await homeService.linkCategories();
+      if (!mounted) return;
+      setState(() {
+        pendingLinkCategories = categories;
+        message = categories.isEmpty
+            ? 'What category should I create for this link?'
+            : 'Which category should I save this link in?';
+        query.clear();
+        retryAction = null;
+      });
+    } on HomeServiceException catch (failure) {
+      if (mounted) setState(() => error = failure.message);
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _continueLinkConversation(String answer) async {
+    final categoryAnswer = answer
+        .trim()
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceFirst(
+          RegExp(
+            r'^(?:please\s+)?(?:save\s+(?:it\s+)?)?(?:in|under|to)\s+',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .trim();
+    final normalised = categoryAnswer.toLowerCase();
+    if (normalised.isEmpty) {
+      setState(() => message = 'Tell me which category to use for this link.');
+      return;
+    }
+    if (normalised == 'cancel' || normalised == 'never mind') {
+      _clearLinkConversation(messageText: 'Okay, I didn’t save the link.');
+      return;
+    }
+    final matches = pendingLinkCategories
+        .where(
+          (category) =>
+              category.name
+                  .trim()
+                  .replaceAll(RegExp(r'\s+'), ' ')
+                  .toLowerCase() ==
+              normalised,
+        )
+        .toList();
+    if (matches.length == 1) return _savePendingLink(matches.single);
+    setState(() {
+      unresolvedLinkCategory = categoryAnswer;
+      message =
+          'I couldn’t find that link category. Would you like me to create “$unresolvedLinkCategory”?';
+      query.clear();
+    });
+  }
+
+  Future<void> chooseLinkCategory(SavedLinkCategory category) =>
+      _savePendingLink(category);
+
+  Future<void> createAndSaveLinkCategory() async {
+    final name = unresolvedLinkCategory;
+    if (name == null || busy) return;
+    setState(() {
+      busy = true;
+      error = null;
+      message = 'Creating $name…';
+    });
+    try {
+      final category = await homeService.createLinkCategory(name);
+      await _savePendingLink(category, managesBusyState: false);
+    } on HomeServiceException catch (failure) {
+      if (mounted) setState(() => error = failure.message);
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _savePendingLink(
+    SavedLinkCategory category, {
+    bool managesBusyState = true,
+  }) async {
+    final url = pendingLinkUrl;
+    final title = pendingLinkTitle;
+    if (url == null || title == null || busy && managesBusyState) return;
+    if (managesBusyState) setState(() => busy = true);
+    setState(() {
+      error = null;
+      message = 'Saving your link…';
+      pendingLinkSaveCategory = category;
+      retryAction = 'link-save';
+    });
+    try {
+      final result = await homeService.saveLink(
+        url: url,
+        title: title,
+        category: category,
+      );
+      if (!mounted) return;
+      _clearLinkConversation(
+        messageText: result.duplicate
+            ? 'This link is already saved in ${result.category}.'
+            : 'Saved ${result.title} in ${result.category}.',
+      );
+    } on HomeServiceException catch (failure) {
+      if (mounted) setState(() => error = failure.message);
+    } finally {
+      if (mounted && managesBusyState) setState(() => busy = false);
+    }
+  }
+
+  void cancelLinkConversation() =>
+      _clearLinkConversation(messageText: 'Okay, I didn’t save the link.');
+
+  void _clearLinkConversation({required String messageText}) => setState(() {
+    pendingLinkUrl = null;
+    pendingLinkTitle = null;
+    pendingLinkCategories = const [];
+    pendingLinkSaveCategory = null;
+    unresolvedLinkCategory = null;
+    retryAction = null;
+    query.clear();
+    message = messageText;
+    error = null;
+  });
 
   Future<void> _createReminder(String instruction) async {
     ParsedReminder parsed;
@@ -310,8 +455,11 @@ class _AppState extends State<FamilyDocumentsApp> {
     });
     try {
       if (needsAnalysis) {
+        final analysisMode = intent.type == HomeIntentType.invoiceAttachment
+            ? 'invoice'
+            : 'document';
         analysisRequestId ??=
-            'ocr-${auth.session?.userId ?? 'user'}-${DateTime.now().microsecondsSinceEpoch}';
+            'ocr-$analysisMode-${sha256.convert(bytes).toString()}';
         final submittedJob = await homeService.submitAnalysisJob(
           name: name,
           mimeType: mimeType,
@@ -325,15 +473,26 @@ class _AppState extends State<FamilyDocumentsApp> {
         if (mounted) {
           setState(() {
             analysisJobs[job.id] = job;
-            message =
-                'Uploaded. Reading and organising $name in the background…';
+            if (job.status == 'succeeded' && job.result != null) {
+              organisedDocument = job.result;
+              notifiedAnalysisJobs.add(job.id);
+              message = null;
+            } else if (job.status == 'failed' ||
+                job.status == 'permanent_failed') {
+              error = 'The file was saved, but I couldn’t read its contents.';
+              retryAction = job.retryAllowed ? 'analysis:${job.id}' : null;
+              message = null;
+            } else {
+              message =
+                  'Uploaded. Reading and organising $name in the background…';
+            }
             uploadedBytes = null;
             uploadedName = null;
             uploadedMimeType = null;
             analysisRequestId = null;
             query.clear();
           });
-          _startAnalysisPolling();
+          if (!job.terminal) _startAnalysisPolling();
         }
         return;
       }
@@ -539,6 +698,18 @@ class _AppState extends State<FamilyDocumentsApp> {
   }
 
   Future<void> retry() async {
+    if (retryAction == 'link-start' && pendingLinkUrl != null) {
+      return _startLinkConversation(
+        HomeIntent(
+          HomeIntentType.saveLink,
+          linkUrl: pendingLinkUrl,
+          linkTitle: pendingLinkTitle,
+        ),
+      );
+    }
+    if (retryAction == 'link-save' && pendingLinkSaveCategory != null) {
+      return _savePendingLink(pendingLinkSaveCategory!);
+    }
     if (retryAction == 'search') return search();
     if (retryAction == 'upload') return _sendAttachment();
     if (retryAction == 'reminder' && reminderInstruction != null) {
@@ -566,6 +737,11 @@ class _AppState extends State<FamilyDocumentsApp> {
     analysisRequestId = null;
     unresolvedCategory = null;
     categoryMatchAmbiguous = false;
+    pendingLinkUrl = null;
+    pendingLinkTitle = null;
+    pendingLinkCategories = const [];
+    pendingLinkSaveCategory = null;
+    unresolvedLinkCategory = null;
   });
 
   Future<void> saveSuggestion() async {
@@ -809,6 +985,8 @@ class _AppState extends State<FamilyDocumentsApp> {
             suggestedDestination: suggestedDestination,
             unresolvedCategory: unresolvedCategory,
             categoryMatchAmbiguous: categoryMatchAmbiguous,
+            linkCategories: pendingLinkCategories,
+            unresolvedLinkCategory: unresolvedLinkCategory,
             uploadedName: uploadedName,
             onSend: send,
             onUpload: upload,
@@ -817,6 +995,9 @@ class _AppState extends State<FamilyDocumentsApp> {
             onCreateAndSaveCategory: createAndSaveCategory,
             onChooseUploadCategory: chooseUploadCategory,
             onCancelCategoryChoice: cancelCategoryChoice,
+            onChooseLinkCategory: chooseLinkCategory,
+            onCreateAndSaveLinkCategory: createAndSaveLinkCategory,
+            onCancelLink: cancelLinkConversation,
             onRetry: retry,
             analysisFailure: retryAction?.startsWith('analysis:') ?? false,
             onSaveWithoutReading: saveFailedAnalysisWithoutReading,
@@ -922,6 +1103,8 @@ class Shell extends StatelessWidget {
     required this.suggestedDestination,
     required this.unresolvedCategory,
     required this.categoryMatchAmbiguous,
+    required this.linkCategories,
+    required this.unresolvedLinkCategory,
     required this.uploadedName,
     required this.onSend,
     required this.onUpload,
@@ -930,6 +1113,9 @@ class Shell extends StatelessWidget {
     required this.onCreateAndSaveCategory,
     required this.onChooseUploadCategory,
     required this.onCancelCategoryChoice,
+    required this.onChooseLinkCategory,
+    required this.onCreateAndSaveLinkCategory,
+    required this.onCancelLink,
     required this.onRetry,
     required this.analysisFailure,
     required this.onSaveWithoutReading,
@@ -959,6 +1145,8 @@ class Shell extends StatelessWidget {
   final String? suggestedDestination;
   final String? unresolvedCategory;
   final bool categoryMatchAmbiguous;
+  final List<SavedLinkCategory> linkCategories;
+  final String? unresolvedLinkCategory;
   final String? uploadedName;
   final VoidCallback onSend,
       onUpload,
@@ -967,10 +1155,13 @@ class Shell extends StatelessWidget {
       onCreateAndSaveCategory,
       onChooseUploadCategory,
       onCancelCategoryChoice,
+      onCreateAndSaveLinkCategory,
+      onCancelLink,
       onRetry,
       onSaveWithoutReading,
       onChooseCategory,
       onDismissAnalysis;
+  final ValueChanged<SavedLinkCategory> onChooseLinkCategory;
   final bool analysisFailure;
   final String email;
   final Future<void> Function() onSignOut;
@@ -1028,6 +1219,8 @@ class Shell extends StatelessWidget {
         suggestedDestination: suggestedDestination,
         unresolvedCategory: unresolvedCategory,
         categoryMatchAmbiguous: categoryMatchAmbiguous,
+        linkCategories: linkCategories,
+        unresolvedLinkCategory: unresolvedLinkCategory,
         uploadedName: uploadedName,
         onSend: onSend,
         onUpload: onUpload,
@@ -1036,6 +1229,9 @@ class Shell extends StatelessWidget {
         onCreateAndSaveCategory: onCreateAndSaveCategory,
         onChooseUploadCategory: onChooseUploadCategory,
         onCancelCategoryChoice: onCancelCategoryChoice,
+        onChooseLinkCategory: onChooseLinkCategory,
+        onCreateAndSaveLinkCategory: onCreateAndSaveLinkCategory,
+        onCancelLink: onCancelLink,
         onRetry: onRetry,
         analysisFailure: analysisFailure,
         onSaveWithoutReading: onSaveWithoutReading,
@@ -1245,6 +1441,8 @@ class Home extends StatelessWidget {
     required this.suggestedDestination,
     required this.unresolvedCategory,
     required this.categoryMatchAmbiguous,
+    required this.linkCategories,
+    required this.unresolvedLinkCategory,
     required this.uploadedName,
     required this.onSend,
     required this.onUpload,
@@ -1253,6 +1451,9 @@ class Home extends StatelessWidget {
     required this.onCreateAndSaveCategory,
     required this.onChooseUploadCategory,
     required this.onCancelCategoryChoice,
+    required this.onChooseLinkCategory,
+    required this.onCreateAndSaveLinkCategory,
+    required this.onCancelLink,
     required this.onRetry,
     required this.analysisFailure,
     required this.onSaveWithoutReading,
@@ -1268,6 +1469,8 @@ class Home extends StatelessWidget {
   final String? suggestedDestination;
   final String? unresolvedCategory;
   final bool categoryMatchAmbiguous;
+  final List<SavedLinkCategory> linkCategories;
+  final String? unresolvedLinkCategory;
   final String? uploadedName;
   final VoidCallback onSend,
       onUpload,
@@ -1276,10 +1479,13 @@ class Home extends StatelessWidget {
       onCreateAndSaveCategory,
       onChooseUploadCategory,
       onCancelCategoryChoice,
+      onCreateAndSaveLinkCategory,
+      onCancelLink,
       onRetry,
       onSaveWithoutReading,
       onChooseCategory,
       onDismissAnalysis;
+  final ValueChanged<SavedLinkCategory> onChooseLinkCategory;
   final bool analysisFailure;
   @override
   Widget build(BuildContext c) => LayoutBuilder(
@@ -1399,6 +1605,47 @@ class Home extends StatelessWidget {
                               ],
                             ),
                           ],
+                          if (linkCategories.isNotEmpty &&
+                              unresolvedLinkCategory == null) ...[
+                            const SizedBox(height: 12),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                ...linkCategories.map(
+                                  (category) => ActionChip(
+                                    label: Text(category.name),
+                                    onPressed: busy
+                                        ? null
+                                        : () => onChooseLinkCategory(category),
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: busy ? null : onCancelLink,
+                                  child: const Text('Cancel'),
+                                ),
+                              ],
+                            ),
+                          ],
+                          if (unresolvedLinkCategory != null) ...[
+                            const SizedBox(height: 12),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                FilledButton(
+                                  onPressed: busy
+                                      ? null
+                                      : onCreateAndSaveLinkCategory,
+                                  child: const Text('Create and save'),
+                                ),
+                                TextButton(
+                                  onPressed: busy ? null : onCancelLink,
+                                  child: const Text('Cancel'),
+                                ),
+                              ],
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -1472,7 +1719,7 @@ class Home extends StatelessWidget {
                 if (busy)
                   const Padding(
                     padding: EdgeInsets.only(bottom: 8),
-                    child: Text('Searching…'),
+                    child: Text('Working…'),
                   ),
                 if (uploadedName != null)
                   Padding(
@@ -1622,7 +1869,7 @@ class _InitialConversation extends StatelessWidget {
             ),
             const SizedBox(height: 26),
             ...[
-              (Icons.folder_outlined, 'Add this to Rental 1'),
+              (Icons.link_outlined, 'Save this link https://example.com'),
               (Icons.receipt_long_outlined, 'Read this bill as an invoice'),
               (Icons.notifications_outlined, 'Add reminder Doctor appointment'),
             ].map(
