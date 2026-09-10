@@ -10,10 +10,17 @@ import 'core/home/home_intent.dart';
 import 'core/home/home_service.dart';
 import 'core/home/reminder_parser.dart';
 import 'core/navigation/destination_state.dart';
+import 'features/conversation/conversation_controller.dart';
+import 'features/conversation/data/conversation_service.dart';
+import 'features/conversation/models/conversation_models.dart';
+import 'features/conversation/widgets/conversation_transcript.dart';
 import 'features/inbox/data/inbox_service.dart';
 import 'features/inbox/inbox_page.dart';
+import 'features/inbox/models/inbox_models.dart';
 import 'features/library/data/library_service.dart';
 import 'features/library/library_page.dart';
+import 'features/library/library_navigation.dart';
+import 'features/library/models/library_models.dart';
 import 'features/timeline/data/timeline_service.dart';
 import 'features/timeline/timeline_page.dart';
 
@@ -35,6 +42,7 @@ class FamilyDocumentsApp extends StatefulWidget {
     this.inboxService,
     this.pickUpload,
     this.destinationState,
+    this.conversationRepository,
   });
   final AuthService? auth;
   final HomeService? homeService;
@@ -43,6 +51,7 @@ class FamilyDocumentsApp extends StatefulWidget {
   final InboxService? inboxService;
   final Future<SelectedUpload?> Function()? pickUpload;
   final DestinationState? destinationState;
+  final ConversationRepository? conversationRepository;
   @override
   State<FamilyDocumentsApp> createState() => _AppState();
 }
@@ -54,7 +63,9 @@ class _AppState extends State<FamilyDocumentsApp> {
   late final TimelineService timelineService;
   late final LibraryService libraryService;
   late final InboxService inboxService;
+  late final LibraryNavigation libraryNavigation;
   late final DestinationState destinationState;
+  late final ConversationController conversationController;
   StreamSubscription<PrimaryDestination>? destinationSubscription;
   late final bool ownsDestinationState;
   bool checking = true, signingIn = false, busy = false;
@@ -67,6 +78,7 @@ class _AppState extends State<FamilyDocumentsApp> {
   String? uploadedName, uploadedMimeType;
   Uint8List? uploadedBytes;
   final Map<String, AnalysisJob> analysisJobs = {};
+  final Map<String, String> analysisConversations = {};
   Timer? analysisTimer;
   String? analysisRequestId;
   String? reminderRequestId, reminderInstruction;
@@ -84,6 +96,21 @@ class _AppState extends State<FamilyDocumentsApp> {
     timelineService = widget.timelineService ?? TimelineService(auth);
     libraryService = widget.libraryService ?? LibraryService(auth);
     inboxService = widget.inboxService ?? InboxService(auth);
+    libraryNavigation = createLibraryNavigation();
+    final injectedHarness =
+        widget.auth != null ||
+        widget.homeService != null ||
+        widget.timelineService != null ||
+        widget.libraryService != null ||
+        widget.inboxService != null;
+    conversationController = ConversationController(
+      repository:
+          widget.conversationRepository ??
+          (injectedHarness
+              ? MemoryConversationRepository()
+              : ConversationService(auth)),
+      execute: _executeConversationAction,
+    )..addListener(_conversationChanged);
     ownsDestinationState = widget.destinationState == null;
     destinationState = widget.destinationState ?? createDestinationState();
     destinationSubscription = destinationState.changes.listen((destination) {
@@ -100,6 +127,10 @@ class _AppState extends State<FamilyDocumentsApp> {
     } catch (_) {}
     if (auth.session != null) {
       tab = destinationState.current.index;
+      try {
+        await conversationController.restore();
+        _bindConversationJobs();
+      } catch (_) {}
       await _restoreAnalysisJobs();
     } else {
       destinationState.reset();
@@ -114,6 +145,10 @@ class _AppState extends State<FamilyDocumentsApp> {
       await auth.signIn(e, p);
       destinationState.reset();
       tab = PrimaryDestination.home.index;
+      try {
+        await conversationController.restore();
+        _bindConversationJobs();
+      } catch (_) {}
       await _restoreAnalysisJobs();
       if (mounted) setState(() => error = null);
     } on AuthException catch (x) {
@@ -124,33 +159,534 @@ class _AppState extends State<FamilyDocumentsApp> {
   }
 
   Future<void> send() async {
-    if (busy) return;
-    if (uploadedBytes != null) return _sendAttachment();
     final instruction = query.text.trim();
-    if (pendingLinkUrl != null) return _continueLinkConversation(instruction);
-    final intent = parseHomeIntent(instruction, hasAttachment: false);
-    switch (intent.type) {
-      case HomeIntentType.search:
-        return search();
-      case HomeIntentType.reminder:
-        return _createReminder(instruction);
-      case HomeIntentType.saveLink:
-        return _startLinkConversation(intent);
-      case HomeIntentType.viewCategory:
-        setState(() {
-          message =
-              'Would you like to add a document, save a link, or view your $instruction items?';
-          error = null;
-        });
-        return;
-      default:
-        setState(() {
-          message = 'What would you like to add? You can attach a document, save a link, or create a reminder.';
-          error = null;
-        });
-        return;
+    if (busy || conversationController.loading) return;
+    final hasAttachment = uploadedBytes != null;
+    await conversationController.submit(
+      instruction,
+      hasAttachment: hasAttachment,
+      attachmentId: hasAttachment
+          ? 'attachment-${sha256.convert(uploadedBytes!).toString().substring(0, 24)}'
+          : null,
+      attachmentLabel: uploadedName,
+    );
+    if (mounted) query.clear();
+  }
+
+  void _conversationChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _newConversation() async {
+    clearAttachment();
+    setState(() {
+      message = null;
+      error = null;
+      searchResponse = null;
+      organisedDocument = null;
+      suggestedDestination = null;
+      retryAction = null;
+    });
+    await conversationController.newConversation();
+  }
+
+  Future<ConversationExecutionResult> _executeConversationAction(
+    ConversationAction action,
+  ) async {
+    switch (action.type) {
+      case ConversationActionType.searchFamilyContent:
+        final result = await homeService.search(
+          action.parameters['query'].toString(),
+        );
+        final references = result.documents
+            .where((document) => _isUuid(document.id))
+            .map(
+              (document) => ConversationReference(
+                type: 'document',
+                id: document.id!,
+                label: document.title,
+                metadata: {
+                  if (document.collection != null)
+                    'category': document.collection,
+                  if (document.date != null) 'important_date': document.date,
+                  if (document.matchType != null)
+                    'match_type': document.matchType,
+                },
+              ),
+            )
+            .toList();
+        return ConversationExecutionResult(
+          message: result.documents.isEmpty
+              ? 'I couldn’t find that in your FamilyDocuments account.'
+              : result.answer,
+          data: {
+            'results': result.documents
+                .map(
+                  (document) => {
+                    'title': document.title,
+                    if (document.collection != null)
+                      'category': document.collection,
+                    if (document.date != null) 'date': document.date,
+                    'match_type': document.matchType ?? 'metadata',
+                  },
+                )
+                .toList(),
+          },
+          references: references,
+          suggestions: result.documents.isEmpty
+              ? const []
+              : [
+                  if (references.isNotEmpty)
+                    _suggestion(
+                      'Open ${references.first.label}',
+                      ConversationActionType.openAppDestination,
+                      {'destination': 'library', 'result_index': 0},
+                    ),
+                  _suggestion(
+                    'Refine search',
+                    ConversationActionType.requestClarification,
+                    {
+                      'question': 'What should I narrow the search to?',
+                      'missing_parameter': 'search_query',
+                    },
+                  ),
+                  _suggestion(
+                    'View in Library',
+                    ConversationActionType.openAppDestination,
+                    {'destination': 'library'},
+                  ),
+                ],
+        );
+      case ConversationActionType.saveDocument:
+        final bytes = uploadedBytes;
+        final name = uploadedName;
+        final mimeType = uploadedMimeType;
+        if (bytes == null || name == null || mimeType == null) {
+          throw HomeServiceException('Attach the document you want to save.');
+        }
+        final requested = action.parameters['category_name']?.toString() ?? '';
+        var resolution = await homeService.resolveCategory(requested);
+        if (resolution.type == CategoryResolutionType.missing &&
+            action.parameters['create_category'] == true) {
+          final created = await homeService.createCategory(requested);
+          resolution = CategoryResolution.found(created);
+        }
+        if (resolution.type != CategoryResolutionType.found) {
+          final choices = resolution.type == CategoryResolutionType.ambiguous
+              ? resolution.matches
+              : await homeService.categories();
+          final suggestions = <ConversationSuggestion>[
+            if (resolution.type == CategoryResolutionType.missing)
+              _suggestion(
+                'Create and save',
+                ConversationActionType.saveDocument,
+                {
+                  ...action.parameters,
+                  'category_name': canonicalCategoryName(requested),
+                  'create_category': true,
+                },
+              ),
+            ...choices
+                .take(2)
+                .map(
+                  (category) => _suggestion(
+                    category,
+                    ConversationActionType.saveDocument,
+                    {...action.parameters, 'category_name': category},
+                  ),
+                ),
+          ];
+          return ConversationExecutionResult(
+            message: resolution.type == CategoryResolutionType.ambiguous
+                ? 'I found more than one matching category. Which one should I use?'
+                : 'Your Family doesn’t have a ${canonicalCategoryName(requested)} category yet.',
+            suggestions: suggestions.take(3).toList(),
+          );
+        }
+        final saved = await homeService.saveUpload(
+          name: name,
+          mimeType: mimeType,
+          bytes: bytes,
+          category: resolution.category!,
+        );
+        clearAttachment();
+        return ConversationExecutionResult(
+          message: 'Saved ${saved.title} in ${saved.category}.',
+          data: {'category': saved.category, 'tags': saved.tags},
+          references: _documentReference(saved),
+          suggestions: [
+            _suggestion(
+              'Add tags',
+              ConversationActionType.requestClarification,
+              {
+                'question': 'Which tags should I add?',
+                'missing_parameter': 'tags',
+              },
+            ),
+            _suggestion(
+              'View in ${saved.category}',
+              ConversationActionType.openAppDestination,
+              {'destination': 'library'},
+            ),
+          ],
+        );
+      case ConversationActionType.requestDocumentOcr:
+        var bytes = uploadedBytes;
+        var name = uploadedName;
+        var mimeType = uploadedMimeType;
+        final existingDocumentId = action.parameters['document_id']?.toString();
+        if ((bytes == null || name == null || mimeType == null) &&
+            existingDocumentId != null) {
+          final source = await libraryService.source(existingDocumentId);
+          bytes = source.bytes;
+          name = source.fileName;
+          mimeType = source.mimeType;
+        }
+        if (bytes == null || name == null || mimeType == null) {
+          throw HomeServiceException(
+            'Attach the document you want me to read.',
+          );
+        }
+        final mode = action.parameters['mode']?.toString() == 'invoice'
+            ? 'invoice'
+            : 'document';
+        final job = (await homeService.submitAnalysisJob(
+          name: name,
+          mimeType: mimeType,
+          bytes: bytes,
+          invoice: mode == 'invoice',
+          idempotencyKey: 'ocr-$mode-${sha256.convert(bytes)}',
+        )).withDisplayTitle(name.replaceFirst(RegExp(r'\.[^.]+$'), ''));
+        if (mounted) {
+          setState(() {
+            analysisJobs[job.id] = job;
+            final conversationId = conversationController.conversationId;
+            if (conversationId != null) {
+              analysisConversations[job.id] = conversationId;
+            }
+            if (uploadedBytes != null) {
+              uploadedBytes = null;
+              uploadedName = null;
+              uploadedMimeType = null;
+            }
+          });
+        }
+        if (!job.terminal) _startAnalysisPolling();
+        return ConversationExecutionResult(
+          message: job.status == 'succeeded'
+              ? 'Finished reading ${job.displayTitle ?? 'your document'}.'
+              : 'Uploaded ${job.displayTitle ?? 'your document'}. It is queued for reading.',
+          data: {
+            'correlation_id': 'ocr:${job.id}',
+            'status': job.status,
+            'job_id': job.id,
+            if (job.result != null) 'category': job.result!.category,
+            if (job.result != null) 'tags': job.result!.tags,
+          },
+          references: _isUuid(job.documentId)
+              ? [
+                  ConversationReference(
+                    type: 'document',
+                    id: job.documentId,
+                    label: job.displayTitle ?? 'Document',
+                  ),
+                ]
+              : const [],
+          suggestions: _isUuid(job.documentId)
+              ? [
+                  _suggestion(
+                    'Review category',
+                    ConversationActionType.requestClarification,
+                    {
+                      'question': 'Which category should this document use?',
+                      'missing_parameter': 'change_category',
+                    },
+                  ),
+                  _suggestion(
+                    'Add tags',
+                    ConversationActionType.requestClarification,
+                    {
+                      'question': 'Which tags should I add?',
+                      'missing_parameter': 'tags',
+                    },
+                  ),
+                  _suggestion(
+                    'Open document',
+                    ConversationActionType.openAppDestination,
+                    {'destination': 'library', 'result_index': 0},
+                  ),
+                ]
+              : const [],
+        );
+      case ConversationActionType.createReminder:
+        final result = await homeService.createReminder(
+          title: action.parameters['title'].toString(),
+          dueDate: action.parameters['due_date'].toString(),
+          dueTime: action.parameters['due_time']?.toString(),
+          requestId: action.parameters['request_id'].toString(),
+          documentId: action.parameters['document_id']?.toString(),
+        );
+        return ConversationExecutionResult(
+          message:
+              'Reminder added: ${result.title} — ${result.dueDate}${result.dueTime == null ? '' : ' at ${result.dueTime}'}.',
+          references: _isUuid(result.id)
+              ? [
+                  ConversationReference(
+                    type: 'reminder',
+                    id: result.id,
+                    label: result.title,
+                    metadata: {
+                      'due_date': result.dueDate,
+                      if (result.dueTime != null) 'due_time': result.dueTime,
+                    },
+                  ),
+                ]
+              : const [],
+          suggestions: [
+            _suggestion(
+              'View Reminders',
+              ConversationActionType.openAppDestination,
+              {'destination': 'reminders'},
+            ),
+          ],
+        );
+      case ConversationActionType.saveLink:
+        final requested = action.parameters['category_name']?.toString().trim();
+        if (requested == null || requested.isEmpty) {
+          throw HomeServiceException('Tell me which link category to use.');
+        }
+        var categories = await homeService.linkCategories();
+        final key = requested.toLowerCase();
+        var matches = categories
+            .where(
+              (category) =>
+                  category.name.toLowerCase() == key ||
+                  category.name.toLowerCase().startsWith('$key '),
+            )
+            .toList();
+        if (matches.isEmpty && action.parameters['create_category'] == true) {
+          final created = await homeService.createLinkCategory(requested);
+          categories = [...categories, created];
+          matches = [created];
+        }
+        if (matches.length != 1) {
+          return ConversationExecutionResult(
+            message: matches.isEmpty
+                ? 'Your Family doesn’t have a $requested link category yet.'
+                : 'I found more than one matching link category. Which one should I use?',
+            suggestions: [
+              if (matches.isEmpty)
+                _suggestion(
+                  'Create and save',
+                  ConversationActionType.saveLink,
+                  {...action.parameters, 'create_category': true},
+                ),
+              ...categories
+                  .take(2)
+                  .map(
+                    (category) => _suggestion(
+                      category.name,
+                      ConversationActionType.saveLink,
+                      {...action.parameters, 'category_name': category.name},
+                    ),
+                  ),
+            ].take(3).toList(),
+          );
+        }
+        final saved = await homeService.saveLink(
+          url: action.parameters['url'].toString(),
+          title: action.parameters['title'].toString(),
+          category: matches.single,
+        );
+        return ConversationExecutionResult(
+          message: saved.duplicate
+              ? 'This link is already saved in ${saved.category}.'
+              : 'Saved ${saved.title} in ${saved.category}.',
+          data: {'category': saved.category, 'url': action.parameters['url']},
+          references: _isUuid(saved.id)
+              ? [
+                  ConversationReference(
+                    type: 'link',
+                    id: saved.id,
+                    label: saved.title,
+                  ),
+                ]
+              : const [],
+          suggestions: [
+            _suggestion(
+              'View Saved Links',
+              ConversationActionType.openAppDestination,
+              {'destination': 'library'},
+            ),
+          ],
+        );
+      case ConversationActionType.updateDocumentCategory:
+      case ConversationActionType.updateDocumentTags:
+        final documentId = action.parameters['document_id'].toString();
+        final data = await libraryService.load(limit: 100);
+        final matching = data.documents
+            .where((document) => document.id == documentId)
+            .toList();
+        if (matching.length != 1 || !matching.single.canEdit) {
+          throw const LibraryServiceException(
+            'You no longer have access to this item.',
+            accessRevoked: true,
+          );
+        }
+        final document = matching.single;
+        var categoryId = document.categoryId;
+        var tags = List<String>.from(document.tags);
+        if (action.type == ConversationActionType.updateDocumentCategory) {
+          final requested = action.parameters['category_name']
+              .toString()
+              .toLowerCase();
+          final categories = data.categories
+              .where((category) => category.name.toLowerCase() == requested)
+              .toList();
+          if (categories.length != 1) {
+            throw const LibraryServiceException(
+              'Choose one existing Family category.',
+            );
+          }
+          categoryId = categories.single.id;
+        } else {
+          final requestedTags = (action.parameters['tags'] as List)
+              .map((tag) => ConversationController.normaliseTag(tag.toString()))
+              .where((tag) => tag.isNotEmpty)
+              .toSet();
+          if (action.parameters['operation'] == 'remove') {
+            tags.removeWhere(
+              (tag) => requestedTags.contains(
+                ConversationController.normaliseTag(tag),
+              ),
+            );
+          } else {
+            tags = {
+              ...tags.map(ConversationController.normaliseTag),
+              ...requestedTags,
+            }.toList();
+          }
+        }
+        await libraryService.updateDocument(
+          document: document,
+          categoryId: categoryId,
+          tags: tags,
+        );
+        final category = data.categories
+            .where((item) => item.id == categoryId)
+            .firstOrNull;
+        return ConversationExecutionResult(
+          message: action.type == ConversationActionType.updateDocumentCategory
+              ? 'Changed ${document.title} to ${category?.name ?? document.category}.'
+              : 'Updated the tags on ${document.title}.',
+          data: {'category': category?.name ?? document.category, 'tags': tags},
+          references: [
+            ConversationReference(
+              type: 'document',
+              id: document.id,
+              label: document.title,
+              metadata: {'category': category?.name ?? document.category},
+            ),
+          ],
+        );
+      case ConversationActionType.markInboxReviewed:
+      case ConversationActionType.dismissInboxItem:
+        final item = await inboxService.detail(
+          action.parameters['inbox_id'].toString(),
+        );
+        await inboxService.setReviewState(
+          item,
+          action.type == ConversationActionType.dismissInboxItem
+              ? 'dismissed'
+              : 'reviewed',
+        );
+        return ConversationExecutionResult(
+          message: action.type == ConversationActionType.dismissInboxItem
+              ? 'Dismissed ${item.subject} from Inbox.'
+              : 'Marked ${item.subject} as reviewed.',
+        );
+      case ConversationActionType.openAppDestination:
+        final destination = action.parameters['destination'].toString();
+        final index = const {
+          'home': 0,
+          'timeline': 1,
+          'library': 2,
+          'inbox': 3,
+          'reminders': 4,
+        }[destination]!;
+        final resultIndex = action.parameters['result_index'] as int?;
+        if (destination == 'library' &&
+            resultIndex != null &&
+            resultIndex < conversationController.references.length) {
+          final reference = conversationController.references[resultIndex];
+          if (reference.type == 'document') {
+            libraryNavigation.open(
+              LibraryLocation(LibrarySection.documents, itemId: reference.id),
+            );
+          }
+        }
+        _selectTab(index);
+        return ConversationExecutionResult(
+          message: 'Opened ${Shell.labels[index]}.',
+        );
+      case ConversationActionType.updateReminder:
+        final result = await homeService.moveReminderOneWeekBefore(
+          reminderId: action.parameters['reminder_id'].toString(),
+          expectedDueDate: action.parameters['expected_due_date'].toString(),
+        );
+        return ConversationExecutionResult(
+          message:
+              'Updated ${result.title}. I’ll remind you on ${result.dueDate}${result.dueTime == null ? '' : ' at ${result.dueTime}'}.',
+          references: [
+            ConversationReference(
+              type: 'reminder',
+              id: result.id,
+              label: result.title,
+              metadata: {
+                'due_date': result.dueDate,
+                if (result.dueTime != null) 'due_time': result.dueTime,
+              },
+            ),
+          ],
+        );
+      case ConversationActionType.requestClarification:
+      case ConversationActionType.requestConfirmation:
+      case ConversationActionType.unsupportedRequest:
+        throw StateError('Non-executable conversation action.');
     }
   }
+
+  List<ConversationReference> _documentReference(OrganisedDocument document) =>
+      _isUuid(document.id)
+      ? [
+          ConversationReference(
+            type: 'document',
+            id: document.id!,
+            label: document.title,
+            metadata: {'category': document.category, 'tags': document.tags},
+          ),
+        ]
+      : const [];
+
+  ConversationSuggestion _suggestion(
+    String label,
+    ConversationActionType type,
+    Map<String, dynamic> parameters,
+  ) => ConversationSuggestion(
+    label: label,
+    action: ConversationAction(
+      id: 'suggestion-${DateTime.now().microsecondsSinceEpoch}',
+      type: type,
+      parameters: parameters,
+    ),
+  );
+
+  static bool _isUuid(String? value) =>
+      value != null &&
+      RegExp(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+        caseSensitive: false,
+      ).hasMatch(value);
 
   Future<void> _startLinkConversation(HomeIntent intent) async {
     setState(() {
@@ -178,46 +714,6 @@ class _AppState extends State<FamilyDocumentsApp> {
     } finally {
       if (mounted) setState(() => busy = false);
     }
-  }
-
-  Future<void> _continueLinkConversation(String answer) async {
-    final categoryAnswer = answer
-        .trim()
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .replaceFirst(
-          RegExp(
-            r'^(?:please\s+)?(?:save\s+(?:it\s+)?)?(?:in|under|to)\s+',
-            caseSensitive: false,
-          ),
-          '',
-        )
-        .trim();
-    final normalised = categoryAnswer.toLowerCase();
-    if (normalised.isEmpty) {
-      setState(() => message = 'Tell me which category to use for this link.');
-      return;
-    }
-    if (normalised == 'cancel' || normalised == 'never mind') {
-      _clearLinkConversation(messageText: 'Okay, I didn’t save the link.');
-      return;
-    }
-    final matches = pendingLinkCategories
-        .where(
-          (category) =>
-              category.name
-                  .trim()
-                  .replaceAll(RegExp(r'\s+'), ' ')
-                  .toLowerCase() ==
-              normalised,
-        )
-        .toList();
-    if (matches.length == 1) return _savePendingLink(matches.single);
-    setState(() {
-      unresolvedLinkCategory = categoryAnswer;
-      message =
-          'I couldn’t find that link category. Would you like me to create “$unresolvedLinkCategory”?';
-      query.clear();
-    });
   }
 
   Future<void> chooseLinkCategory(SavedLinkCategory category) =>
@@ -445,7 +941,7 @@ class _AppState extends State<FamilyDocumentsApp> {
       error = null;
       retryAction = 'upload';
       message = needsAnalysis
-          ? 'Reading and organising your document…'
+          ? 'Reading your document…'
           : 'Saving to $category…';
       searchResponse = null;
       organisedDocument = null;
@@ -483,8 +979,7 @@ class _AppState extends State<FamilyDocumentsApp> {
               retryAction = job.retryAllowed ? 'analysis:${job.id}' : null;
               message = null;
             } else {
-              message =
-                  'Uploaded. Reading and organising $name in the background…';
+              message = 'Uploaded. Reading $name in the background…';
             }
             uploadedBytes = null;
             uploadedName = null;
@@ -625,9 +1120,61 @@ class _AppState extends State<FamilyDocumentsApp> {
           } else {
             message = job.status == 'queued'
                 ? 'Your document is queued for reading…'
-                : 'Reading and organising your document in the background…';
+                : 'Reading your document in the background…';
           }
         });
+        final activeConversation = conversationController.conversationId;
+        final belongsToActiveConversation =
+            analysisConversations[job.id] == activeConversation ||
+            conversationController.hasCorrelation('ocr:${job.id}');
+        if (belongsToActiveConversation) {
+          await conversationController.updateProgress(
+            correlationId: 'ocr:${job.id}',
+            text: job.status == 'succeeded' && job.result != null
+                ? 'Finished reading ${job.result!.title}.'
+                : job.status == 'failed' || job.status == 'permanent_failed'
+                ? 'I couldn’t read ${job.displayTitle ?? 'that document'}.'
+                : job.status == 'queued'
+                ? '${job.displayTitle ?? 'Your document'} is queued for reading.'
+                : 'Reading ${job.displayTitle ?? 'your document'}…',
+            status: job.status == 'succeeded'
+                ? 'finished'
+                : job.status == 'failed' || job.status == 'permanent_failed'
+                ? 'failed'
+                : job.status,
+            data: {
+              'job_id': job.id,
+              'document_id': job.documentId,
+              if (job.result != null) 'category': job.result!.category,
+              if (job.result != null) 'tags': job.result!.tags,
+            },
+            suggestions: job.status == 'succeeded' && _isUuid(job.documentId)
+                ? [
+                    _suggestion(
+                      'Review category',
+                      ConversationActionType.requestClarification,
+                      {
+                        'question': 'Which category should this document use?',
+                        'missing_parameter': 'change_category',
+                      },
+                    ),
+                    _suggestion(
+                      'Add tags',
+                      ConversationActionType.requestClarification,
+                      {
+                        'question': 'Which tags should I add?',
+                        'missing_parameter': 'tags',
+                      },
+                    ),
+                    _suggestion(
+                      'Open document',
+                      ConversationActionType.openAppDestination,
+                      {'destination': 'library', 'result_index': 0},
+                    ),
+                  ]
+                : const [],
+          );
+        }
         if (completedNow && tab != 1) _showAnalysisCompletion();
       } on AuthException {
         await auth.clear();
@@ -641,6 +1188,17 @@ class _AppState extends State<FamilyDocumentsApp> {
   void _stopAnalysisPolling() {
     analysisTimer?.cancel();
     analysisTimer = null;
+  }
+
+  void _bindConversationJobs() {
+    final conversationId = conversationController.conversationId;
+    if (conversationId == null) return;
+    for (final message in conversationController.messages) {
+      final jobId = message.data['job_id']?.toString();
+      if (jobId != null && message.data['correlation_id'] == 'ocr:$jobId') {
+        analysisConversations[jobId] = conversationId;
+      }
+    }
   }
 
   void _showAnalysisCompletion() {
@@ -935,6 +1493,8 @@ class _AppState extends State<FamilyDocumentsApp> {
     reminderInstruction = null;
     unresolvedCategory = null;
     categoryMatchAmbiguous = false;
+    conversationController.clearLocal();
+    analysisConversations.clear();
     destinationState.reset();
     tab = PrimaryDestination.home.index;
     setState(() => checking = true);
@@ -945,8 +1505,11 @@ class _AppState extends State<FamilyDocumentsApp> {
   @override
   void dispose() {
     _stopAnalysisPolling();
+    conversationController.removeListener(_conversationChanged);
+    conversationController.dispose();
     destinationSubscription?.cancel();
     if (ownsDestinationState) destinationState.dispose();
+    libraryNavigation.dispose();
     query.dispose();
     super.dispose();
   }
@@ -968,6 +1531,7 @@ class _AppState extends State<FamilyDocumentsApp> {
             onTab: _selectTab,
             timelineService: timelineService,
             libraryService: libraryService,
+            libraryNavigation: libraryNavigation,
             inboxService: inboxService,
             analysisJobs: analysisJobs.values.toList(),
             onRefreshAnalysis: refreshAnalysisJobs,
@@ -976,6 +1540,14 @@ class _AppState extends State<FamilyDocumentsApp> {
             onChooseAnalysisCategory: chooseAnalysisCategory,
             onDismissAnalysisJob: saveAnalysisWithoutReading,
             onLibraryMetadataChanged: _invalidateDocumentResults,
+            conversationMessages: conversationController.messages,
+            conversationLoading: conversationController.loading,
+            conversationConfirmation: conversationController.confirmation,
+            onNewConversation: _newConversation,
+            onConfirmConversation: conversationController.confirm,
+            onCancelConversationConfirmation:
+                conversationController.cancelConfirmation,
+            onConversationSuggestion: conversationController.chooseSuggestion,
             query: query,
             busy: busy,
             message: message,
@@ -1003,6 +1575,7 @@ class _AppState extends State<FamilyDocumentsApp> {
             onSaveWithoutReading: saveFailedAnalysisWithoutReading,
             onChooseCategory: chooseFailedAnalysisCategory,
             onDismissAnalysis: dismissFailedAnalysis,
+            onDiscussInbox: _discussInbox,
             email: auth.session!.email,
             onSignOut: signOut,
           ),
@@ -1020,6 +1593,21 @@ class _AppState extends State<FamilyDocumentsApp> {
       searchResponse = null;
       organisedDocument = null;
     });
+  }
+
+  Future<void> _discussInbox(InboxMessage item) async {
+    await conversationController.focusReference(
+      ConversationReference(
+        type: 'inbox',
+        id: item.id,
+        label: item.subject,
+        metadata: {
+          'review_state': item.reviewState,
+          'updated_at': item.updatedAt.toUtc().toIso8601String(),
+        },
+      ),
+    );
+    _selectTab(PrimaryDestination.home.index);
   }
 }
 
@@ -1086,6 +1674,7 @@ class Shell extends StatelessWidget {
     required this.onTab,
     required this.timelineService,
     required this.libraryService,
+    required this.libraryNavigation,
     required this.inboxService,
     required this.analysisJobs,
     required this.onRefreshAnalysis,
@@ -1094,6 +1683,13 @@ class Shell extends StatelessWidget {
     required this.onChooseAnalysisCategory,
     required this.onDismissAnalysisJob,
     required this.onLibraryMetadataChanged,
+    required this.conversationMessages,
+    required this.conversationLoading,
+    required this.conversationConfirmation,
+    required this.onNewConversation,
+    required this.onConfirmConversation,
+    required this.onCancelConversationConfirmation,
+    required this.onConversationSuggestion,
     required this.query,
     required this.busy,
     required this.message,
@@ -1121,6 +1717,7 @@ class Shell extends StatelessWidget {
     required this.onSaveWithoutReading,
     required this.onChooseCategory,
     required this.onDismissAnalysis,
+    required this.onDiscussInbox,
     required this.email,
     required this.onSignOut,
   });
@@ -1128,6 +1725,7 @@ class Shell extends StatelessWidget {
   final ValueChanged<int> onTab;
   final TimelineService timelineService;
   final LibraryService libraryService;
+  final LibraryNavigation libraryNavigation;
   final InboxService inboxService;
   final List<AnalysisJob> analysisJobs;
   final Future<void> Function() onRefreshAnalysis;
@@ -1136,6 +1734,13 @@ class Shell extends StatelessWidget {
   final Future<void> Function(String) onChooseAnalysisCategory;
   final Future<void> Function(String) onDismissAnalysisJob;
   final VoidCallback onLibraryMetadataChanged;
+  final List<ConversationMessage> conversationMessages;
+  final bool conversationLoading;
+  final ConversationConfirmation? conversationConfirmation;
+  final Future<void> Function() onNewConversation;
+  final Future<void> Function() onConfirmConversation;
+  final Future<void> Function() onCancelConversationConfirmation;
+  final Future<void> Function(ConversationSuggestion) onConversationSuggestion;
   final TextEditingController query;
   final bool busy;
   final String? message;
@@ -1165,6 +1770,7 @@ class Shell extends StatelessWidget {
   final bool analysisFailure;
   final String email;
   final Future<void> Function() onSignOut;
+  final ValueChanged<InboxMessage> onDiscussInbox;
   static const labels = ['Home', 'Timeline', 'Library', 'Inbox', 'Reminders'];
   static const icons = [
     Icons.home_outlined,
@@ -1210,6 +1816,13 @@ class Shell extends StatelessWidget {
     final activeCount = analysisJobs.where((job) => !job.terminal).length;
     final content = switch (tab) {
       0 => Home(
+        conversationMessages: conversationMessages,
+        conversationLoading: conversationLoading,
+        conversationConfirmation: conversationConfirmation,
+        onNewConversation: onNewConversation,
+        onConfirmConversation: onConfirmConversation,
+        onCancelConversationConfirmation: onCancelConversationConfirmation,
+        onConversationSuggestion: onConversationSuggestion,
         query: query,
         busy: busy,
         message: message,
@@ -1249,6 +1862,7 @@ class Shell extends StatelessWidget {
       ),
       2 => LibraryPage(
         service: libraryService,
+        navigation: libraryNavigation,
         processingJobs: analysisJobs,
         onRefreshProcessing: onRefreshAnalysis,
         onMetadataChanged: onLibraryMetadataChanged,
@@ -1257,6 +1871,7 @@ class Shell extends StatelessWidget {
         service: inboxService,
         onDataChanged: onLibraryMetadataChanged,
         onOcrRequested: onRefreshAnalysis,
+        onDiscuss: onDiscussInbox,
       ),
       _ => Center(child: Text('${labels[tab]} will be connected in Phase 2.')),
     };
@@ -1432,6 +2047,13 @@ class _DesktopSidebar extends StatelessWidget {
 class Home extends StatelessWidget {
   const Home({
     super.key,
+    required this.conversationMessages,
+    required this.conversationLoading,
+    required this.conversationConfirmation,
+    required this.onNewConversation,
+    required this.onConfirmConversation,
+    required this.onCancelConversationConfirmation,
+    required this.onConversationSuggestion,
     required this.query,
     required this.busy,
     required this.message,
@@ -1460,6 +2082,13 @@ class Home extends StatelessWidget {
     required this.onChooseCategory,
     required this.onDismissAnalysis,
   });
+  final List<ConversationMessage> conversationMessages;
+  final bool conversationLoading;
+  final ConversationConfirmation? conversationConfirmation;
+  final Future<void> Function() onNewConversation;
+  final Future<void> Function() onConfirmConversation;
+  final Future<void> Function() onCancelConversationConfirmation;
+  final Future<void> Function(ConversationSuggestion) onConversationSuggestion;
   final TextEditingController query;
   final bool busy;
   final String? message;
@@ -1490,6 +2119,22 @@ class Home extends StatelessWidget {
   @override
   Widget build(BuildContext c) => LayoutBuilder(
     builder: (context, constraints) {
+      if (conversationMessages.isNotEmpty) {
+        return _ActiveConversation(
+          messages: conversationMessages,
+          loading: conversationLoading,
+          confirmation: conversationConfirmation,
+          query: query,
+          uploadedName: uploadedName,
+          onNewConversation: onNewConversation,
+          onConfirm: onConfirmConversation,
+          onCancelConfirmation: onCancelConversationConfirmation,
+          onSuggestion: onConversationSuggestion,
+          onSend: onSend,
+          onUpload: onUpload,
+          onClearAttachment: onClearAttachment,
+        );
+      }
       final startingConversation =
           message == null &&
           searchResponse == null &&
@@ -1814,6 +2459,126 @@ class Home extends StatelessWidget {
         ),
       );
     },
+  );
+}
+
+class _ActiveConversation extends StatefulWidget {
+  const _ActiveConversation({
+    required this.messages,
+    required this.loading,
+    required this.confirmation,
+    required this.query,
+    required this.uploadedName,
+    required this.onNewConversation,
+    required this.onConfirm,
+    required this.onCancelConfirmation,
+    required this.onSuggestion,
+    required this.onSend,
+    required this.onUpload,
+    required this.onClearAttachment,
+  });
+
+  final List<ConversationMessage> messages;
+  final bool loading;
+  final ConversationConfirmation? confirmation;
+  final TextEditingController query;
+  final String? uploadedName;
+  final Future<void> Function() onNewConversation;
+  final Future<void> Function() onConfirm;
+  final Future<void> Function() onCancelConfirmation;
+  final Future<void> Function(ConversationSuggestion) onSuggestion;
+  final VoidCallback onSend, onUpload, onClearAttachment;
+
+  @override
+  State<_ActiveConversation> createState() => _ActiveConversationState();
+}
+
+class _ActiveConversationState extends State<_ActiveConversation> {
+  final scroll = ScrollController();
+
+  @override
+  void didUpdateWidget(covariant _ActiveConversation oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.messages.length != oldWidget.messages.length ||
+        widget.loading != oldWidget.loading) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && scroll.hasClients) {
+          scroll.animateTo(
+            scroll.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 820),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            Align(
+              alignment: Alignment.centerRight,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: TextButton.icon(
+                  onPressed: widget.loading ? null : widget.onNewConversation,
+                  icon: const Icon(Icons.add_comment_outlined),
+                  label: const Text('New conversation'),
+                ),
+              ),
+            ),
+            Expanded(
+              child: ConversationTranscript(
+                messages: widget.messages,
+                loading: widget.loading,
+                confirmation: widget.confirmation,
+                onConfirm: widget.onConfirm,
+                onCancelConfirmation: widget.onCancelConfirmation,
+                onSuggestion: widget.onSuggestion,
+                scrollController: scroll,
+              ),
+            ),
+            if (widget.uploadedName != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: InputChip(
+                    avatar: const Icon(Icons.attach_file, size: 18),
+                    label: Text(widget.uploadedName!),
+                    onDeleted: widget.onClearAttachment,
+                  ),
+                ),
+              ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                16,
+                0,
+                16,
+                MediaQuery.viewInsetsOf(context).bottom > 0 ? 8 : 16,
+              ),
+              child: _ConversationComposer(
+                query: widget.query,
+                busy: widget.loading,
+                onSend: widget.onSend,
+                onUpload: widget.onUpload,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
   );
 }
 

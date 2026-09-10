@@ -12,10 +12,18 @@ class HomeServiceException implements Exception {
 }
 
 class DocumentMatch {
-  const DocumentMatch({required this.title, this.collection, this.date});
+  const DocumentMatch({
+    required this.title,
+    this.id,
+    this.collection,
+    this.date,
+    this.matchType,
+  });
+  final String? id;
   final String title;
   final String? collection;
   final String? date;
+  final String? matchType;
 }
 
 class SearchResponse {
@@ -30,7 +38,9 @@ class OrganisedDocument {
     required this.category,
     required this.tags,
     required this.pageCount,
+    this.id,
   });
+  final String? id;
   final String title;
   final String category;
   final List<String> tags;
@@ -207,6 +217,32 @@ class HomeService {
       id: payload['id']?.toString() ?? '',
       title: payload['title']?.toString() ?? title,
       dueDate: payload['due_at']?.toString() ?? dueDate,
+      dueTime: payload['due_time']?.toString(),
+    );
+  }
+
+  Future<ReminderResult> moveReminderOneWeekBefore({
+    required String reminderId,
+    required String expectedDueDate,
+  }) async {
+    final response = await _post('/rest/rpc/update_conversation_reminder', {
+      'reminder': reminderId,
+      'operation': 'one_week_before',
+      'expected_due_date': expectedDueDate,
+    });
+    final payload = _json(response.body);
+    if (response.statusCode != 200) {
+      throw HomeServiceException(
+        _plainError(
+          payload,
+          'That reminder changed or is no longer available. Try again.',
+        ),
+      );
+    }
+    return ReminderResult(
+      id: payload['id']?.toString() ?? reminderId,
+      title: payload['title']?.toString() ?? 'Reminder',
+      dueDate: payload['due_at']?.toString() ?? expectedDueDate,
       dueTime: payload['due_time']?.toString(),
     );
   }
@@ -464,6 +500,7 @@ class HomeService {
           (payload['tags'] as List?)?.map((tag) => tag.toString()).toList() ??
           const [],
       pageCount: (payload['pages'] as num?)?.toInt() ?? 0,
+      id: payload['document_id']?.toString(),
     );
   }
 
@@ -481,6 +518,7 @@ class HomeService {
     OrganisedDocument? result;
     if (raw is Map) {
       result = OrganisedDocument(
+        id: payload['document_id']?.toString(),
         title: raw['title']?.toString() ?? 'Document',
         category: raw['category']?.toString() ?? 'Documents',
         tags:
@@ -557,6 +595,7 @@ class HomeService {
           (payload['tags'] as List?)?.map((tag) => tag.toString()).toList() ??
           const [],
       pageCount: 0,
+      id: payload['document_id']?.toString(),
     );
   }
 
@@ -573,10 +612,12 @@ class HomeService {
     final title = value['document_title'] ?? value['title'] ?? value['name'];
     if (title == null || title.toString().trim().isEmpty) return null;
     return DocumentMatch(
+      id: (value['document_id'] ?? value['id'])?.toString(),
       title: title.toString(),
       collection:
           (value['category_name'] ?? value['category'] ?? value['collection'])
               ?.toString(),
+      matchType: (value['match_type'] ?? value['matched_field'])?.toString(),
       date:
           (value['important_date'] ??
                   value['critical_date'] ??

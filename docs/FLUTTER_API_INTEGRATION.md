@@ -107,3 +107,34 @@ the idempotent migration. Rollback requires first preserving any review state
 and `inbox_actions` results that must remain auditable, then removing the Inbox
 RPCs/table/indexes and the four review columns; dropping those records loses
 only Inbox review/action history, not imported messages or saved documents.
+
+# Phase 2D constrained conversation API
+
+Flutter Home now uses a bounded `ConversationController`. Deterministic parsing
+continues to handle explicit search, reminder, link, upload destination and OCR
+commands. Only unresolved requests are sent to `POST /conversation/interpret`.
+That endpoint calls the configured provider-neutral local model
+(`CONVERSATION_MODEL`, normally the existing `qwen3:4b`) with a ten-second
+timeout and rate limit. It returns one versioned, allowlisted action proposal;
+it has no mutation capability. Flutter validates that proposal again before an
+existing authenticated service can execute it. Invalid output always becomes a
+clarification.
+
+Conversation state is stored through `start_conversation`,
+`conversation_workspace`, `append_conversation_message`,
+`set_conversation_confirmation`, `consume_conversation_confirmation` and
+`record_conversation_action`. These RPCs derive the user and Family from the
+authenticated membership. They store concise messages, structured references,
+pending confirmations and action outcomes, never model chain-of-thought,
+credentials, tokens, storage paths or document bodies. Home restores at most 60
+messages and 12 recent entity references. Confirmations expire after ten
+minutes and are consumed once. Existing document, OCR, reminder, saved-link,
+Library and Inbox endpoints remain the only mutation paths and retain their
+permission checks and idempotency controls.
+
+`update_conversation_reminder` is intentionally narrow: after confirmation it
+can move one accessible upcoming reminder one week earlier, and only when its
+expected date still matches. This prevents stale follow-ups from overwriting a
+change made elsewhere. Search answers continue to use `/search/ask` and show
+only the accessible evidence returned by that service. Returned document text
+is treated as untrusted evidence and is never interpreted as an action.

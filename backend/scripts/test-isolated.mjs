@@ -9,9 +9,10 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const docker = process.env.FD_DOCKER || 'docker';
 const manualLibrary = process.argv.includes('--manual-library');
 const manualInbox = process.argv.includes('--manual-inbox');
-if (manualLibrary && manualInbox) throw new Error('Choose one manual runtime');
-const manualRuntime = manualLibrary || manualInbox;
-const prefix = `${manualInbox ? 'fd-inbox' : manualLibrary ? 'fd-library' : 'fd-test'}-${randomBytes(6).toString('hex')}`;
+const manualConversation = process.argv.includes('--manual-conversation');
+if ([manualLibrary, manualInbox, manualConversation].filter(Boolean).length > 1) throw new Error('Choose one manual runtime');
+const manualRuntime = manualLibrary || manualInbox || manualConversation;
+const prefix = `${manualConversation ? 'fd-conversation' : manualInbox ? 'fd-inbox' : manualLibrary ? 'fd-library' : 'fd-test'}-${randomBytes(6).toString('hex')}`;
 const label = manualRuntime ? 'app.familydocuments.manual-runtime' : 'app.familydocuments.test-run';
 const containers = [], networks = [], processes = [];
 let keepManualRuntime = false;
@@ -109,11 +110,11 @@ try {
   console.log('All migrations replayed in disposable PostgreSQL.');
   await run('rest', images.rest, ['--network', `name=${networks[1]},alias=rest`, '--network', networks[0], '-p', `127.0.0.1:${ports.API}:3000`, '--read-only', '--cap-drop', 'ALL', '-e', `PGRST_DB_URI=postgres://authenticator:${password}@db:5432/postgres`, '-e', 'PGRST_DB_SCHEMAS=fp', '-e', 'PGRST_DB_ANON_ROLE=anon', '-e', `PGRST_JWT_SECRET=${env.GOTRUE_JWT_SECRET}`]);
   await ready(env.FD_API_URL);
-  await run('gateway', images.gateway, ['--network', networks[1], '-p', `127.0.0.1:${ports.GATEWAY}:8080`, '--read-only', '--cap-drop', 'ALL', '-e', `GOTRUE_JWT_SECRET=${env.GOTRUE_JWT_SECRET}`, '-e', `INGESTION_HMAC_SECRET=${env.FD_TEST_HMAC_SECRET}`, '-e', 'FP_API_URL=http://rest:3000', '-e', `AUTH_UPSTREAM_URL=http://${prefix}-auth:9999`, '-e', 'OCR_UPSTREAM_URL=http://ocr:8080', '-e', `FRONTEND_ORIGIN=http://127.0.0.1:${manualRuntime ? ports.WEB : 3300}`]);
+  await run('gateway', images.gateway, ['--network', networks[1], '-p', `127.0.0.1:${ports.GATEWAY}:8080`, '--read-only', '--cap-drop', 'ALL', '-e', `GOTRUE_JWT_SECRET=${env.GOTRUE_JWT_SECRET}`, '-e', `INGESTION_HMAC_SECRET=${env.FD_TEST_HMAC_SECRET}`, '-e', 'FP_API_URL=http://rest:3000', '-e', `AUTH_UPSTREAM_URL=http://${prefix}-auth:9999`, '-e', 'OCR_UPSTREAM_URL=http://ocr:8080', '-e', `FRONTEND_ORIGIN=http://127.0.0.1:${manualRuntime ? ports.WEB : 3300}`, ...(manualConversation ? ['-e', 'OLLAMA_BASE_URL=http://host.docker.internal:11434', '-e', 'CONVERSATION_MODEL=qwen3:4b'] : [])]);
   await ready(`${env.FD_GATEWAY_URL}/health`);
   env.FD_SEARCH_URL = `${env.FD_GATEWAY_URL}/search`;
   console.log(`Isolated database container: ${env.FD_TEST_CONTAINER}`);
-  const suites = process.argv.slice(2).filter(value => value !== '--manual-library' && value !== '--manual-inbox');
+  const suites = process.argv.slice(2).filter(value => value !== '--manual-library' && value !== '--manual-inbox' && value !== '--manual-conversation');
   const selected = suites.length ? suites : ['email-password-auth.mjs', 'family-foundation.mjs', 'totp-mfa-e2e.mjs', 'google-oauth-contract.mjs', 'email-ingestion-e2e.mjs', 'search-assistant-e2e.mjs', 'ocr-reminder-e2e.mjs', 'attachment-scanner-e2e.mjs', 'google-drive-exact-files.sql', 'operational-hardening.sql', 'ux-phase-a-original-sources.sql'];
   async function startOcr() {
     console.log('Starting isolated real PaddleOCR (models baked in cached image; no external AI).');
@@ -135,7 +136,7 @@ try {
     }
   }
   if (manualRuntime) {
-    const runtimeDir = fileURLToPath(new URL(`../supabase/.temp/${manualInbox ? 'phase2c' : 'phase2b'}-manual-${prefix}/`, import.meta.url));
+    const runtimeDir = fileURLToPath(new URL(`../supabase/.temp/${manualConversation ? 'phase2d' : manualInbox ? 'phase2c' : 'phase2b'}-manual-${prefix}/`, import.meta.url));
     await mkdir(runtimeDir, {recursive: true});
     await startOcr();
     const ollama = await fetch('http://127.0.0.1:11434/api/tags', {signal: AbortSignal.timeout(5000)}).then(response => response.json());
@@ -171,10 +172,12 @@ try {
       return body;
     }
 
-    const owner = await createManualAccount(`${manualInbox ? 'inbox' : 'library'}-owner`);
-    const viewer = await createManualAccount(`${manualInbox ? 'inbox' : 'library'}-viewer`);
-    const outsider = await createManualAccount(`${manualInbox ? 'inbox' : 'library'}-outsider`);
-    const ownerFamily = await rpc(owner, 'bootstrap_household', {household_name: `${manualInbox ? 'Phase 2C' : 'Phase 2B'} synthetic Family`, display_name: 'Synthetic owner'});
+    const mode = manualConversation ? 'conversation' : manualInbox ? 'inbox' : 'library';
+    const phase = manualConversation ? 'Phase 2D' : manualInbox ? 'Phase 2C' : 'Phase 2B';
+    const owner = await createManualAccount(`${mode}-owner`);
+    const viewer = await createManualAccount(`${mode}-viewer`);
+    const outsider = await createManualAccount(`${mode}-outsider`);
+    const ownerFamily = await rpc(owner, 'bootstrap_household', {household_name: `${phase} synthetic Family`, display_name: 'Synthetic owner'});
     const outsiderFamily = await rpc(outsider, 'bootstrap_household', {household_name: 'Other synthetic Family', display_name: 'Synthetic outsider'});
     await rpc(owner, 'create_category', {category_name: 'Documents'});
     await rpc(owner, 'create_category', {category_name: 'Finance'});
@@ -215,7 +218,7 @@ try {
     `);
 
     let inboxSeed = null;
-    if (manualInbox) {
+    if (manualInbox || manualConversation) {
       const inboxIds = Object.fromEntries(['newAttachment','newLink','reviewed','earlier','foreign','attachment','billAttachment'].map(key => [key, crypto.randomUUID()]));
       const billHex = Buffer.from(await readFile(new URL('../tests/fixtures/synthetic-bill.pdf', import.meta.url))).toString('hex');
       await sql(`
@@ -239,6 +242,19 @@ try {
       inboxSeed = {emails: 4, attachments: 2, reviewed: 1, unreviewed: 3, inaccessible_family: true, revocable_message: inboxIds.earlier};
     }
 
+    if (manualConversation) {
+      const secondPolicy = crypto.randomUUID();
+      await sql(`
+        update fp.documents set extracted_text='Synthetic electricity account total and due information.',critical_date='2027-01-20' where id='${ids.bill}';
+        insert into fp.document_analysis_jobs(household_id,document_id,requested_by,mode,status,attempts,next_attempt_at,started_at,completed_at,result,idempotency_key)
+          values('${familyId}','${ids.bill}','${owner.userId}','invoice','succeeded',1,now(),now()-interval '1 minute',now(),'{"title":"Synthetic electricity invoice","category":"Finance","tags":["invoice","home"]}','manual-conversation-completed-ocr');
+        insert into fp.documents(id,household_id,category_id,title,original_filename,mime_type,created_by,confirmation_status,tags,created_at)
+          values('${secondPolicy}','${familyId}','${category('Finance')}','Synthetic insurance policy copy','synthetic-policy-copy.pdf','application/pdf','${owner.userId}','confirmed','["insurance","ambiguous"]',now()-interval '8 days');
+        insert into fp.reminders(household_id,document_id,title,due_at,due_time,due_time_zone,status,created_by,client_request_id)
+          values('${familyId}',null,'Synthetic doctor appointment','2027-01-20','14:00','Pacific/Auckland','upcoming','${owner.userId}','manual-conversation-reminder');
+      `);
+    }
+
     const workerLogPath = `${runtimeDir}\\worker.log`;
     const flutterLogPath = `${runtimeDir}\\flutter.log`;
     const workerLog = await open(workerLogPath, 'a');
@@ -256,10 +272,21 @@ try {
     const credentialsPath = `${runtimeDir}\\credentials.txt`;
     await writeFile(credentialsPath, `Synthetic owner\nEmail: ${owner.email}\nPassword: ${owner.password}\n\nRead-only member\nEmail: ${viewer.email}\nPassword: ${viewer.password}\n`, {mode: 0o600});
     const runtimePath = `${runtimeDir}\\runtime.json`;
-    const migration = manualInbox ? '044_flutter_inbox.sql' : '043_flutter_library.sql';
-    await writeFile(runtimePath, JSON.stringify({runtime_id: prefix, label, created_at: new Date().toISOString(), containers, networks, processes: {worker: worker.pid, flutter: flutter.pid}, urls: {flutter: `http://127.0.0.1:${ports.WEB}`, gateway: env.FD_GATEWAY_URL, auth: env.FD_AUTH_URL, api: env.FD_API_URL, ocr: env.FD_OCR_URL}, logs: {worker: workerLogPath, flutter: flutterLogPath}, credentials_file: credentialsPath, fixtures: [fileURLToPath(new URL('../tests/fixtures/synthetic-bill.pdf', import.meta.url)), fileURLToPath(new URL('../tests/fixtures/synthetic-malformed.pdf', import.meta.url))], migration, seed: inboxSeed ?? {documents: 8, trips: 2, rentals: 2, links: 2, read_only_member: true, inaccessible_family: true, revocable_document: ids.revocable}}, null, 2));
+    const migration = manualConversation ? '046_constrained_conversations.sql' : manualInbox ? '044_flutter_inbox.sql' : '043_flutter_library.sql';
+    const seed = {
+      documents: manualConversation ? 9 : 8,
+      trips: 2,
+      rentals: 2,
+      links: 2,
+      reminders: manualConversation ? 1 : 0,
+      read_only_member: true,
+      inaccessible_family: true,
+      revocable_document: ids.revocable,
+      ...(inboxSeed ?? {}),
+    };
+    await writeFile(runtimePath, JSON.stringify({runtime_id: prefix, label, candidate_commit: process.env.FD_CANDIDATE_COMMIT || null, created_at: new Date().toISOString(), containers, networks, processes: {worker: worker.pid, flutter: flutter.pid}, urls: {flutter: `http://127.0.0.1:${ports.WEB}`, gateway: env.FD_GATEWAY_URL, auth: env.FD_AUTH_URL, api: env.FD_API_URL, ocr: env.FD_OCR_URL}, logs: {worker: workerLogPath, flutter: flutterLogPath}, credentials_file: credentialsPath, fixtures: [fileURLToPath(new URL('../tests/fixtures/synthetic-bill.pdf', import.meta.url)), fileURLToPath(new URL('../tests/fixtures/synthetic-malformed.pdf', import.meta.url))], migration, seed}, null, 2));
     keepManualRuntime = true;
-    console.log(JSON.stringify({[manualInbox ? 'manual_inbox_runtime' : 'manual_library_runtime']: 'READY', flutter_url: `http://127.0.0.1:${ports.WEB}`, credentials_file: credentialsPath, runtime_manifest: runtimePath, worker_pid: worker.pid, migration}, null, 2));
+    console.log(JSON.stringify({[manualConversation ? 'manual_conversation_runtime' : manualInbox ? 'manual_inbox_runtime' : 'manual_library_runtime']: 'READY', flutter_url: `http://127.0.0.1:${ports.WEB}`, credentials_file: credentialsPath, runtime_manifest: runtimePath, worker_pid: worker.pid, migration}, null, 2));
   }
   for (const suite of manualRuntime ? [] : selected) {
     if (!/^[a-z0-9-]+\.(mjs|sql)$/.test(suite)) throw new Error('Invalid test suite name');

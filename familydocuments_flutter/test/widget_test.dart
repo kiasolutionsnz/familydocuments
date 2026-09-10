@@ -497,7 +497,7 @@ void main() {
     await t.pumpAndSettle();
     expect(home.reminderCalls, 1);
     expect(
-      find.text('Reminder added: Doctor appointment — tomorrow at 2:00 pm'),
+      find.textContaining('Reminder added: Doctor appointment'),
       findsOneWidget,
     );
   });
@@ -542,12 +542,12 @@ void main() {
     );
     await t.tap(find.byTooltip('Send').last);
     await t.pumpAndSettle();
-    await t.tap(find.text('Retry'));
+    await t.tap(find.text('Try again'));
     await t.pumpAndSettle();
     expect(home.reminderCalls, 2);
     expect(home.reminderRequestIds.toSet(), hasLength(1));
     expect(
-      find.text('Reminder added: Doctor appointment — tomorrow at 2:00 pm'),
+      find.textContaining('Reminder added: Doctor appointment'),
       findsOneWidget,
     );
   });
@@ -569,8 +569,6 @@ void main() {
       find.text('Which category should I save this link in?'),
       findsOneWidget,
     );
-    expect(find.text('Research'), findsOneWidget);
-
     await t.enterText(find.byType(TextField).last, '  research  ');
     await t.tap(find.byTooltip('Send').last);
     await t.pumpAndSettle();
@@ -599,13 +597,16 @@ void main() {
     await t.pumpAndSettle();
     expect(
       find.text(
-        'I couldn’t find that link category. Would you like me to create “Recipes for later”?',
+        'Your Family doesn’t have a Recipes for later link category yet.',
       ),
       findsOneWidget,
     );
     expect(home.linkSaveCalls, 0);
 
     await t.tap(find.text('Create and save'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('Create Recipes for later'), findsOneWidget);
+    await t.tap(find.text('Confirm'));
     await t.pumpAndSettle();
     expect(home.linkCategoryCreateCalls, 1);
     expect(home.linkSaveCalls, 1);
@@ -669,7 +670,7 @@ void main() {
     expect(home.analysisCalls, 0);
     expect(home.savedCategory, 'Rentals');
     expect(home.savedBytes, orderedEquals([1, 2, 3, 4]));
-    expect(find.text('Saved in Rentals.'), findsOneWidget);
+    expect(find.text('Saved synthetic-rental in Rentals.'), findsOneWidget);
   });
 
   testWidgets(
@@ -689,15 +690,16 @@ void main() {
       await t.pump();
       await t.tap(find.byTooltip('Send').last);
       await t.pumpAndSettle();
-      expect(find.text('Choose category'), findsOneWidget);
-      await t.tap(find.text('Choose category'));
-      await t.pumpAndSettle();
-      await t.tap(find.text('Rentals').last);
+      expect(
+        find.textContaining('looks like it belongs in Rentals'),
+        findsOneWidget,
+      );
+      await t.tap(find.text('Save in Rentals'));
       await t.pumpAndSettle();
       expect(home.savedCategory, 'Rentals');
       expect(home.savedBytes, orderedEquals([1, 2, 3, 4]));
       expect(home.analysisCalls, 0);
-      expect(find.text('Saved in Rentals.'), findsOneWidget);
+      expect(find.text('Saved synthetic-rental in Rentals.'), findsOneWidget);
     },
   );
 
@@ -715,14 +717,11 @@ void main() {
     await attachAndSend(t, 'Save this in Rentals');
     await t.pumpAndSettle();
     expect(
-      find.text(
-        'Your family doesn’t have a Rentals category yet. Would you like to create it?',
-      ),
+      find.text('Your Family doesn’t have a Rentals category yet.'),
       findsOneWidget,
     );
     expect(find.text('Create and save'), findsOneWidget);
-    expect(find.text('Choose another category'), findsOneWidget);
-    expect(find.text('Cancel'), findsOneWidget);
+    expect(find.text('Home'), findsWidgets);
     expect(home.saveCalls, 0);
   });
 
@@ -741,10 +740,12 @@ void main() {
     await t.pumpAndSettle();
     await t.tap(find.text('Create and save'));
     await t.pumpAndSettle();
+    await t.tap(find.text('Confirm'));
+    await t.pumpAndSettle();
     expect(home.createCategoryCalls, 1);
     expect(home.saveCalls, 1);
     expect(home.analysisCalls, 0);
-    expect(find.text('Saved in Rentals.'), findsOneWidget);
+    expect(find.text('Saved synthetic-rental in Rentals.'), findsOneWidget);
   });
 
   testWidgets('choose another category saves the same selected bytes', (
@@ -761,8 +762,6 @@ void main() {
     );
     await t.pump();
     await attachAndSend(t, 'Save this in Rentals');
-    await t.pumpAndSettle();
-    await t.tap(find.text('Choose another category'));
     await t.pumpAndSettle();
     await t.tap(find.text('Home').last);
     await t.pumpAndSettle();
@@ -784,14 +783,13 @@ void main() {
     await t.pump();
     await attachAndSend(t, 'Save this in Rentals');
     await t.pumpAndSettle();
+    await t.tap(find.text('Create and save'));
+    await t.pumpAndSettle();
     await t.tap(find.text('Cancel'));
     await t.pumpAndSettle();
     expect(home.saveCalls, 0);
-    expect(
-      find.text('Not saved. Your document is still attached.'),
-      findsOneWidget,
-    );
-    expect(find.text('synthetic-rental.pdf'), findsOneWidget);
+    expect(find.text('Okay, I didn’t make that change.'), findsOneWidget);
+    expect(find.text('synthetic-rental.pdf'), findsWidgets);
   });
 
   testWidgets('ambiguous category requires a real selection', (t) async {
@@ -817,7 +815,8 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Create and save'), findsNothing);
-    expect(find.text('Choose another category'), findsOneWidget);
+    expect(find.text('Home'), findsWidgets);
+    expect(find.text('Home records'), findsOneWidget);
     expect(home.saveCalls, 0);
   });
 
@@ -858,12 +857,12 @@ void main() {
     expect(home.analysisCalls, 1);
     expect(home.saveCalls, 0);
     expect(home.savedBytes, orderedEquals([1, 2, 3, 4]));
-    expect(find.text('Finished reading your document'), findsOneWidget);
-    expect(find.text('Synthetic electricity bill'), findsOneWidget);
-    expect(find.text('Category'), findsOneWidget);
-    expect(find.widgetWithText(Chip, 'Home'), findsOneWidget);
-    expect(find.text('Tags'), findsOneWidget);
-    expect(find.text('invoice'), findsOneWidget);
+    expect(
+      find.text('Finished reading Synthetic electricity bill.'),
+      findsOneWidget,
+    );
+    expect(find.text('Category: Home'), findsOneWidget);
+    expect(find.text('Tags: invoice'), findsOneWidget);
     await t.pumpWidget(const SizedBox());
   });
 
@@ -967,27 +966,18 @@ void main() {
       FamilyDocumentsApp(key: UniqueKey(), auth: auth, homeService: home),
     );
     await t.pump(const Duration(milliseconds: 100));
-    expect(
-      find.text('Reading and organising your document in the background…'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Reading your document'), findsWidgets);
     await t.tap(find.text('Timeline').first);
     await t.pump();
     await t.tap(find.text('Home').first);
     await t.pump();
-    expect(
-      find.text('Reading and organising your document in the background…'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Reading your document'), findsWidgets);
     await t.pumpWidget(
       FamilyDocumentsApp(key: UniqueKey(), auth: auth, homeService: home),
     );
     await t.pump(const Duration(milliseconds: 100));
     expect(home.restoreCalls, greaterThanOrEqualTo(2));
-    expect(
-      find.text('Reading and organising your document in the background…'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Reading your document'), findsWidgets);
     await t.pumpWidget(const SizedBox());
   });
 
@@ -1006,7 +996,7 @@ void main() {
     await t.pump();
     await attachAndSend(t, 'Scan this document for OCR');
     await t.pumpAndSettle();
-    await t.tap(find.text('Retry'));
+    await t.tap(find.text('Try again'));
     await t.pump();
     expect(home.analysisCalls, 2);
     expect(home.analysisRequestIds.toSet(), hasLength(1));
@@ -1070,8 +1060,9 @@ void main() {
     await t.pump();
     await attachAndSend(t, 'Scan this document for OCR');
     await t.pump();
-    expect(find.text('Finished reading your document'), findsOneWidget);
-    expect(find.text('Synthetic electricity bill'), findsOneWidget);
+    expect(find.text('Finished reading synthetic-bill.'), findsOneWidget);
+    expect(find.text('Category: Finance'), findsOneWidget);
+    expect(find.text('Tags: invoice'), findsOneWidget);
     expect(home.pollCalls, 0);
     await t.pumpWidget(const SizedBox());
   });

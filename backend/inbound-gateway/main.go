@@ -191,6 +191,11 @@ func main() {
 	mux.HandleFunc("/documents/save", documentSaveHandler(api, allowedOrigin))
 	registerDocumentAnalysisJobRoutes(mux, api, allowedOrigin)
 	mux.HandleFunc("/search/ask", searchHandler(api, allowedOrigin))
+	conversationModel := optionalEnv("CONVERSATION_MODEL")
+	if conversationModel == "" {
+		conversationModel = optionalEnv("DOCUMENT_CLASSIFIER_MODEL")
+	}
+	mux.HandleFunc("/conversation/interpret", newConversationInterpreter(allowedOrigin, optionalEnv("OLLAMA_BASE_URL"), conversationModel, nil))
 	mux.HandleFunc("/help/chat", newHelpChatHandler(allowedOrigin, optionalEnv("OLLAMA_BASE_URL"), optionalEnv("HELP_CHAT_MODEL"), nil))
 	driveGateway, driveErr := newDriveGateway(api, allowedOrigin, jwtSecret)
 	if driveErr != nil {

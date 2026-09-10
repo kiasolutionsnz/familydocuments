@@ -157,6 +157,7 @@ Future<void> _pump(
   _Service service, {
   Future<bool> Function(String)? opener,
   InboxNavigation? navigation,
+  ValueChanged<InboxMessage>? onDiscuss,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -167,6 +168,7 @@ Future<void> _pump(
           onOcrRequested: () async {},
           linkOpener: opener,
           navigation: navigation,
+          onDiscuss: onDiscuss,
         ),
       ),
     ),
@@ -175,6 +177,17 @@ Future<void> _pump(
 }
 
 void main() {
+  testWidgets('message can establish safe conversational Inbox context', (
+    tester,
+  ) async {
+    InboxMessage? discussed;
+    await _pump(tester, _Service(), onDiscuss: (value) => discussed = value);
+    await tester.tap(find.text('Travel insurance invoice'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue in Home'));
+    expect(discussed?.subject, 'Travel insurance invoice');
+  });
+
   testWidgets('shows newest Inbox items grouped as New and Earlier', (
     tester,
   ) async {

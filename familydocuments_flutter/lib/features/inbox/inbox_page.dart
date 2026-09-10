@@ -17,12 +17,14 @@ class InboxPage extends StatefulWidget {
     required this.onOcrRequested,
     this.linkOpener,
     this.navigation,
+    this.onDiscuss,
   });
   final InboxService service;
   final VoidCallback onDataChanged;
   final Future<void> Function() onOcrRequested;
   final InboxLinkOpener? linkOpener;
   final InboxNavigation? navigation;
+  final ValueChanged<InboxMessage>? onDiscuss;
 
   @override
   State<InboxPage> createState() => InboxPageState();
@@ -379,6 +381,12 @@ class InboxPageState extends State<InboxPage> {
           spacing: 10,
           runSpacing: 10,
           children: [
+            if (widget.onDiscuss != null)
+              OutlinedButton.icon(
+                onPressed: () => widget.onDiscuss!(value),
+                icon: const Icon(Icons.chat_bubble_outline),
+                label: const Text('Continue in Home'),
+              ),
             FilledButton.icon(
               onPressed: () => _review('reviewed'),
               icon: const Icon(Icons.done),
