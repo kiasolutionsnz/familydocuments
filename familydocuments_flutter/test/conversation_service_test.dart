@@ -73,12 +73,7 @@ void main() {
                 },
               ],
               'pending_confirmation': {
-                'action_id': 'action-12345678',
-                'action_type': 'dismiss_inbox_item',
-                'version': 1,
-                'parameters': {
-                  'inbox_id': '11111111-1111-4111-8111-111111111111',
-                },
+                'id': '11111111-1111-4111-8111-111111111111',
                 'summary': 'Dismiss this item?',
                 'target_label': 'Synthetic message',
                 'expires_at': DateTime.now()
@@ -158,4 +153,62 @@ void main() {
     expect(auth.refreshes, 1);
     expect(calls, 2);
   });
+
+  test(
+    'lost action response retains the signed model proposal for retry',
+    () async {
+      final auth = FakeAuth();
+      var actionCalls = 0;
+      final submittedTokens = <String?>[];
+      final service = ConversationService(
+        auth,
+        client: FakeClient((request, body) async {
+          if (request.url.path == '/conversation/interpret') {
+            return http.Response(
+              jsonEncode({
+                'action': {
+                  'id': 'proposal-12345678',
+                  'type': 'save_link',
+                  'version': 1,
+                  'parameters': {
+                    'url': 'https://familydocuments.app/',
+                    'category_name': 'Travel',
+                  },
+                },
+                'proposal_token': 'synthetic-signed-proposal',
+              }),
+              200,
+            );
+          }
+          final payload = jsonDecode(body) as Map<String, dynamic>;
+          submittedTokens.add(payload['proposal_token']?.toString());
+          actionCalls++;
+          if (actionCalls == 1) return http.Response('{}', 502);
+          return http.Response(
+            jsonEncode({
+              'execution_id': 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+              'state': 'awaiting_confirmation',
+              'action_type': 'save_link',
+              'result': <String, dynamic>{},
+            }),
+            200,
+          );
+        }),
+      );
+      final action = await service.interpret(
+        message: 'Save the link in Travel',
+        references: const [],
+        hasAttachment: false,
+      );
+      await expectLater(
+        service.submitAction('conversation', action, action.id),
+        throwsA(isA<ConversationServiceException>()),
+      );
+      await service.submitAction('conversation', action, action.id);
+      expect(submittedTokens, [
+        'synthetic-signed-proposal',
+        'synthetic-signed-proposal',
+      ]);
+    },
+  );
 }

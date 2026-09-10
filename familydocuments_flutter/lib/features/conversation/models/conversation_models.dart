@@ -1,3 +1,5 @@
+import '../../../core/security/public_https_url.dart';
+
 enum ConversationRole { user, assistant }
 
 enum ConversationMessageKind {
@@ -132,7 +134,6 @@ class ConversationAction {
       'due_time',
       'expected_due_date',
       'expected_updated_at',
-      'request_id',
       'url',
       'destination',
       'question',
@@ -192,9 +193,7 @@ class ConversationAction {
     final url = parameters['url']?.toString();
     if (url != null) {
       final parsed = Uri.tryParse(url);
-      if (parsed == null ||
-          !const {'http', 'https'}.contains(parsed.scheme) ||
-          parsed.host.isEmpty) {
+      if (parsed == null || !isPublicHttpsUrl(url)) {
         throw const ConversationActionValidationException('Invalid link URL.');
       }
     }
@@ -352,7 +351,6 @@ const _allowedParameters = <ConversationActionType, Set<String>>{
     'due_date',
     'due_time',
     'document_id',
-    'request_id',
   },
   ConversationActionType.updateReminder: {
     'reminder_id',
@@ -366,7 +364,6 @@ const _allowedParameters = <ConversationActionType, Set<String>>{
     'url',
     'title',
     'category_name',
-    'request_id',
     'create_category',
   },
   ConversationActionType.markInboxReviewed: {'inbox_id', 'expected_updated_at'},
@@ -405,13 +402,13 @@ const _requiredParameters = <ConversationActionType, Set<String>>{
     'tags',
     'operation',
   },
-  ConversationActionType.createReminder: {'title', 'due_date', 'request_id'},
+  ConversationActionType.createReminder: {'title', 'due_date'},
   ConversationActionType.updateReminder: {
     'reminder_id',
     'operation',
     'expected_due_date',
   },
-  ConversationActionType.saveLink: {'url', 'category_name', 'request_id'},
+  ConversationActionType.saveLink: {'url', 'category_name'},
   ConversationActionType.markInboxReviewed: {'inbox_id'},
   ConversationActionType.dismissInboxItem: {'inbox_id'},
   ConversationActionType.openAppDestination: {'destination'},
@@ -538,17 +535,47 @@ class ConversationMessage {
 }
 
 class ConversationConfirmation {
-  const ConversationConfirmation({
-    required this.action,
+  ConversationConfirmation({
+    String? id,
+    this.action,
     required this.summary,
     required this.targetLabel,
     required this.expiresAt,
-  });
-  final ConversationAction action;
+  }) : id =
+           id ??
+           action?.id ??
+           (throw const ConversationActionValidationException(
+             'Confirmation identifier is required.',
+           ));
+
+  final String id;
+  @Deprecated('Executable confirmation actions are not used in production.')
+  final ConversationAction? action;
   final String summary;
   final String targetLabel;
   final DateTime expiresAt;
   bool get expired => !expiresAt.isAfter(DateTime.now());
+}
+
+class ConversationAuthoritativeOutcome {
+  const ConversationAuthoritativeOutcome({
+    required this.executionId,
+    required this.state,
+    required this.actionType,
+    required this.result,
+    this.errorCategory,
+    this.confirmation,
+  });
+
+  final String executionId;
+  final String state;
+  final String actionType;
+  final Map<String, dynamic> result;
+  final String? errorCategory;
+  final ConversationConfirmation? confirmation;
+
+  String get message =>
+      result['message']?.toString() ?? 'That action could not be completed.';
 }
 
 class ConversationExecutionResult {

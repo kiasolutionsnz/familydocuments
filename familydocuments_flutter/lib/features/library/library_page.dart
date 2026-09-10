@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../../core/home/home_service.dart';
+import '../../core/security/public_https_url.dart';
 import 'data/library_service.dart';
 import 'library_navigation.dart';
 import 'models/library_models.dart';
@@ -952,6 +953,35 @@ class LibraryPageState extends State<LibraryPage> {
   }
 
   Future<void> _safeOpen(String url) async {
+    final hostname = publicHttpsHostname(url);
+    if (hostname == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('This link could not be opened safely.'),
+          ),
+        );
+      }
+      return;
+    }
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Open external website?'),
+        content: Text('You are leaving FamilyDocuments for $hostname.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Open'),
+          ),
+        ],
+      ),
+    );
+    if (approved != true || !mounted) return;
     final opened = await (widget.linkOpener ?? openExternalLink)(url);
     if (!opened && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

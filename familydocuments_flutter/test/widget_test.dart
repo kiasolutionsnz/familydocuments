@@ -572,6 +572,9 @@ void main() {
     await t.enterText(find.byType(TextField).last, '  research  ');
     await t.tap(find.byTooltip('Send').last);
     await t.pumpAndSettle();
+    expect(find.textContaining('familydocuments.app'), findsWidgets);
+    await t.tap(find.text('Confirm').last);
+    await t.pumpAndSettle();
     expect(home.linkSaveCalls, 1);
     expect(home.savedLinkUrl, 'https://familydocuments.app/');
     expect(home.savedLinkTitle, 'familydocuments.app');
@@ -595,6 +598,8 @@ void main() {
     await t.enterText(find.byType(TextField).last, 'Recipes for later');
     await t.tap(find.byTooltip('Send').last);
     await t.pumpAndSettle();
+    await t.tap(find.text('Confirm'));
+    await t.pumpAndSettle();
     expect(
       find.text(
         'Your Family doesn’t have a Recipes for later link category yet.',
@@ -605,8 +610,8 @@ void main() {
 
     await t.tap(find.text('Create and save'));
     await t.pumpAndSettle();
-    expect(find.textContaining('Create Recipes for later'), findsOneWidget);
-    await t.tap(find.text('Confirm'));
+    expect(find.textContaining('example.com'), findsWidgets);
+    await t.tap(find.text('Confirm').last);
     await t.pumpAndSettle();
     expect(home.linkCategoryCreateCalls, 1);
     expect(home.linkSaveCalls, 1);

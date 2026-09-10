@@ -12,12 +12,15 @@ class FakeRepository extends MemoryConversationRepository {
   ConversationAction? modelAction;
   bool modelFails = false;
   int confirmationConsumes = 0;
+  bool expireConfirmation = false;
+  final List<Map<String, dynamic>> jobTransitions = [];
 
   @override
   Future<ConversationAction> interpret({
     required String message,
     required List<ConversationReference> references,
     required bool hasAttachment,
+    String? attachmentId,
   }) async {
     if (modelFails || modelAction == null) {
       throw const ConversationServiceException('invalid model response');
@@ -26,13 +29,60 @@ class FakeRepository extends MemoryConversationRepository {
   }
 
   @override
-  Future<void> consumeConfirmation(
-    String conversationId,
-    String actionId, {
-    required bool cancel,
+  Future<ConversationAuthoritativeOutcome> decideConfirmation(
+    String confirmationId, {
+    required bool confirm,
   }) async {
     confirmationConsumes++;
-    await super.consumeConfirmation(conversationId, actionId, cancel: cancel);
+    if (expireConfirmation) {
+      pending = null;
+      messages.add(
+        ConversationMessage(
+          id: 'expired-confirmation-message',
+          role: ConversationRole.assistant,
+          kind: ConversationMessageKind.error,
+          content: 'That confirmation has expired. Please ask again.',
+          createdAt: DateTime.now(),
+        ),
+      );
+      return ConversationAuthoritativeOutcome(
+        executionId: confirmationId,
+        state: 'expired',
+        actionType: 'test',
+        result: const {
+          'message': 'That confirmation has expired. Please ask again.',
+        },
+      );
+    }
+    return super.decideConfirmation(confirmationId, confirm: confirm);
+  }
+
+  @override
+  Future<Map<String, dynamic>> recordJobTransition(
+    String conversationId,
+    String jobId,
+  ) async {
+    if (jobTransitions.isEmpty) return const {'changed': false};
+    final transition = jobTransitions.removeAt(0);
+    if (transition['changed'] == true) {
+      final data = Map<String, dynamic>.from(transition['data'] as Map);
+      messages.removeWhere(
+        (message) => message.data['correlation_id'] == data['correlation_id'],
+      );
+      messages.add(
+        ConversationMessage(
+          id: 'job-${data['status']}',
+          role: ConversationRole.assistant,
+          kind: data['status'] == 'finished'
+              ? ConversationMessageKind.result
+              : ConversationMessageKind.progress,
+          content: transition['message'].toString(),
+          createdAt: DateTime.now(),
+          data: data,
+        ),
+      );
+    }
+    return transition;
   }
 }
 
@@ -74,17 +124,119 @@ class RecordingExecutor {
   }
 }
 
+class MultiFamilyRepository extends FakeRepository {
+  bool selected = false;
+
+  @override
+  Future<ActiveFamilyWorkspace> activeFamilyWorkspace() async =>
+      ActiveFamilyWorkspace(
+        selectionRequired: !selected,
+        families: const [
+          ActiveFamilyChoice(
+            id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+            name: 'Alpha Family',
+            role: 'owner',
+          ),
+          ActiveFamilyChoice(
+            id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
+            name: 'Beta Family',
+            role: 'adult_member',
+            selected: true,
+          ),
+        ],
+      );
+
+  @override
+  Future<void> selectActiveFamily(String familyId) async {
+    expect(familyId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2');
+    selected = true;
+  }
+}
+
 ConversationController controller(
   FakeRepository repository,
   RecordingExecutor executor, {
   DateTime Function()? now,
 }) => ConversationController(
-  repository: repository,
-  execute: executor.call,
+  repository: repository
+    ..actionHandler = (action) async {
+      if (action.type == ConversationActionType.requestClarification ||
+          action.type == ConversationActionType.unsupportedRequest) {
+        return ConversationAuthoritativeOutcome(
+          executionId: action.id,
+          state: action.type == ConversationActionType.requestClarification
+              ? 'awaiting_clarification'
+              : 'succeeded',
+          actionType: action.type.wireName,
+          result: {
+            'message': action.type == ConversationActionType.unsupportedRequest
+                ? 'I can help organise and find information in your FamilyDocuments account.'
+                : action.parameters['question'],
+            if (action.type == ConversationActionType.unsupportedRequest)
+              'suggestions': [
+                for (final label in const [
+                  'Find a document',
+                  'Save a link',
+                  'Create a reminder',
+                ])
+                  ConversationSuggestion(
+                    label: label,
+                    action: ConversationAction(
+                      id: 'suggestion-${label.replaceAll(' ', '-').toLowerCase()}',
+                      type: ConversationActionType.requestClarification,
+                      parameters: const {
+                        'question': 'What would you like to do?',
+                        'missing_parameter': 'intent',
+                      },
+                    ),
+                  ).toJson(),
+              ],
+          },
+        );
+      }
+      try {
+        final result = await executor.call(action);
+        return ConversationAuthoritativeOutcome(
+          executionId: action.id,
+          state: 'succeeded',
+          actionType: action.type.wireName,
+          result: {
+            'message': result.message,
+            ...result.data,
+            'references': result.references
+                .map((item) => item.toJson())
+                .toList(),
+          },
+        );
+      } catch (_) {
+        return ConversationAuthoritativeOutcome(
+          executionId: action.id,
+          state: 'failed_before_mutation',
+          actionType: action.type.wireName,
+          result: const {
+            'message':
+                'That action could not be completed. Nothing was changed.',
+          },
+          errorCategory: 'synthetic_failure',
+        );
+      }
+    },
   now: now,
 );
 
 void main() {
+  test('multiple Families require explicit active-Family selection', () async {
+    final repository = MultiFamilyRepository();
+    final subject = controller(repository, RecordingExecutor());
+    await subject.restore();
+    expect(subject.familySelectionRequired, isTrue);
+    expect(subject.messages, isEmpty);
+
+    await subject.selectFamily('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2');
+    expect(subject.familySelectionRequired, isFalse);
+    expect(subject.activeFamilyName, 'Beta Family');
+  });
+
   test('Save link asks for category then saves the typed proposal', () async {
     final repository = FakeRepository();
     final executor = RecordingExecutor();
@@ -95,6 +247,9 @@ void main() {
     expect(executor.actions, isEmpty);
 
     await subject.submit('Travel');
+    expect(subject.confirmation?.targetLabel, 'familydocuments.app');
+    expect(executor.actions, isEmpty);
+    await subject.confirm();
     expect(executor.actions, hasLength(1));
     expect(executor.actions.single.type, ConversationActionType.saveLink);
     expect(executor.actions.single.parameters['category_name'], 'Travel');
@@ -286,6 +441,7 @@ void main() {
     await subject.submit('Remind me a week before');
     final before = executor.actions.length;
     clock = clock.add(const Duration(minutes: 11));
+    repository.expireConfirmation = true;
 
     await subject.confirm();
     expect(executor.actions, hasLength(before));
@@ -326,33 +482,25 @@ void main() {
   });
 
   test(
-    'model-requested confirmation never executes before confirmation',
+    'model-derived mutation is submitted for backend confirmation',
     () async {
       final repository = FakeRepository()
         ..modelAction = ConversationAction(
           id: 'action-confirm-1234',
-          type: ConversationActionType.requestConfirmation,
-          parameters: {
-            'summary': 'Open Library?',
-            'target_label': 'Library',
-            'proposed_action': ConversationAction(
-              id: 'action-open-123456',
-              type: ConversationActionType.openAppDestination,
-              parameters: const {'destination': 'library'},
-            ).toJson(),
-          },
+          type: ConversationActionType.dismissInboxItem,
+          parameters: {'inbox_id': inboxOne},
         );
       final executor = RecordingExecutor();
       final subject = controller(repository, executor);
 
-      await subject.submit('Could you take me there?');
+      await subject.submit('Could you dismiss it?');
       expect(subject.confirmation, isNotNull);
       expect(executor.actions, isEmpty);
 
       await subject.confirm();
       expect(
         executor.actions.single.type,
-        ConversationActionType.openAppDestination,
+        ConversationActionType.dismissInboxItem,
       );
     },
   );
@@ -490,21 +638,46 @@ void main() {
     final repository = FakeRepository();
     final executor = RecordingExecutor();
     final subject = controller(repository, executor);
+    repository.jobTransitions.addAll([
+      {
+        'changed': true,
+        'message': 'Queued',
+        'data': {'correlation_id': 'ocr:job-1', 'status': 'queued'},
+      },
+      {
+        'changed': true,
+        'message': 'Reading your document…',
+        'data': {'correlation_id': 'ocr:job-1', 'status': 'processing'},
+      },
+      {
+        'changed': true,
+        'message': 'Finished reading your document',
+        'data': {
+          'correlation_id': 'ocr:job-1',
+          'status': 'finished',
+          'category': 'Finance',
+          'tags': ['invoice'],
+        },
+      },
+    ]);
     await subject.updateProgress(
       correlationId: 'ocr:job-1',
       text: 'Queued',
       status: 'queued',
+      data: const {'job_id': 'job-1'},
     );
     await subject.updateProgress(
       correlationId: 'ocr:job-1',
       text: 'Reading your document…',
       status: 'processing',
+      data: const {'job_id': 'job-1'},
     );
     await subject.updateProgress(
       correlationId: 'ocr:job-1',
       text: 'Finished reading your document',
       status: 'finished',
       data: const {
+        'job_id': 'job-1',
         'category': 'Finance',
         'tags': ['invoice'],
       },
@@ -540,7 +713,7 @@ void main() {
 
       await subject.submit('Dismiss it');
       expect(
-        subject.confirmation?.action.type,
+        subject.confirmation?.action?.type,
         ConversationActionType.dismissInboxItem,
       );
       expect(

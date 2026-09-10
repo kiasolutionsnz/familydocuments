@@ -176,6 +176,15 @@ func searchHandler(api, allowedOrigin string) http.HandlerFunc {
 func main() {
 	secret, jwtSecret, api := env("INGESTION_HMAC_SECRET"), env("GOTRUE_JWT_SECRET"), env("FP_API_URL")
 	allowedOrigin := env("FRONTEND_ORIGIN")
+	jwtIssuer := optionalEnv("JWT_EXPECTED_ISSUER")
+	if jwtIssuer == "" {
+		jwtIssuer = "supabase"
+	}
+	jwtAudience := optionalEnv("JWT_EXPECTED_AUDIENCE")
+	if jwtAudience == "" {
+		jwtAudience = "authenticated"
+	}
+	accessVerifier := accessTokenVerifier{secret: []byte(jwtSecret), issuer: jwtIssuer, audience: jwtAudience}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "application/json")
@@ -195,7 +204,8 @@ func main() {
 	if conversationModel == "" {
 		conversationModel = optionalEnv("DOCUMENT_CLASSIFIER_MODEL")
 	}
-	mux.HandleFunc("/conversation/interpret", newConversationInterpreter(allowedOrigin, optionalEnv("OLLAMA_BASE_URL"), conversationModel, nil))
+	mux.HandleFunc("/conversation/interpret", newConversationInterpreter(allowedOrigin, optionalEnv("OLLAMA_BASE_URL"), conversationModel, api, accessVerifier, []byte(jwtSecret), nil))
+	newTrustedConversationAPI(allowedOrigin, api, accessVerifier, []byte(jwtSecret), nil).register(mux)
 	mux.HandleFunc("/help/chat", newHelpChatHandler(allowedOrigin, optionalEnv("OLLAMA_BASE_URL"), optionalEnv("HELP_CHAT_MODEL"), nil))
 	driveGateway, driveErr := newDriveGateway(api, allowedOrigin, jwtSecret)
 	if driveErr != nil {

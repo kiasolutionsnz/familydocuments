@@ -80,6 +80,7 @@ class _AppState extends State<FamilyDocumentsApp> {
   final Map<String, AnalysisJob> analysisJobs = {};
   final Map<String, String> analysisConversations = {};
   Timer? analysisTimer;
+  bool analysisPollInFlight = false;
   String? analysisRequestId;
   String? reminderRequestId, reminderInstruction;
   String? pendingLinkUrl, pendingLinkTitle, unresolvedLinkCategory;
@@ -103,13 +104,19 @@ class _AppState extends State<FamilyDocumentsApp> {
         widget.timelineService != null ||
         widget.libraryService != null ||
         widget.inboxService != null;
+    final conversationRepository =
+        widget.conversationRepository ??
+        (injectedHarness
+            ? MemoryConversationRepository()
+            : ConversationService(auth));
+    if (injectedHarness &&
+        widget.conversationRepository == null &&
+        conversationRepository is MemoryConversationRepository) {
+      conversationRepository.actionHandler = _legacyHarnessOutcome;
+    }
     conversationController = ConversationController(
-      repository:
-          widget.conversationRepository ??
-          (injectedHarness
-              ? MemoryConversationRepository()
-              : ConversationService(auth)),
-      execute: _executeConversationAction,
+      repository: conversationRepository,
+      onOutcome: injectedHarness ? null : _handleConversationOutcome,
     )..addListener(_conversationChanged);
     ownsDestinationState = widget.destinationState == null;
     destinationState = widget.destinationState ?? createDestinationState();
@@ -165,10 +172,9 @@ class _AppState extends State<FamilyDocumentsApp> {
     await conversationController.submit(
       instruction,
       hasAttachment: hasAttachment,
-      attachmentId: hasAttachment
-          ? 'attachment-${sha256.convert(uploadedBytes!).toString().substring(0, 24)}'
-          : null,
       attachmentLabel: uploadedName,
+      attachmentMimeType: uploadedMimeType,
+      attachmentBytes: uploadedBytes,
     );
     if (mounted) query.clear();
   }
@@ -668,6 +674,129 @@ class _AppState extends State<FamilyDocumentsApp> {
         ]
       : const [];
 
+  Future<ConversationAuthoritativeOutcome> _legacyHarnessOutcome(
+    ConversationAction action,
+  ) async {
+    if (action.type == ConversationActionType.requestClarification ||
+        action.type == ConversationActionType.unsupportedRequest) {
+      return ConversationAuthoritativeOutcome(
+        executionId: action.id,
+        state: action.type == ConversationActionType.requestClarification
+            ? 'awaiting_clarification'
+            : 'succeeded',
+        actionType: action.type.wireName,
+        result: {
+          'message': action.type == ConversationActionType.unsupportedRequest
+              ? 'I can help organise and find information in your FamilyDocuments account.'
+              : action.parameters['question'],
+          if (action.type == ConversationActionType.unsupportedRequest)
+            'suggestions': [
+              _suggestion(
+                'Find a document',
+                ConversationActionType.requestClarification,
+                const {
+                  'question': 'What document should I find?',
+                  'missing_parameter': 'search_query',
+                },
+              ).toJson(),
+              _suggestion(
+                'Save a link',
+                ConversationActionType.requestClarification,
+                const {
+                  'question': 'Paste the link you would like to save.',
+                  'missing_parameter': 'url',
+                },
+              ).toJson(),
+              _suggestion(
+                'Create a reminder',
+                ConversationActionType.requestClarification,
+                const {
+                  'question': 'What should I remind you about, and when?',
+                  'missing_parameter': 'reminder',
+                },
+              ).toJson(),
+            ],
+        },
+      );
+    }
+    try {
+      final result = await _executeConversationAction(action);
+      return ConversationAuthoritativeOutcome(
+        executionId: action.id,
+        state: 'succeeded',
+        actionType: action.type.wireName,
+        result: {
+          'message': result.message,
+          ...result.data,
+          'references': result.references.map((item) => item.toJson()).toList(),
+          if (result.suggestions.isNotEmpty)
+            'suggestions': result.suggestions
+                .map((item) => item.toJson())
+                .toList(),
+        },
+      );
+    } catch (failure) {
+      return ConversationAuthoritativeOutcome(
+        executionId: action.id,
+        state: 'failed_before_mutation',
+        actionType: action.type.wireName,
+        result: {
+          'message': failure is HomeServiceException
+              ? failure.message
+              : 'That action could not be completed. Nothing was changed.',
+          'suggestions': [
+            ConversationSuggestion(
+              label: 'Try again',
+              action: ConversationAction(
+                id: 'retry-${DateTime.now().microsecondsSinceEpoch}',
+                type: action.type,
+                parameters: action.parameters,
+              ),
+            ).toJson(),
+          ],
+        },
+        errorCategory: 'synthetic_test_failure',
+      );
+    }
+  }
+
+  Future<void> _handleConversationOutcome(
+    ConversationAuthoritativeOutcome outcome,
+  ) async {
+    final destination = outcome.result['destination']?.toString();
+    final destinationIndex = const {
+      'home': 0,
+      'timeline': 1,
+      'library': 2,
+      'inbox': 3,
+      'reminders': 4,
+    }[destination];
+    if (destinationIndex != null) _selectTab(destinationIndex);
+
+    if (outcome.actionType == 'save_document' && outcome.state == 'succeeded') {
+      clearAttachment();
+    }
+    final jobId = outcome.result['job_id']?.toString();
+    if (jobId == null || jobId.isEmpty) return;
+    try {
+      final job = await homeService.analysisJob(jobId);
+      if (!mounted) return;
+      setState(() {
+        analysisJobs[job.id] = job;
+        final conversationId = conversationController.conversationId;
+        if (conversationId != null) {
+          analysisConversations[job.id] = conversationId;
+        }
+        uploadedBytes = null;
+        uploadedName = null;
+        uploadedMimeType = null;
+      });
+      if (!job.terminal) _startAnalysisPolling();
+    } catch (_) {
+      // The authoritative transcript retains the queued outcome for restoration.
+    }
+  }
+
   ConversationSuggestion _suggestion(
     String label,
     ConversationActionType type,
@@ -1090,98 +1219,105 @@ class _AppState extends State<FamilyDocumentsApp> {
   }
 
   Future<void> _pollAnalysisJobs() async {
-    if (!mounted || auth.session == null) {
-      _stopAnalysisPolling();
-      return;
-    }
-    final active = analysisJobs.values.where((job) => !job.terminal).toList();
-    if (active.isEmpty) {
-      _stopAnalysisPolling();
-      return;
-    }
-    for (final current in active) {
-      try {
-        final job = await homeService.analysisJob(current.id);
-        if (!mounted) return;
-        final completedNow =
-            !current.terminal &&
-            job.status == 'succeeded' &&
-            job.result != null &&
-            notifiedAnalysisJobs.add(job.id);
-        setState(() {
-          analysisJobs[job.id] = job;
-          if (job.status == 'succeeded' && job.result != null) {
-            organisedDocument = job.result;
-            message = null;
-          } else if (job.status == 'failed' ||
-              job.status == 'permanent_failed') {
-            error = 'The file was saved, but I couldn’t read its contents.';
-            retryAction = job.retryAllowed ? 'analysis:${job.id}' : null;
-          } else {
-            message = job.status == 'queued'
-                ? 'Your document is queued for reading…'
-                : 'Reading your document in the background…';
-          }
-        });
-        final activeConversation = conversationController.conversationId;
-        final belongsToActiveConversation =
-            analysisConversations[job.id] == activeConversation ||
-            conversationController.hasCorrelation('ocr:${job.id}');
-        if (belongsToActiveConversation) {
-          await conversationController.updateProgress(
-            correlationId: 'ocr:${job.id}',
-            text: job.status == 'succeeded' && job.result != null
-                ? 'Finished reading ${job.result!.title}.'
-                : job.status == 'failed' || job.status == 'permanent_failed'
-                ? 'I couldn’t read ${job.displayTitle ?? 'that document'}.'
-                : job.status == 'queued'
-                ? '${job.displayTitle ?? 'Your document'} is queued for reading.'
-                : 'Reading ${job.displayTitle ?? 'your document'}…',
-            status: job.status == 'succeeded'
-                ? 'finished'
-                : job.status == 'failed' || job.status == 'permanent_failed'
-                ? 'failed'
-                : job.status,
-            data: {
-              'job_id': job.id,
-              'document_id': job.documentId,
-              if (job.result != null) 'category': job.result!.category,
-              if (job.result != null) 'tags': job.result!.tags,
-            },
-            suggestions: job.status == 'succeeded' && _isUuid(job.documentId)
-                ? [
-                    _suggestion(
-                      'Review category',
-                      ConversationActionType.requestClarification,
-                      {
-                        'question': 'Which category should this document use?',
-                        'missing_parameter': 'change_category',
-                      },
-                    ),
-                    _suggestion(
-                      'Add tags',
-                      ConversationActionType.requestClarification,
-                      {
-                        'question': 'Which tags should I add?',
-                        'missing_parameter': 'tags',
-                      },
-                    ),
-                    _suggestion(
-                      'Open document',
-                      ConversationActionType.openAppDestination,
-                      {'destination': 'library', 'result_index': 0},
-                    ),
-                  ]
-                : const [],
-          );
-        }
-        if (completedNow && tab != 1) _showAnalysisCompletion();
-      } on AuthException {
-        await auth.clear();
+    if (analysisPollInFlight) return;
+    analysisPollInFlight = true;
+    try {
+      if (!mounted || auth.session == null) {
         _stopAnalysisPolling();
-      } catch (_) {
-        // A transient status failure does not cancel durable server processing.
+        return;
       }
+      final active = analysisJobs.values.where((job) => !job.terminal).toList();
+      if (active.isEmpty) {
+        _stopAnalysisPolling();
+        return;
+      }
+      for (final current in active) {
+        try {
+          final job = await homeService.analysisJob(current.id);
+          if (!mounted) return;
+          final completedNow =
+              !current.terminal &&
+              job.status == 'succeeded' &&
+              job.result != null &&
+              notifiedAnalysisJobs.add(job.id);
+          setState(() {
+            analysisJobs[job.id] = job;
+            if (job.status == 'succeeded' && job.result != null) {
+              organisedDocument = job.result;
+              message = null;
+            } else if (job.status == 'failed' ||
+                job.status == 'permanent_failed') {
+              error = 'The file was saved, but I couldn’t read its contents.';
+              retryAction = job.retryAllowed ? 'analysis:${job.id}' : null;
+            } else {
+              message = job.status == 'queued'
+                  ? 'Your document is queued for reading…'
+                  : 'Reading your document in the background…';
+            }
+          });
+          final activeConversation = conversationController.conversationId;
+          final belongsToActiveConversation =
+              analysisConversations[job.id] == activeConversation ||
+              conversationController.hasCorrelation('ocr:${job.id}');
+          if (belongsToActiveConversation) {
+            await conversationController.updateProgress(
+              correlationId: 'ocr:${job.id}',
+              text: job.status == 'succeeded' && job.result != null
+                  ? 'Finished reading ${job.result!.title}.'
+                  : job.status == 'failed' || job.status == 'permanent_failed'
+                  ? 'I couldn’t read ${job.displayTitle ?? 'that document'}.'
+                  : job.status == 'queued'
+                  ? '${job.displayTitle ?? 'Your document'} is queued for reading.'
+                  : 'Reading ${job.displayTitle ?? 'your document'}…',
+              status: job.status == 'succeeded'
+                  ? 'finished'
+                  : job.status == 'failed' || job.status == 'permanent_failed'
+                  ? 'failed'
+                  : job.status,
+              data: {
+                'job_id': job.id,
+                'document_id': job.documentId,
+                if (job.result != null) 'category': job.result!.category,
+                if (job.result != null) 'tags': job.result!.tags,
+              },
+              suggestions: job.status == 'succeeded' && _isUuid(job.documentId)
+                  ? [
+                      _suggestion(
+                        'Review category',
+                        ConversationActionType.requestClarification,
+                        {
+                          'question':
+                              'Which category should this document use?',
+                          'missing_parameter': 'change_category',
+                        },
+                      ),
+                      _suggestion(
+                        'Add tags',
+                        ConversationActionType.requestClarification,
+                        {
+                          'question': 'Which tags should I add?',
+                          'missing_parameter': 'tags',
+                        },
+                      ),
+                      _suggestion(
+                        'Open document',
+                        ConversationActionType.openAppDestination,
+                        {'destination': 'library', 'result_index': 0},
+                      ),
+                    ]
+                  : const [],
+            );
+          }
+          if (completedNow && tab != 1) _showAnalysisCompletion();
+        } on AuthException {
+          await auth.clear();
+          _stopAnalysisPolling();
+        } catch (_) {
+          // A transient status failure does not cancel durable server processing.
+        }
+      }
+    } finally {
+      analysisPollInFlight = false;
     }
   }
 
@@ -1526,6 +1662,13 @@ class _AppState extends State<FamilyDocumentsApp> {
         ? const Scaffold(body: Center(child: Text('Checking your session…')))
         : auth.session == null
         ? Login(onSubmit: signIn, busy: signingIn, error: error)
+        : conversationController.familySelectionRequired
+        ? FamilySelectionPage(
+            families: conversationController.families,
+            busy: conversationController.loading,
+            onSelect: conversationController.selectFamily,
+            onSignOut: signOut,
+          )
         : Shell(
             tab: tab,
             onTab: _selectTab,
@@ -1577,6 +1720,7 @@ class _AppState extends State<FamilyDocumentsApp> {
             onDismissAnalysis: dismissFailedAnalysis,
             onDiscussInbox: _discussInbox,
             email: auth.session!.email,
+            familyName: conversationController.activeFamilyName,
             onSignOut: signOut,
           ),
   );
@@ -1609,6 +1753,54 @@ class _AppState extends State<FamilyDocumentsApp> {
     );
     _selectTab(PrimaryDestination.home.index);
   }
+}
+
+class FamilySelectionPage extends StatelessWidget {
+  const FamilySelectionPage({
+    super.key,
+    required this.families,
+    required this.busy,
+    required this.onSelect,
+    required this.onSignOut,
+  });
+
+  final List<ActiveFamilyChoice> families;
+  final bool busy;
+  final Future<void> Function(String familyId) onSelect;
+  final Future<void> Function() onSignOut;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(
+      title: const Text('Choose your Family'),
+      actions: [
+        TextButton(
+          onPressed: busy ? null : onSignOut,
+          child: const Text('Sign out'),
+        ),
+      ],
+    ),
+    body: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: ListView.separated(
+          padding: const EdgeInsets.all(24),
+          itemCount: families.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 12),
+          itemBuilder: (context, index) {
+            final family = families[index];
+            return ListTile(
+              enabled: !busy,
+              title: Text(family.name),
+              subtitle: Text(family.role.replaceAll('_', ' ')),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => onSelect(family.id),
+            );
+          },
+        ),
+      ),
+    ),
+  );
 }
 
 class Login extends StatefulWidget {
@@ -1719,6 +1911,7 @@ class Shell extends StatelessWidget {
     required this.onDismissAnalysis,
     required this.onDiscussInbox,
     required this.email,
+    required this.familyName,
     required this.onSignOut,
   });
   final int tab;
@@ -1769,6 +1962,7 @@ class Shell extends StatelessWidget {
   final ValueChanged<SavedLinkCategory> onChooseLinkCategory;
   final bool analysisFailure;
   final String email;
+  final String familyName;
   final Future<void> Function() onSignOut;
   final ValueChanged<InboxMessage> onDiscussInbox;
   static const labels = ['Home', 'Timeline', 'Library', 'Inbox', 'Reminders'];
@@ -1887,14 +2081,28 @@ class Shell extends StatelessWidget {
           child: Row(
             children: [
               Expanded(
-                child: Text(
-                  labels[tab],
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xff17233a),
-                  ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      labels[tab],
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xff17233a),
+                      ),
+                    ),
+                    Text(
+                      familyName,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xff667085),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               if (activeCount > 0) ...[
@@ -1930,6 +2138,7 @@ class Shell extends StatelessWidget {
                     selected: tab,
                     onSelected: onTab,
                     email: email,
+                    familyName: familyName,
                   ),
                   Expanded(child: main),
                 ],
@@ -1967,10 +2176,12 @@ class _DesktopSidebar extends StatelessWidget {
     required this.selected,
     required this.onSelected,
     required this.email,
+    required this.familyName,
   });
   final int selected;
   final ValueChanged<int> onSelected;
   final String email;
+  final String familyName;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -2037,7 +2248,11 @@ class _DesktopSidebar extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
-          subtitle: const Text('Family'),
+          subtitle: Text(
+            familyName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
       ],
     ),

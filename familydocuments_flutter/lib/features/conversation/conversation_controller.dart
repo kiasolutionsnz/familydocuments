@@ -7,23 +7,22 @@ import '../../core/home/reminder_parser.dart';
 import 'data/conversation_service.dart';
 import 'models/conversation_models.dart';
 
-typedef ConversationExecutor = Future<ConversationExecutionResult> Function(
-  ConversationAction action,
+typedef ConversationOutcomeHandler = Future<void> Function(
+  ConversationAuthoritativeOutcome outcome,
 );
 
 class ConversationController extends ChangeNotifier {
   ConversationController({
     required this._repository,
-    required this._execute,
+    this.onOutcome,
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
 
   static const maxMessages = 60;
   static const maxReferences = 12;
-  static const confirmationLifetime = Duration(minutes: 10);
 
   final ConversationRepository _repository;
-  final ConversationExecutor _execute;
+  final ConversationOutcomeHandler? onOutcome;
   final DateTime Function() _now;
   final List<ConversationMessage> _messages = [];
   final List<ConversationReference> _references = [];
@@ -31,6 +30,9 @@ class ConversationController extends ChangeNotifier {
   ConversationAction? _pendingClarification;
   ConversationConfirmation? _confirmation;
   bool _loading = false;
+  bool _familySelectionRequired = false;
+  List<ActiveFamilyChoice> _families = const [];
+  String? _activeFamilyName;
   int _sequence = 0;
 
   List<ConversationMessage> get messages => List.unmodifiable(_messages);
@@ -38,6 +40,9 @@ class ConversationController extends ChangeNotifier {
   ConversationConfirmation? get confirmation => _confirmation;
   bool get loading => _loading;
   bool get started => _messages.isNotEmpty;
+  bool get familySelectionRequired => _familySelectionRequired;
+  List<ActiveFamilyChoice> get families => List.unmodifiable(_families);
+  String get activeFamilyName => _activeFamilyName ?? 'Family';
   String? get conversationId => _conversationId;
   bool hasCorrelation(String correlationId) => _messages.any(
     (message) => message.data['correlation_id'] == correlationId,
@@ -46,6 +51,22 @@ class ConversationController extends ChangeNotifier {
   Future<void> restore() async {
     _setLoading(true);
     try {
+      final familyWorkspace = await _repository.activeFamilyWorkspace();
+      _familySelectionRequired = familyWorkspace.selectionRequired;
+      _families = familyWorkspace.families;
+      _activeFamilyName = _families
+          .where((family) => family.selected)
+          .firstOrNull
+          ?.name;
+      _activeFamilyName ??= _families.length == 1
+          ? _families.single.name
+          : null;
+      if (_familySelectionRequired) {
+        _conversationId = null;
+        _messages.clear();
+        _confirmation = null;
+        return;
+      }
       final snapshot = await _repository.restore();
       _conversationId = snapshot.id;
       _messages
@@ -54,6 +75,21 @@ class ConversationController extends ChangeNotifier {
       _confirmation = snapshot.pendingConfirmation;
       _rebuildReferences();
       _restorePendingClarification();
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<void> selectFamily(String familyId) async {
+    _setLoading(true);
+    try {
+      await _repository.selectActiveFamily(familyId);
+      _familySelectionRequired = false;
+      _conversationId = null;
+      _messages.clear();
+      _references.clear();
+      _confirmation = null;
+      await restore();
     } finally {
       _setLoading(false);
     }
@@ -80,6 +116,9 @@ class ConversationController extends ChangeNotifier {
     _pendingClarification = null;
     _confirmation = null;
     _loading = false;
+    _familySelectionRequired = false;
+    _families = const [];
+    _activeFamilyName = null;
     notifyListeners();
   }
 
@@ -88,12 +127,22 @@ class ConversationController extends ChangeNotifier {
     bool hasAttachment = false,
     String? attachmentId,
     String? attachmentLabel,
+    String? attachmentMimeType,
+    List<int>? attachmentBytes,
   }) async {
     final message = text.trim();
     if (_loading || (message.isEmpty && !hasAttachment)) return;
     _setLoading(true);
     try {
       await _ensureConversation();
+      if (hasAttachment && attachmentBytes != null) {
+        attachmentId = await _repository.stageAttachment(
+          conversationId: _conversationId!,
+          fileName: attachmentLabel ?? 'document',
+          mimeType: attachmentMimeType ?? 'application/pdf',
+          bytes: attachmentBytes,
+        );
+      }
       await _append(
         ConversationMessage(
           id: _newId('user'),
@@ -117,9 +166,17 @@ class ConversationController extends ChangeNotifier {
               attachmentId: attachmentId,
               attachmentLabel: attachmentLabel,
             ) ??
-            await _modelOrClarification(message, hasAttachment);
+            await _modelOrClarification(
+              message,
+              hasAttachment,
+              attachmentId: attachmentId,
+            );
       }
       await _route(action);
+    } on ConversationServiceException catch (error) {
+      _showTransportFailure(error.message);
+    } on Object {
+      _showTransportFailure('FamilyDocuments could not be reached. Try again.');
     } finally {
       _setLoading(false);
     }
@@ -132,6 +189,10 @@ class ConversationController extends ChangeNotifier {
       await _ensureConversation();
       _pendingClarification = null;
       await _route(suggestion.action);
+    } on ConversationServiceException catch (error) {
+      _showTransportFailure(error.message);
+    } on Object {
+      _showTransportFailure('FamilyDocuments could not be reached. Try again.');
     } finally {
       _setLoading(false);
     }
@@ -140,57 +201,43 @@ class ConversationController extends ChangeNotifier {
   Future<void> focusReference(ConversationReference reference) async {
     await _ensureConversation();
     _addReferences([reference]);
-    await _assistant(
-      'What would you like me to do with ${reference.label}?',
-      data: {
-        'references': [reference.toJson()],
-      },
-      suggestions: reference.type == 'inbox'
-          ? [
-              ConversationSuggestion(
-                label: 'Mark reviewed',
-                action: ConversationAction(
-                  id: _newId('action'),
-                  type: ConversationActionType.markInboxReviewed,
-                  parameters: {'inbox_id': reference.id},
-                ),
-              ),
-              ConversationSuggestion(
-                label: 'Dismiss',
-                action: ConversationAction(
-                  id: _newId('action'),
-                  type: ConversationActionType.dismissInboxItem,
-                  parameters: {'inbox_id': reference.id},
-                ),
-              ),
-            ]
-          : const [],
+    await _append(
+      ConversationMessage(
+        id: _newId('user-context'),
+        role: ConversationRole.user,
+        kind: ConversationMessageKind.text,
+        content: 'Discuss ${reference.label}',
+        createdAt: _now(),
+        data: {
+          'references': [reference.toJson()],
+        },
+      ),
+    );
+    await _route(
+      ConversationAction(
+        id: _newId('action'),
+        type: ConversationActionType.requestClarification,
+        parameters: {
+          'question': 'What would you like me to do with ${reference.label}?',
+          'missing_parameter': 'reference_action',
+        },
+      ),
     );
   }
 
   Future<void> confirm() async {
     final pending = _confirmation;
     if (pending == null || _loading) return;
-    if (!pending.expiresAt.isAfter(_now())) {
-      _confirmation = null;
-      await _assistant(
-        'That confirmation has expired. Please ask me to prepare the change again.',
-        kind: ConversationMessageKind.error,
-      );
-      return;
-    }
     _setLoading(true);
     try {
-      await _repository.consumeConfirmation(
-        _conversationId!,
-        pending.action.id,
-        cancel: false,
+      final outcome = await _repository.decideConfirmation(
+        pending.id,
+        confirm: true,
       );
+      await _applyOutcome(outcome);
+    } on ConversationServiceException {
       _confirmation = null;
-      await _executeAction(pending.action);
-    } on ConversationServiceException catch (failure) {
-      _confirmation = null;
-      await _assistant(failure.message, kind: ConversationMessageKind.error);
+      await restore();
     } finally {
       _setLoading(false);
     }
@@ -201,18 +248,11 @@ class ConversationController extends ChangeNotifier {
     if (pending == null || _loading) return;
     _setLoading(true);
     try {
-      await _repository.consumeConfirmation(
-        _conversationId!,
-        pending.action.id,
-        cancel: true,
+      final outcome = await _repository.decideConfirmation(
+        pending.id,
+        confirm: false,
       );
-      _confirmation = null;
-      await _repository.recordAction(
-        _conversationId!,
-        pending.action,
-        status: 'cancelled',
-      );
-      await _assistant('Okay, I didn’t make that change.');
+      await _applyOutcome(outcome);
     } finally {
       _setLoading(false);
     }
@@ -226,23 +266,24 @@ class ConversationController extends ChangeNotifier {
     List<ConversationSuggestion> suggestions = const [],
   }) async {
     await _ensureConversation();
-    final message = ConversationMessage(
-      id: _newId('progress'),
-      role: ConversationRole.assistant,
-      kind: status == 'failed'
-          ? ConversationMessageKind.error
-          : status == 'finished'
-          ? ConversationMessageKind.result
-          : ConversationMessageKind.progress,
-      content: text,
-      createdAt: _now(),
-      data: {'correlation_id': correlationId, 'status': status, ...data},
-      suggestions: suggestions.take(3).toList(),
+    final jobId = data['job_id']?.toString();
+    if (jobId == null) return;
+    if (_repository is MemoryConversationRepository) {
+      _repository.recordSyntheticJobTransition(
+        correlationId: correlationId,
+        text: text,
+        status: status,
+        data: data,
+        suggestions: suggestions,
+      );
+      await restore();
+      return;
+    }
+    final transition = await _repository.recordJobTransition(
+      _conversationId!,
+      jobId,
     );
-    _messages.removeWhere(
-      (existing) => existing.data['correlation_id'] == correlationId,
-    );
-    await _append(message);
+    if (transition['changed'] == true) await restore();
   }
 
   ConversationAction? _deterministic(
@@ -351,7 +392,6 @@ class ConversationController extends ChangeNotifier {
             'title': reminder.title,
             'due_date': reminder.dueDate,
             if (reminder.dueTime != null) 'due_time': reminder.dueTime,
-            'request_id': _newId('reminder'),
           },
         );
       } on ReminderClarification catch (clarification) {
@@ -378,7 +418,6 @@ class ConversationController extends ChangeNotifier {
             'url': intent.linkUrl,
             'title': intent.linkTitle,
             'category_name': category,
-            'request_id': _newId('link'),
           },
         );
       }
@@ -571,17 +610,14 @@ class ConversationController extends ChangeNotifier {
             final proposed = ConversationAction(
               id: _newId('action'),
               type: type,
-              parameters: {parameterName: item.id, ...extra},
-            );
-            return ConversationAction(
-              id: _newId('action'),
-              type: ConversationActionType.requestConfirmation,
               parameters: {
-                'summary': 'Use ${item.label} for this action?',
-                'target_label': item.label,
-                'proposed_action': proposed.toJson(),
+                parameterName: item.id,
+                ...extra,
+                if (type == ConversationActionType.updateDocumentCategory)
+                  'ambiguous': true,
               },
-            ).toJson();
+            );
+            return proposed.toJson();
           }).toList(),
         },
       );
@@ -598,7 +634,7 @@ class ConversationController extends ChangeNotifier {
     _pendingClarification = null;
     if (pending.type == ConversationActionType.saveLink) {
       return ConversationAction(
-        id: pending.id,
+        id: _newId('action'),
         type: pending.type,
         parameters: {...pending.parameters, 'category_name': answer.trim()},
       );
@@ -614,7 +650,6 @@ class ConversationController extends ChangeNotifier {
             'url': pending.parameters['link_url'],
             'title': pending.parameters['link_title'],
             'category_name': answer.trim(),
-            'request_id': _newId('link'),
           },
         );
       }
@@ -675,6 +710,10 @@ class ConversationController extends ChangeNotifier {
         final resolved = _deterministic(answer, hasAttachment: false);
         if (resolved != null) return resolved;
       }
+      if (missing == 'reference_action') {
+        final resolved = _deterministic(answer, hasAttachment: false);
+        if (resolved != null) return resolved;
+      }
       if (missing == 'attachment_action' &&
           RegExp(r'\bread\b', caseSensitive: false).hasMatch(answer)) {
         return ConversationAction(
@@ -699,13 +738,15 @@ class ConversationController extends ChangeNotifier {
 
   Future<ConversationAction> _modelOrClarification(
     String message,
-    bool hasAttachment,
-  ) async {
+    bool hasAttachment, {
+    String? attachmentId,
+  }) async {
     try {
       return await _repository.interpret(
         message: message,
         references: _references,
         hasAttachment: hasAttachment,
+        attachmentId: attachmentId,
       );
     } on ConversationServiceException {
       return ConversationAction(
@@ -721,261 +762,25 @@ class ConversationController extends ChangeNotifier {
 
   Future<void> _route(ConversationAction action) async {
     action.validate();
-    if (action.type == ConversationActionType.requestConfirmation) {
-      final proposed = ConversationAction.fromJson(
-        Map<String, dynamic>.from(action.parameters['proposed_action'] as Map),
-      );
-      final confirmation = ConversationConfirmation(
-        action: proposed,
-        summary:
-            action.parameters['summary']?.toString() ??
-            _confirmationSummary(proposed),
-        targetLabel:
-            action.parameters['target_label']?.toString() ??
-            _targetLabel(proposed),
-        expiresAt: _now().add(confirmationLifetime),
-      );
-      await _repository.saveConfirmation(_conversationId!, confirmation);
-      _confirmation = confirmation;
-      await _assistant(
-        confirmation.summary,
-        kind: ConversationMessageKind.confirmation,
-        data: {
-          'action': proposed.toJson(),
-          'target_label': confirmation.targetLabel,
-          'expires_at': confirmation.expiresAt.toUtc().toIso8601String(),
-        },
-      );
-      return;
-    }
-    if (action.type == ConversationActionType.requestClarification) {
-      final proposed = action.parameters['proposed_action'];
-      _pendingClarification = proposed is Map
-          ? ConversationAction.fromJson(Map<String, dynamic>.from(proposed))
-          : action;
-      final choiceActions = action.parameters['choice_actions'];
-      final choices = action.parameters['choices'];
-      final suggestions = <ConversationSuggestion>[];
-      if (choiceActions is List && choices is List) {
-        for (
-          var index = 0;
-          index < choiceActions.length && index < choices.length;
-          index++
-        ) {
-          final raw = choiceActions[index];
-          if (raw is Map) {
-            suggestions.add(
-              ConversationSuggestion(
-                label: choices[index].toString(),
-                action: ConversationAction.fromJson(
-                  Map<String, dynamic>.from(raw),
-                ),
-              ),
-            );
-          }
-        }
-      }
-      await _assistant(
-        action.parameters['question']?.toString() ??
-            'What would you like me to do?',
-        kind: ConversationMessageKind.clarification,
-        data: {'action': action.toJson()},
-        suggestions: suggestions,
-      );
-      return;
-    }
-    if (action.type == ConversationActionType.unsupportedRequest) {
-      await _assistant(
-        'I can help organise and find information in your FamilyDocuments account.',
-        kind: ConversationMessageKind.text,
-        suggestions: _supportedSuggestions(),
-      );
-      return;
-    }
-    if (_needsConfirmation(action)) {
-      final confirmation = ConversationConfirmation(
-        action: action,
-        summary: _confirmationSummary(action),
-        targetLabel: _targetLabel(action),
-        expiresAt: _now().add(confirmationLifetime),
-      );
-      await _repository.saveConfirmation(_conversationId!, confirmation);
-      _confirmation = confirmation;
-      await _assistant(
-        confirmation.summary,
-        kind: ConversationMessageKind.confirmation,
-        data: {
-          'action': action.toJson(),
-          'target_label': confirmation.targetLabel,
-          'expires_at': confirmation.expiresAt.toUtc().toIso8601String(),
-        },
-      );
-      return;
-    }
-    await _executeAction(action);
+    final outcome = await _repository.submitAction(
+      _conversationId!,
+      action,
+      action.id,
+    );
+    await _applyOutcome(outcome);
   }
 
-  Future<void> _executeAction(ConversationAction action) async {
-    try {
-      final result = await _execute(action);
-      _addReferences(result.references);
-      await _repository.recordAction(
-        _conversationId!,
-        action,
-        status: 'succeeded',
-        targetType: result.references.length == 1
-            ? result.references.single.type
-            : null,
-        targetId: result.references.length == 1
-            ? result.references.single.id
-            : null,
-        result: {
-          'result_type': action.type.wireName,
-          'reference_count': result.references.length,
-        },
-      );
-      await _assistant(
-        result.message,
-        kind: ConversationMessageKind.result,
-        data: {
-          ...result.data,
-          'references': result.references.map((item) => item.toJson()).toList(),
-        },
-        suggestions: result.suggestions.take(3).toList(),
-      );
-    } catch (failure) {
-      try {
-        await _repository.recordAction(
-          _conversationId!,
-          action,
-          status: 'failed',
-          result: {'failure_category': failure.runtimeType.toString()},
-        );
-      } catch (_) {}
-      await _assistant(
-        _safeFailure(failure),
-        kind: ConversationMessageKind.error,
-        suggestions: [
-          ConversationSuggestion(
-            label: 'Try again',
-            action: ConversationAction(
-              id: _newId('retry'),
-              type: action.type,
-              parameters: action.parameters,
-            ),
-          ),
-        ],
-      );
-    }
+  Future<void> _applyOutcome(ConversationAuthoritativeOutcome outcome) async {
+    await onOutcome?.call(outcome);
+    final snapshot = await _repository.restore(_conversationId);
+    _messages
+      ..clear()
+      ..addAll(_collapse(snapshot.messages));
+    _confirmation = snapshot.pendingConfirmation ?? outcome.confirmation;
+    _rebuildReferences();
+    _restorePendingClarification();
+    notifyListeners();
   }
-
-  bool _needsConfirmation(ConversationAction action) {
-    if (action.type == ConversationActionType.saveDocument &&
-        action.parameters['create_category'] == true) {
-      return true;
-    }
-    if (action.type == ConversationActionType.saveLink &&
-        action.parameters['create_category'] == true) {
-      return true;
-    }
-    if (action.type == ConversationActionType.dismissInboxItem ||
-        action.type == ConversationActionType.updateReminder) {
-      return true;
-    }
-    if (action.type == ConversationActionType.updateDocumentTags &&
-        action.parameters['operation'] == 'remove') {
-      return true;
-    }
-    return action.type == ConversationActionType.updateDocumentCategory &&
-        action.parameters['ambiguous'] == true;
-  }
-
-  String _confirmationSummary(
-    ConversationAction action,
-  ) => switch (action.type) {
-    ConversationActionType.dismissInboxItem =>
-      'Dismiss this Inbox item? It will no longer appear in Inbox.',
-    ConversationActionType.updateReminder =>
-      'Update this reminder as requested?',
-    ConversationActionType.updateDocumentTags =>
-      'Remove ${((action.parameters['tags'] as List?) ?? const []).join(', ')} from this document?',
-    ConversationActionType.updateDocumentCategory =>
-      'Change this document’s category to ${action.parameters['category_name']}?',
-    ConversationActionType.saveDocument =>
-      'Create ${action.parameters['category_name']} and save this document there?',
-    ConversationActionType.saveLink =>
-      'Create ${action.parameters['category_name']} and save this link there?',
-    _ => 'Confirm this action?',
-  };
-
-  String _targetLabel(ConversationAction action) {
-    for (final key in const [
-      'document_id',
-      'reminder_id',
-      'inbox_id',
-      'link_id',
-    ]) {
-      final id = action.parameters[key]?.toString();
-      if (id == null) continue;
-      for (final reference in _references) {
-        if (reference.id == id) return reference.label;
-      }
-    }
-    return 'Selected item';
-  }
-
-  List<ConversationSuggestion> _supportedSuggestions() => [
-    ConversationSuggestion(
-      label: 'Find a document',
-      action: ConversationAction(
-        id: _newId('suggestion'),
-        type: ConversationActionType.requestClarification,
-        parameters: {
-          'question': 'What document should I find?',
-          'missing_parameter': 'search_query',
-        },
-      ),
-    ),
-    ConversationSuggestion(
-      label: 'Save a link',
-      action: ConversationAction(
-        id: _newId('suggestion'),
-        type: ConversationActionType.requestClarification,
-        parameters: {
-          'question': 'Paste the link you would like to save.',
-          'missing_parameter': 'url',
-        },
-      ),
-    ),
-    ConversationSuggestion(
-      label: 'Create a reminder',
-      action: ConversationAction(
-        id: _newId('suggestion'),
-        type: ConversationActionType.requestClarification,
-        parameters: {
-          'question': 'What should I remind you about, and when?',
-          'missing_parameter': 'reminder',
-        },
-      ),
-    ),
-  ];
-
-  Future<void> _assistant(
-    String content, {
-    ConversationMessageKind kind = ConversationMessageKind.text,
-    Map<String, dynamic> data = const {},
-    List<ConversationSuggestion> suggestions = const [],
-  }) => _append(
-    ConversationMessage(
-      id: _newId('assistant'),
-      role: ConversationRole.assistant,
-      kind: kind,
-      content: content,
-      createdAt: _now(),
-      data: data,
-      suggestions: suggestions.take(3).toList(),
-    ),
-  );
 
   Future<void> _append(ConversationMessage message) async {
     _messages.add(message);
@@ -984,6 +789,22 @@ class ConversationController extends ChangeNotifier {
     }
     notifyListeners();
     await _repository.append(_conversationId!, message);
+  }
+
+  void _showTransportFailure(String message) {
+    _messages.add(
+      ConversationMessage(
+        id: _newId('transport-error'),
+        role: ConversationRole.assistant,
+        kind: ConversationMessageKind.error,
+        content: message,
+        createdAt: _now(),
+      ),
+    );
+    if (_messages.length > maxMessages) {
+      _messages.removeRange(0, _messages.length - maxMessages);
+    }
+    notifyListeners();
   }
 
   Future<void> _ensureConversation() async {
@@ -1063,14 +884,4 @@ class ConversationController extends ChangeNotifier {
 
   static String normaliseTag(String value) =>
       value.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
-
-  static String _safeFailure(Object failure) {
-    final message = failure.toString();
-    if (message.contains('no longer have access') ||
-        message.contains('not authorised') ||
-        message.contains('permission')) {
-      return 'You no longer have permission to change that item.';
-    }
-    return 'That action could not be completed. Nothing was changed.';
-  }
 }

@@ -22,32 +22,60 @@ class ConversationSnapshot {
   final ConversationConfirmation? pendingConfirmation;
 }
 
+class ActiveFamilyChoice {
+  const ActiveFamilyChoice({
+    required this.id,
+    required this.name,
+    required this.role,
+    this.selected = false,
+  });
+  final String id;
+  final String name;
+  final String role;
+  final bool selected;
+}
+
+class ActiveFamilyWorkspace {
+  const ActiveFamilyWorkspace({
+    required this.selectionRequired,
+    required this.families,
+  });
+  final bool selectionRequired;
+  final List<ActiveFamilyChoice> families;
+}
+
 abstract class ConversationRepository {
   Future<ConversationSnapshot> restore([String? conversationId]);
   Future<String> start(String requestId);
   Future<void> append(String conversationId, ConversationMessage message);
-  Future<void> saveConfirmation(
-    String conversationId,
-    ConversationConfirmation confirmation,
-  );
-  Future<void> consumeConfirmation(
-    String conversationId,
-    String actionId, {
-    required bool cancel,
-  });
-  Future<void> recordAction(
-    String conversationId,
-    ConversationAction action, {
-    required String status,
-    String? targetType,
-    String? targetId,
-    Map<String, dynamic> result,
-  });
   Future<ConversationAction> interpret({
     required String message,
     required List<ConversationReference> references,
     required bool hasAttachment,
+    String? attachmentId,
   });
+  Future<ConversationAuthoritativeOutcome> submitAction(
+    String conversationId,
+    ConversationAction action,
+    String requestKey,
+  );
+  Future<ConversationAuthoritativeOutcome> decideConfirmation(
+    String confirmationId, {
+    required bool confirm,
+  });
+  Future<String> stageAttachment({
+    required String conversationId,
+    required String fileName,
+    required String mimeType,
+    required List<int> bytes,
+  });
+  Future<Map<String, dynamic>> recordJobTransition(
+    String conversationId,
+    String jobId,
+  );
+  Future<void> delete(String conversationId);
+  Future<ActiveFamilyWorkspace> activeFamilyWorkspace();
+  Future<void> selectActiveFamily(String familyId);
 }
 
 /// Used only by injected widget/fake-service harnesses. Production constructs
@@ -56,6 +84,8 @@ class MemoryConversationRepository implements ConversationRepository {
   final List<ConversationMessage> messages = [];
   String? id;
   ConversationConfirmation? pending;
+  Future<ConversationAuthoritativeOutcome> Function(ConversationAction action)?
+  actionHandler;
 
   @override
   Future<void> append(
@@ -66,38 +96,14 @@ class MemoryConversationRepository implements ConversationRepository {
   }
 
   @override
-  Future<void> consumeConfirmation(
-    String conversationId,
-    String actionId, {
-    required bool cancel,
-  }) async {
-    if (pending == null || pending!.action.id != actionId || pending!.expired) {
-      throw const ConversationServiceException(
-        'That confirmation has expired. Please ask again.',
-        expired: true,
-      );
-    }
-    pending = null;
-  }
-
-  @override
   Future<ConversationAction> interpret({
     required String message,
     required List<ConversationReference> references,
     required bool hasAttachment,
+    String? attachmentId,
   }) async => throw const ConversationServiceException(
     'Model interpretation is unavailable in this test harness.',
   );
-
-  @override
-  Future<void> recordAction(
-    String conversationId,
-    ConversationAction action, {
-    required String status,
-    String? targetType,
-    String? targetId,
-    Map<String, dynamic> result = const {},
-  }) async {}
 
   @override
   Future<ConversationSnapshot> restore([String? conversationId]) async =>
@@ -108,12 +114,222 @@ class MemoryConversationRepository implements ConversationRepository {
       );
 
   @override
-  Future<void> saveConfirmation(
+  Future<ConversationAuthoritativeOutcome> submitAction(
     String conversationId,
-    ConversationConfirmation confirmation,
+    ConversationAction action,
+    String requestKey,
   ) async {
-    pending = confirmation;
+    final needsConfirmation =
+        action.type == ConversationActionType.saveLink ||
+        action.type == ConversationActionType.dismissInboxItem ||
+        action.type == ConversationActionType.updateReminder ||
+        (action.type == ConversationActionType.updateDocumentTags &&
+            action.parameters['operation'] == 'remove') ||
+        (action.type == ConversationActionType.updateDocumentCategory &&
+            action.parameters['ambiguous'] == true) ||
+        ((action.type == ConversationActionType.saveDocument ||
+                action.type == ConversationActionType.saveLink) &&
+            action.parameters['create_category'] == true);
+    if (needsConfirmation) {
+      final category = action.parameters['category_name']?.toString();
+      final linkHost = action.type == ConversationActionType.saveLink
+          ? Uri.tryParse(action.parameters['url']?.toString() ?? '')?.host
+          : null;
+      pending = ConversationConfirmation(
+        id: '55555555-5555-4555-8555-555555555555',
+        action: action,
+        summary: linkHost != null && linkHost.isNotEmpty
+            ? 'Save this link to $linkHost?'
+            : action.parameters['create_category'] == true && category != null
+            ? 'Create $category and save this item?'
+            : 'Confirm this change?',
+        targetLabel: linkHost ?? 'Selected item',
+        expiresAt: DateTime.now().add(const Duration(minutes: 10)),
+      );
+      messages.add(
+        ConversationMessage(
+          id: 'confirmation-${messages.length + 100}',
+          role: ConversationRole.assistant,
+          kind: ConversationMessageKind.confirmation,
+          content: pending!.summary,
+          createdAt: DateTime.now(),
+        ),
+      );
+      return ConversationAuthoritativeOutcome(
+        executionId: action.id,
+        state: 'awaiting_confirmation',
+        actionType: action.type.wireName,
+        result: const {},
+        confirmation: pending,
+      );
+    }
+    final outcome =
+        await actionHandler?.call(action) ??
+        ConversationAuthoritativeOutcome(
+          executionId: action.id,
+          state: action.type == ConversationActionType.requestClarification
+              ? 'awaiting_clarification'
+              : 'succeeded',
+          actionType: action.type.wireName,
+          result: {
+            'message': action.type == ConversationActionType.unsupportedRequest
+                ? 'I can help organise and find information in your FamilyDocuments account.'
+                : action.parameters['question'] ?? 'Completed.',
+          },
+        );
+    messages.add(
+      ConversationMessage(
+        id: 'outcome-${messages.length + 100}',
+        role: ConversationRole.assistant,
+        kind: action.type == ConversationActionType.requestClarification
+            ? ConversationMessageKind.clarification
+            : outcome.state.startsWith('failed')
+            ? ConversationMessageKind.error
+            : ConversationMessageKind.result,
+        content: outcome.message,
+        createdAt: DateTime.now(),
+        data: action.type == ConversationActionType.requestClarification
+            ? {'action': action.toJson()}
+            : outcome.result,
+        suggestions: _memorySuggestions(action, outcome.result),
+      ),
+    );
+    return outcome;
   }
+
+  List<ConversationSuggestion> _memorySuggestions(
+    ConversationAction action,
+    Map<String, dynamic> result,
+  ) {
+    final explicit = result['suggestions'];
+    if (explicit is List) {
+      return explicit
+          .whereType<Map>()
+          .map(
+            (value) => ConversationSuggestion.fromJson(
+              Map<String, dynamic>.from(value),
+            ),
+          )
+          .take(3)
+          .toList();
+    }
+    final choices = action.parameters['choices'];
+    final choiceActions = action.parameters['choice_actions'];
+    if (choices is! List || choiceActions is! List) return const [];
+    final suggestions = <ConversationSuggestion>[];
+    for (
+      var index = 0;
+      index < choices.length && index < choiceActions.length && index < 3;
+      index++
+    ) {
+      if (choiceActions[index] is Map) {
+        suggestions.add(
+          ConversationSuggestion(
+            label: choices[index].toString(),
+            action: ConversationAction.fromJson(
+              Map<String, dynamic>.from(choiceActions[index] as Map),
+            ),
+          ),
+        );
+      }
+    }
+    return suggestions;
+  }
+
+  @override
+  Future<ConversationAuthoritativeOutcome> decideConfirmation(
+    String confirmationId, {
+    required bool confirm,
+  }) async {
+    if (pending == null || pending!.id != confirmationId || pending!.expired) {
+      throw const ConversationServiceException(
+        'That confirmation has expired. Please ask again.',
+        expired: true,
+      );
+    }
+    final action = pending!.action;
+    pending = null;
+    final outcome = confirm && action != null && actionHandler != null
+        ? await actionHandler!(action)
+        : ConversationAuthoritativeOutcome(
+            executionId: confirmationId,
+            state: confirm ? 'succeeded' : 'cancelled',
+            actionType: 'test',
+            result: {
+              'message': confirm
+                  ? 'Completed.'
+                  : 'Okay, I didn’t make that change.',
+            },
+          );
+    messages.add(
+      ConversationMessage(
+        id: 'decision-${messages.length + 100}',
+        role: ConversationRole.assistant,
+        kind: ConversationMessageKind.result,
+        content: outcome.message,
+        createdAt: DateTime.now(),
+        data: outcome.result,
+        suggestions: action == null
+            ? const []
+            : _memorySuggestions(action, outcome.result),
+      ),
+    );
+    return outcome;
+  }
+
+  @override
+  Future<String> stageAttachment({
+    required String conversationId,
+    required String fileName,
+    required String mimeType,
+    required List<int> bytes,
+  }) async => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab';
+
+  @override
+  Future<Map<String, dynamic>> recordJobTransition(
+    String conversationId,
+    String jobId,
+  ) async => const {'changed': false};
+
+  void recordSyntheticJobTransition({
+    required String correlationId,
+    required String text,
+    required String status,
+    required Map<String, dynamic> data,
+    required List<ConversationSuggestion> suggestions,
+  }) {
+    messages.removeWhere(
+      (message) => message.data['correlation_id'] == correlationId,
+    );
+    messages.add(
+      ConversationMessage(
+        id: 'synthetic-transition-${messages.length + 100}',
+        role: ConversationRole.assistant,
+        kind: status == 'finished'
+            ? ConversationMessageKind.result
+            : status == 'failed'
+            ? ConversationMessageKind.error
+            : ConversationMessageKind.progress,
+        content: text,
+        createdAt: DateTime.now(),
+        data: {'correlation_id': correlationId, 'status': status, ...data},
+        suggestions: suggestions,
+      ),
+    );
+  }
+
+  @override
+  Future<void> delete(String conversationId) async {
+    messages.clear();
+    pending = null;
+  }
+
+  @override
+  Future<ActiveFamilyWorkspace> activeFamilyWorkspace() async =>
+      const ActiveFamilyWorkspace(selectionRequired: false, families: []);
+
+  @override
+  Future<void> selectActiveFamily(String familyId) async {}
 
   @override
   Future<String> start(String requestId) async {
@@ -130,6 +346,7 @@ class ConversationService implements ConversationRepository {
 
   final AuthService _auth;
   final http.Client _client;
+  final Map<String, String> _proposalTokens = {};
 
   Future<http.Response> _post(String path, Map<String, dynamic> body) async {
     Future<http.Response> send() async => _client.post(
@@ -183,20 +400,8 @@ class ConversationService implements ConversationRepository {
       final rawConfirmation = payload['pending_confirmation'];
       if (rawConfirmation is Map) {
         final value = Map<String, dynamic>.from(rawConfirmation);
-        final action = ConversationAction(
-          id: value['action_id']?.toString() ?? '',
-          type:
-              ConversationActionType.fromWireName(
-                value['action_type']?.toString() ?? '',
-              ) ??
-              ConversationActionType.unsupportedRequest,
-          version: (value['version'] as num?)?.toInt() ?? 0,
-          parameters: Map<String, dynamic>.from(
-            value['parameters'] as Map? ?? const {},
-          ),
-        );
         confirmation = ConversationConfirmation(
-          action: action,
+          id: value['id']?.toString() ?? '',
           summary: value['summary']?.toString() ?? 'Confirm this change?',
           targetLabel: value['target_label']?.toString() ?? 'Item',
           expiresAt:
@@ -260,85 +465,17 @@ class ConversationService implements ConversationRepository {
   }
 
   @override
-  Future<void> saveConfirmation(
-    String conversationId,
-    ConversationConfirmation confirmation,
-  ) async {
-    final response = await _post('/rest/rpc/set_conversation_confirmation', {
-      'conversation': conversationId,
-      'action_id': confirmation.action.id,
-      'action_type': confirmation.action.type.wireName,
-      'action_version': confirmation.action.version,
-      'parameters': confirmation.action.parameters,
-      'confirmation_summary': confirmation.summary,
-      'confirmation_target': confirmation.targetLabel,
-      'expires_at': confirmation.expiresAt.toUtc().toIso8601String(),
-    });
-    if (response.statusCode != 200) {
-      throw const ConversationServiceException(
-        'That confirmation could not be prepared. Try again.',
-      );
-    }
-  }
-
-  @override
-  Future<void> consumeConfirmation(
-    String conversationId,
-    String actionId, {
-    required bool cancel,
-  }) async {
-    final response = await _post(
-      '/rest/rpc/consume_conversation_confirmation',
-      {'conversation': conversationId, 'action_id': actionId, 'cancel': cancel},
-    );
-    if (response.statusCode == 409 || response.statusCode == 410) {
-      throw const ConversationServiceException(
-        'That confirmation has expired. Please ask again.',
-        expired: true,
-      );
-    }
-    if (response.statusCode != 200) {
-      throw const ConversationServiceException(
-        'That confirmation could not be completed.',
-      );
-    }
-  }
-
-  @override
-  Future<void> recordAction(
-    String conversationId,
-    ConversationAction action, {
-    required String status,
-    String? targetType,
-    String? targetId,
-    Map<String, dynamic> result = const {},
-  }) async {
-    final response = await _post('/rest/rpc/record_conversation_action', {
-      'conversation': conversationId,
-      'action_id': action.id,
-      'action_type': action.type.wireName,
-      'action_status': status,
-      'target_type': targetType,
-      'target_id': targetId,
-      'result_summary': result,
-    });
-    if (response.statusCode != 200) {
-      throw const ConversationServiceException(
-        'The action outcome could not be recorded.',
-      );
-    }
-  }
-
-  @override
   Future<ConversationAction> interpret({
     required String message,
     required List<ConversationReference> references,
     required bool hasAttachment,
+    String? attachmentId,
   }) async {
     final response = await _post('/conversation/interpret', {
       'message': message,
       'context': {
         'has_attachment': hasAttachment,
+        'attachment_id': ?attachmentId,
         'references': references
             .take(8)
             .map(
@@ -360,9 +497,12 @@ class ConversationService implements ConversationRepository {
       final payload = Map<String, dynamic>.from(
         jsonDecode(response.body) as Map,
       );
-      return ConversationAction.fromJson(
+      final action = ConversationAction.fromJson(
         Map<String, dynamic>.from(payload['action'] as Map),
       );
+      final token = payload['proposal_token']?.toString();
+      if (token != null && token.isNotEmpty) _proposalTokens[action.id] = token;
+      return action;
     } on ConversationActionValidationException {
       throw const ConversationServiceException(
         'I need a little more detail to do that safely.',
@@ -371,6 +511,172 @@ class ConversationService implements ConversationRepository {
       throw const ConversationServiceException(
         'I need a little more detail to do that safely.',
       );
+    }
+  }
+
+  @override
+  Future<ConversationAuthoritativeOutcome> submitAction(
+    String conversationId,
+    ConversationAction action,
+    String requestKey,
+  ) async {
+    final proposalToken = _proposalTokens[action.id];
+    final response = await _post('/conversation/action', {
+      'conversation_id': conversationId,
+      'request_key': requestKey,
+      'action': action.toJson(),
+      'proposal_token': ?proposalToken,
+    });
+    final outcome = _outcome(response, 'That action could not be completed.');
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      _proposalTokens.remove(action.id);
+    }
+    return outcome;
+  }
+
+  @override
+  Future<ConversationAuthoritativeOutcome> decideConfirmation(
+    String confirmationId, {
+    required bool confirm,
+  }) async {
+    final response = await _post('/conversation/decision', {
+      'confirmation_id': confirmationId,
+      'decision': confirm ? 'confirm' : 'cancel',
+    });
+    return _outcome(response, 'That confirmation could not be completed.');
+  }
+
+  @override
+  Future<String> stageAttachment({
+    required String conversationId,
+    required String fileName,
+    required String mimeType,
+    required List<int> bytes,
+  }) async {
+    final response = await _post('/conversation/attachment', {
+      'conversation_id': conversationId,
+      'file_name': fileName,
+      'mime_type': mimeType,
+      'content_base64': base64Encode(bytes),
+    });
+    if (response.statusCode != 200) {
+      throw const ConversationServiceException(
+        'The file could not be prepared. Try again.',
+      );
+    }
+    final payload = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+    return payload['id']?.toString() ??
+        (throw const ConversationServiceException(
+          'The file could not be prepared. Try again.',
+        ));
+  }
+
+  @override
+  Future<Map<String, dynamic>> recordJobTransition(
+    String conversationId,
+    String jobId,
+  ) async {
+    final response = await _post(
+      '/rest/rpc/record_conversation_job_transition',
+      {'conversation': conversationId, 'job': jobId},
+    );
+    if (response.statusCode != 200) {
+      throw const ConversationServiceException(
+        'Document progress is temporarily unavailable.',
+      );
+    }
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  @override
+  Future<void> delete(String conversationId) async {
+    final response = await _post('/rest/rpc/delete_conversation', {
+      'conversation': conversationId,
+    });
+    if (response.statusCode != 200) {
+      throw const ConversationServiceException(
+        'The conversation could not be deleted.',
+      );
+    }
+  }
+
+  @override
+  Future<ActiveFamilyWorkspace> activeFamilyWorkspace() async {
+    final response = await _post('/rest/rpc/active_family_workspace', const {});
+    if (response.statusCode != 200) {
+      throw const ConversationServiceException(
+        'Your Family access could not be checked.',
+      );
+    }
+    final payload = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+    final families = (payload['families'] as List? ?? const [])
+        .whereType<Map>()
+        .map(
+          (value) => ActiveFamilyChoice(
+            id: value['id']?.toString() ?? '',
+            name: value['name']?.toString() ?? 'Family',
+            role: value['role']?.toString() ?? '',
+            selected: value['selected'] == true,
+          ),
+        )
+        .toList();
+    return ActiveFamilyWorkspace(
+      selectionRequired: payload['selection_required'] == true,
+      families: families,
+    );
+  }
+
+  @override
+  Future<void> selectActiveFamily(String familyId) async {
+    final response = await _post('/rest/rpc/select_active_family', {
+      'family': familyId,
+    });
+    if (response.statusCode != 200) {
+      throw const ConversationServiceException(
+        'That Family is no longer available.',
+      );
+    }
+  }
+
+  ConversationAuthoritativeOutcome _outcome(
+    http.Response response,
+    String fallback,
+  ) {
+    if (response.statusCode != 200) {
+      throw ConversationServiceException(fallback);
+    }
+    try {
+      final payload = Map<String, dynamic>.from(
+        jsonDecode(response.body) as Map,
+      );
+      final rawConfirmation = payload['confirmation'];
+      return ConversationAuthoritativeOutcome(
+        executionId: payload['execution_id']?.toString() ?? '',
+        state: payload['state']?.toString() ?? 'permanently_failed',
+        actionType: payload['action_type']?.toString() ?? '',
+        result: Map<String, dynamic>.from(
+          payload['result'] as Map? ?? const {},
+        ),
+        errorCategory: payload['error_category']?.toString(),
+        confirmation: rawConfirmation is Map
+            ? ConversationConfirmation(
+                id: rawConfirmation['id']?.toString() ?? '',
+                summary:
+                    rawConfirmation['summary']?.toString() ??
+                    'Confirm this change?',
+                targetLabel:
+                    rawConfirmation['target_label']?.toString() ??
+                    'Selected item',
+                expiresAt:
+                    DateTime.tryParse(
+                      rawConfirmation['expires_at']?.toString() ?? '',
+                    )?.toLocal() ??
+                    DateTime.now(),
+              )
+            : null,
+      );
+    } catch (_) {
+      throw ConversationServiceException(fallback);
     }
   }
 }

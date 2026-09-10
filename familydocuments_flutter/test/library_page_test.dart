@@ -671,6 +671,9 @@ void main() {
       expect(find.text('Family travel guide'), findsNothing);
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
+      expect(find.textContaining('recipes.example.test'), findsWidgets);
+      await tester.tap(find.widgetWithText(FilledButton, 'Open'));
+      await tester.pumpAndSettle();
       expect(opened, 'https://recipes.example.test/soup');
     },
   );

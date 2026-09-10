@@ -110,31 +110,50 @@ only Inbox review/action history, not imported messages or saved documents.
 
 # Phase 2D constrained conversation API
 
-Flutter Home now uses a bounded `ConversationController`. Deterministic parsing
-continues to handle explicit search, reminder, link, upload destination and OCR
-commands. Only unresolved requests are sent to `POST /conversation/interpret`.
-That endpoint calls the configured provider-neutral local model
-(`CONVERSATION_MODEL`, normally the existing `qwen3:4b`) with a ten-second
-timeout and rate limit. It returns one versioned, allowlisted action proposal;
-it has no mutation capability. Flutter validates that proposal again before an
-existing authenticated service can execute it. Invalid output always becomes a
-clarification.
+Flutter Home uses a bounded `ConversationController`, but it is not an action
+executor. It sends user messages, staged attachments, selected suggestions and
+opaque confirmation decisions to the trusted conversation gateway and renders
+the authoritative response. Existing non-conversation APIs remain available to
+their existing callers.
 
-Conversation state is stored through `start_conversation`,
-`conversation_workspace`, `append_conversation_message`,
-`set_conversation_confirmation`, `consume_conversation_confirmation` and
-`record_conversation_action`. These RPCs derive the user and Family from the
-authenticated membership. They store concise messages, structured references,
-pending confirmations and action outcomes, never model chain-of-thought,
-credentials, tokens, storage paths or document bodies. Home restores at most 60
-messages and 12 recent entity references. Confirmations expire after ten
-minutes and are consumed once. Existing document, OCR, reminder, saved-link,
-Library and Inbox endpoints remain the only mutation paths and retain their
-permission checks and idempotency controls.
+Explicit search, reminder, link, upload-destination and OCR wording is parsed
+deterministically. Unresolved wording may be sent to
+`POST /conversation/interpret`; its access token is fully verified before a
+model call. The configured provider-neutral local model (`CONVERSATION_MODEL`,
+normally `qwen3:4b`) is bounded by request size, a ten-second timeout, an
+eight-call process concurrency guard and a service-only shared per-user/Family rate-limit
+record. It returns a signed, short-lived proposal for one versioned allowlisted
+action. Every model-derived mutation requires confirmation. Invalid, timed-out
+or unavailable model output becomes a plain-language clarification.
 
-`update_conversation_reminder` is intentionally narrow: after confirmation it
-can move one accessible upcoming reminder one week earlier, and only when its
-expected date still matches. This prevents stale follow-ups from overwriting a
-change made elsewhere. Search answers continue to use `/search/ask` and show
-only the accessible evidence returned by that service. Returned document text
-is treated as untrusted evidence and is never interpreted as an action.
+`POST /conversation/action` submits an action to
+`submit_conversation_action`; `POST /conversation/decision` accepts only an
+opaque confirmation identifier and Confirm/Cancel. Migration 047 binds a
+confirmation to the authenticated user, active Family, conversation, canonical
+action digest, target, complete values, target timestamp, expiry and request
+key. The database locks and executes the bound action once. Slow OCR is only
+durably queued while the transaction is held. Server idempotency is unique by
+Family, actor and request key, so a lost response or replay returns the original
+execution result rather than repeating a document, OCR job, link, metadata
+change, reminder or Inbox mutation.
+
+Users with one Family are selected automatically. Users with multiple active
+Families must explicitly select one; conversations and pending confirmations
+are bound to it and invalidated on a Family change or revoked membership.
+Search results and stored document, filename, OCR, Inbox and link metadata are
+untrusted evidence and cannot authorize an action.
+
+The initial privacy policy is enforced server-side: at most 100 conversations
+per user, 60 active messages per conversation, 2,000 characters per user
+message, 12 stored active references, eight references per model request and ten
+pending confirmations. Inactive transcripts are archived after 90 days;
+minimized security/action receipts are retained for 365 days. Authenticated
+conversation deletion revokes pending confirmations and deletes transcript
+state without deleting documents, reminders, links or Inbox outcomes. These
+values are documented constants for a later configuration pass.
+
+`record_conversation_job_transition` is the only conversation OCR-progress
+writer. Flutter retains one shared application polling source and an in-flight
+guard; unchanged job states do not append messages. Saved links accept only
+public HTTPS URLs without credentials, and the destination hostname is shown
+before opening or saving.

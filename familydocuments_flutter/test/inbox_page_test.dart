@@ -253,7 +253,10 @@ void main() {
       );
       expect(opened, isNull);
       await tester.tap(find.byTooltip('Open link'));
-      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(find.textContaining('example.test'), findsWidgets);
+      await tester.tap(find.widgetWithText(FilledButton, 'Open'));
+      await tester.pumpAndSettle();
       expect(opened, 'https://example.test/policy');
     },
   );

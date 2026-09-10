@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/security/public_https_url.dart';
 import '../library/safe_open.dart';
 import 'data/inbox_service.dart';
 import 'inbox_navigation.dart';
@@ -358,8 +359,7 @@ class InboxPageState extends State<InboxPage> {
               children: [
                 IconButton(
                   tooltip: 'Open link',
-                  onPressed: () =>
-                      (widget.linkOpener ?? openExternalLink)(link),
+                  onPressed: () => _openLink(link),
                   icon: const Icon(Icons.open_in_new),
                 ),
                 if (value.canEdit)
@@ -652,6 +652,13 @@ class InboxPageState extends State<InboxPage> {
   }
 
   Future<void> _saveLink(InboxMessage parent, String url) async {
+    final hostname = publicHttpsHostname(url);
+    if (hostname == null) {
+      if (mounted) {
+        setState(() => error = 'This link cannot be saved safely.');
+      }
+      return;
+    }
     final categories = [...?data?.linkCategories];
     var category = categories.firstOrNull?.id;
     final title = TextEditingController(
@@ -665,6 +672,11 @@ class InboxPageState extends State<InboxPage> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Website: $hostname'),
+              ),
+              const SizedBox(height: 12),
               TextField(
                 controller: title,
                 decoration: const InputDecoration(labelText: 'Title'),
@@ -740,6 +752,34 @@ class InboxPageState extends State<InboxPage> {
       }
     }
     title.dispose();
+  }
+
+  Future<void> _openLink(String url) async {
+    final hostname = publicHttpsHostname(url);
+    if (hostname == null) {
+      if (mounted) setState(() => error = 'This link cannot be opened safely.');
+      return;
+    }
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Open external website?'),
+        content: Text('You are leaving FamilyDocuments for $hostname.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Open'),
+          ),
+        ],
+      ),
+    );
+    if (accepted == true) {
+      await (widget.linkOpener ?? openExternalLink)(url);
+    }
   }
 
   Future<String?> _categoryName(String heading) async {
