@@ -14,6 +14,7 @@ class FakeRepository extends MemoryConversationRepository {
   int confirmationConsumes = 0;
   bool expireConfirmation = false;
   final List<Map<String, dynamic>> jobTransitions = [];
+  int interpretCalls = 0;
 
   @override
   Future<ConversationAction> interpret({
@@ -22,6 +23,7 @@ class FakeRepository extends MemoryConversationRepository {
     required bool hasAttachment,
     String? attachmentId,
   }) async {
+    interpretCalls++;
     if (modelFails || modelAction == null) {
       throw const ConversationServiceException('invalid model response');
     }
@@ -170,7 +172,9 @@ ConversationController controller(
           actionType: action.type.wireName,
           result: {
             'message': action.type == ConversationActionType.unsupportedRequest
-                ? 'I can help organise and find information in your FamilyDocuments account.'
+                ? action.parameters['reason'] == 'greeting'
+                      ? 'Hello! I can help organise and find information in your FamilyDocuments account.'
+                      : 'I can help organise and find information in your FamilyDocuments account.'
                 : action.parameters['question'],
             if (action.type == ConversationActionType.unsupportedRequest)
               'suggestions': [
@@ -225,6 +229,41 @@ ConversationController controller(
 );
 
 void main() {
+  test('greeting is scoped and bypasses model and mutation executor', () async {
+    final repository = FakeRepository();
+    final executor = RecordingExecutor();
+    final subject = controller(repository, executor);
+
+    await subject.submit('Hi');
+
+    expect(repository.interpretCalls, 0);
+    expect(executor.actions, isEmpty);
+    expect(subject.messages.last.content, startsWith('Hello!'));
+    expect(subject.messages.last.suggestions, hasLength(3));
+  });
+
+  test('exact reminder phrase creates one Auckland reminder action', () async {
+    final repository = FakeRepository();
+    final executor = RecordingExecutor();
+    final subject = controller(
+      repository,
+      executor,
+      now: () => DateTime.utc(2026, 9, 11),
+    );
+
+    await subject.submit('Add reminder for tomorrow 11am to visit doctor');
+
+    expect(repository.interpretCalls, 0);
+    expect(executor.actions, hasLength(1));
+    final action = executor.actions.single;
+    expect(action.type, ConversationActionType.createReminder);
+    expect(action.parameters, {
+      'title': 'Visit doctor',
+      'due_date': '2026-09-12',
+      'due_time': '11:00:00',
+    });
+  });
+
   test('multiple Families require explicit active-Family selection', () async {
     final repository = MultiFamilyRepository();
     final subject = controller(repository, RecordingExecutor());

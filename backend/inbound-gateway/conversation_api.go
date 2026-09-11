@@ -65,7 +65,9 @@ func (v accessTokenVerifier) verifyAuthorization(header string) (accessIdentity,
 		Expiry    int64           `json:"exp"`
 		NotBefore int64           `json:"nbf"`
 	}
-	if decodeStrictJSON(payloadBytes, &claims) != nil || !uuidPattern.MatchString(claims.Subject) || claims.Role != "authenticated" || claims.Issuer != v.issuer || !audienceContains(claims.Audience, v.audience) {
+	// Provider JWTs contain additional standard/session claims. Validate every
+	// authority-bearing claim we rely on, while safely ignoring unrelated ones.
+	if json.Unmarshal(payloadBytes, &claims) != nil || !uuidPattern.MatchString(claims.Subject) || claims.Role != "authenticated" || claims.Issuer != v.issuer || !audienceContains(claims.Audience, v.audience) {
 		return accessIdentity{}, errors.New("invalid token claims")
 	}
 	now := time.Now()

@@ -154,6 +154,67 @@ void main() {
     expect(calls, 2);
   });
 
+  test('attachment authentication failure is safe and actionable', () async {
+    final auth = FakeAuth();
+    final service = ConversationService(
+      auth,
+      client: FakeClient(
+        (request, body) async => http.Response(
+          jsonEncode({'error': 'authentication_required'}),
+          401,
+        ),
+      ),
+    );
+    await expectLater(
+      service.stageAttachment(
+        conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        fileName: 'synthetic.pdf',
+        mimeType: 'application/pdf',
+        bytes: '%PDF-1.4'.codeUnits,
+      ),
+      throwsA(
+        isA<ConversationServiceException>().having(
+          (error) => error.message,
+          'message',
+          'Your session has expired. Please sign in again.',
+        ),
+      ),
+    );
+  });
+
+  test('rejected reminder has a specific safe retry message', () async {
+    final service = ConversationService(
+      FakeAuth(),
+      client: FakeClient(
+        (request, body) async =>
+            http.Response(jsonEncode({'error': 'action_rejected'}), 422),
+      ),
+    );
+    final action = ConversationAction(
+      id: 'reminder-action-0001',
+      type: ConversationActionType.createReminder,
+      parameters: {
+        'title': 'Visit doctor',
+        'due_date': '2026-09-12',
+        'due_time': '11:00:00',
+      },
+    );
+    await expectLater(
+      service.submitAction(
+        'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        action,
+        action.id,
+      ),
+      throwsA(
+        isA<ConversationServiceException>().having(
+          (error) => error.message,
+          'message',
+          'The reminder could not be saved. Check the date and try again.',
+        ),
+      ),
+    );
+  });
+
   test(
     'lost action response retains the signed model proposal for retry',
     () async {

@@ -16,7 +16,10 @@ const testConversationUser = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 func conversationTestToken(secret string, expiry time.Time) string {
 	header := b64url([]byte(`{"alg":"HS256","typ":"JWT"}`))
-	payload, _ := json.Marshal(map[string]any{"sub": testConversationUser, "role": "authenticated", "iss": "supabase", "aud": "authenticated", "exp": expiry.Unix()})
+	payload, _ := json.Marshal(map[string]any{
+		"sub": testConversationUser, "role": "authenticated", "iss": "supabase", "aud": "authenticated", "exp": expiry.Unix(),
+		"email": "synthetic-owner@example.test", "aal": "aal1", "session_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "is_anonymous": false,
+	})
 	unsigned := header + "." + b64url(payload)
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte(unsigned))

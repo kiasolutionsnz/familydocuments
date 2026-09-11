@@ -1,4 +1,5 @@
 enum HomeIntentType {
+  greeting,
   search,
   saveAttachment,
   readAttachment,
@@ -30,6 +31,12 @@ class HomeIntent {
 HomeIntent parseHomeIntent(String message, {required bool hasAttachment}) {
   final text = message.trim();
   final lower = text.toLowerCase();
+  if (RegExp(
+    r'^(hi|hello|hey|good morning|good afternoon|good evening)[.!?]*$',
+    caseSensitive: false,
+  ).hasMatch(text)) {
+    return const HomeIntent(HomeIntentType.greeting);
+  }
   final destination = RegExp(
     r'\b(?:add|save|put|keep)\s+(?:this\s+)?(?:as|under|to|in|with)\s+(.+)$',
     caseSensitive: false,

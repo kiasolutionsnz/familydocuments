@@ -53,7 +53,7 @@ ParsedReminder parseReminderCommand(String command, {DateTime? now}) {
         '${due.day} ${_months[month - 1][0].toUpperCase()}${_months[month - 1].substring(1)}';
   }
   final timeMatch = RegExp(
-    r'\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b',
+    r'\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b',
     caseSensitive: false,
   ).firstMatch(text);
   String? dueTime;
@@ -81,23 +81,26 @@ ParsedReminder parseReminderCommand(String command, {DateTime? now}) {
   var title = text
       .replaceFirst(
         RegExp(
-          r'^(remind me\s+(?:about|to)?|add reminder)\s*',
+          r'^(remind me\s+(?:about|to|for)?|add reminder\s*(?:about|to|for)?)\s*',
           caseSensitive: false,
         ),
         '',
       )
-      .replaceAll(RegExp(r'\s+tomorrow\b', caseSensitive: false), '')
+      .replaceAll(RegExp(r'\btomorrow\b', caseSensitive: false), '')
       .replaceAll(
         RegExp(r'\s+on\s+\d{1,2}\s+[a-z]+(?:\s+20\d\d)?', caseSensitive: false),
         '',
       )
       .replaceAll(
         RegExp(
-          r'\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b',
+          r'\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b',
           caseSensitive: false,
         ),
         '',
       )
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim()
+      .replaceFirst(RegExp(r'^(?:to|about|for)\s+', caseSensitive: false), '')
       .trim();
   if (title.isEmpty) {
     throw const ReminderClarification('What should I remind you about?');

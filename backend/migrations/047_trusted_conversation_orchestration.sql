@@ -296,7 +296,7 @@ begin
   elsif e.action_type='open_app_destination' then answer:=jsonb_build_object('message','Opened '||initcap(p->>'destination')||'.','destination',p->>'destination');
   elsif e.action_type='request_clarification' then answer:=jsonb_build_object('message',p->>'question','choices',coalesce(p->'choices','[]'::jsonb));
   elsif e.action_type='unsupported_request' then
-    answer:=jsonb_build_object('message','I can help organise and find information in your FamilyDocuments account.','suggestions',jsonb_build_array(
+    answer:=jsonb_build_object('message',case when p->>'reason'='greeting' then 'Hello! I can help organise and find information in your FamilyDocuments account.' else 'I can help organise and find information in your FamilyDocuments account.' end,'suggestions',jsonb_build_array(
       jsonb_build_object('label','Find a document','action',jsonb_build_object('id','suggestion-find-'||e.id,'type','request_clarification','version',1,'parameters',jsonb_build_object('question','What document should I find?','missing_parameter','search_query'))),
       jsonb_build_object('label','Save a link','action',jsonb_build_object('id','suggestion-link-'||e.id,'type','request_clarification','version',1,'parameters',jsonb_build_object('question','Paste the link you would like to save.','missing_parameter','url'))),
       jsonb_build_object('label','Create a reminder','action',jsonb_build_object('id','suggestion-reminder-'||e.id,'type','request_clarification','version',1,'parameters',jsonb_build_object('question','What should I remind you about, and when?','missing_parameter','reminder')))));

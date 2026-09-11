@@ -23,6 +23,17 @@ void main() {
     expect(result.dueTime, '09:30:00');
   });
 
+  test('parses add reminder with time before title', () {
+    final result = parseReminderCommand(
+      'Add reminder for tomorrow 11am to visit doctor',
+      now: DateTime.utc(2026, 9, 11),
+    );
+    expect(result.title, 'Visit doctor');
+    expect(result.dueDate, '2026-09-12');
+    expect(result.dueTime, '11:00:00');
+    expect(result.displayWhen, 'tomorrow at 11:00 am');
+  });
+
   test('asks for clarification instead of guessing ambiguous dates', () {
     expect(
       () => parseReminderCommand('Remind me sometime next month'),

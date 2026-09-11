@@ -294,6 +294,13 @@ class ConversationController extends ChangeNotifier {
   }) {
     final lower = message.toLowerCase();
     final intent = parseHomeIntent(message, hasAttachment: hasAttachment);
+    if (intent.type == HomeIntentType.greeting) {
+      return ConversationAction(
+        id: _newId('action'),
+        type: ConversationActionType.unsupportedRequest,
+        parameters: const {'reason': 'greeting'},
+      );
+    }
     if (hasAttachment) {
       if (intent.type == HomeIntentType.saveAttachment &&
           (intent.destination == null || intent.destination!.trim().isEmpty)) {

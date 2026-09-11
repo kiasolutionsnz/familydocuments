@@ -527,7 +527,10 @@ class ConversationService implements ConversationRepository {
       'action': action.toJson(),
       'proposal_token': ?proposalToken,
     });
-    final outcome = _outcome(response, 'That action could not be completed.');
+    final fallback = action.type == ConversationActionType.createReminder
+        ? 'The reminder could not be saved. Check the date and try again.'
+        : 'That action could not be completed. Try again.';
+    final outcome = _outcome(response, fallback);
     if (response.statusCode >= 200 && response.statusCode < 300) {
       _proposalTokens.remove(action.id);
     }
@@ -560,8 +563,11 @@ class ConversationService implements ConversationRepository {
       'content_base64': base64Encode(bytes),
     });
     if (response.statusCode != 200) {
-      throw const ConversationServiceException(
-        'The file could not be prepared. Try again.',
+      throw ConversationServiceException(
+        _safeFailureMessage(
+          response,
+          'The file could not be prepared. Try again.',
+        ),
       );
     }
     final payload = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
@@ -643,7 +649,9 @@ class ConversationService implements ConversationRepository {
     String fallback,
   ) {
     if (response.statusCode != 200) {
-      throw ConversationServiceException(fallback);
+      throw ConversationServiceException(
+        _safeFailureMessage(response, fallback),
+      );
     }
     try {
       final payload = Map<String, dynamic>.from(
@@ -678,5 +686,28 @@ class ConversationService implements ConversationRepository {
     } catch (_) {
       throw ConversationServiceException(fallback);
     }
+  }
+
+  String _safeFailureMessage(http.Response response, String fallback) {
+    String? category;
+    try {
+      final payload = jsonDecode(response.body);
+      if (payload is Map) category = payload['error']?.toString();
+    } catch (_) {
+      // The server body is intentionally not surfaced to the user.
+    }
+    return switch (category) {
+      'authentication_required' =>
+        'Your session has expired. Please sign in again.',
+      'origin_denied' ||
+      'permission_denied' => 'You don’t have permission to do that.',
+      'service_unavailable' =>
+        'FamilyDocuments is temporarily unavailable. Try again.',
+      'invalid_request' || 'action_rejected' => fallback,
+      _ =>
+        response.statusCode == 401
+            ? 'Your session has expired. Please sign in again.'
+            : fallback,
+    };
   }
 }

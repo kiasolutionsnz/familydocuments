@@ -10,6 +10,7 @@ import 'package:familydocuments_flutter/main.dart';
 import 'package:familydocuments_flutter/core/auth/auth_service.dart';
 import 'package:familydocuments_flutter/core/auth/session_store.dart';
 import 'package:familydocuments_flutter/core/home/home_service.dart';
+import 'package:familydocuments_flutter/core/home/selected_upload.dart';
 import 'package:familydocuments_flutter/core/navigation/destination_state.dart';
 import 'package:familydocuments_flutter/features/timeline/data/timeline_service.dart';
 import 'package:familydocuments_flutter/features/timeline/models/timeline_item.dart';
@@ -303,8 +304,14 @@ FakeAuth authenticatedUser() => FakeAuth(
   ),
 );
 
+final syntheticPdfBytes = Uint8List.fromList('%PDF-1.4 synthetic'.codeUnits);
+
 SelectedUpload syntheticUpload([String name = 'synthetic-rental.pdf']) =>
-    SelectedUpload(name: name, bytes: Uint8List.fromList([1, 2, 3, 4]));
+    SelectedUpload(
+      name: name,
+      bytes: syntheticPdfBytes,
+      mimeType: 'application/pdf',
+    );
 
 Future<void> attachAndSend(WidgetTester tester, String message) async {
   await tester.pump(const Duration(milliseconds: 100));
@@ -674,7 +681,7 @@ void main() {
     expect(home.saveCalls, 1);
     expect(home.analysisCalls, 0);
     expect(home.savedCategory, 'Rentals');
-    expect(home.savedBytes, orderedEquals([1, 2, 3, 4]));
+    expect(home.savedBytes, orderedEquals(syntheticPdfBytes));
     expect(find.text('Saved synthetic-rental in Rentals.'), findsOneWidget);
   });
 
@@ -702,7 +709,7 @@ void main() {
       await t.tap(find.text('Save in Rentals'));
       await t.pumpAndSettle();
       expect(home.savedCategory, 'Rentals');
-      expect(home.savedBytes, orderedEquals([1, 2, 3, 4]));
+      expect(home.savedBytes, orderedEquals(syntheticPdfBytes));
       expect(home.analysisCalls, 0);
       expect(find.text('Saved synthetic-rental in Rentals.'), findsOneWidget);
     },
@@ -771,7 +778,7 @@ void main() {
     await t.tap(find.text('Home').last);
     await t.pumpAndSettle();
     expect(home.savedCategory, 'Home');
-    expect(home.savedBytes, orderedEquals([1, 2, 3, 4]));
+    expect(home.savedBytes, orderedEquals(syntheticPdfBytes));
     expect(home.analysisCalls, 0);
   });
 
@@ -861,7 +868,7 @@ void main() {
     }
     expect(home.analysisCalls, 1);
     expect(home.saveCalls, 0);
-    expect(home.savedBytes, orderedEquals([1, 2, 3, 4]));
+    expect(home.savedBytes, orderedEquals(syntheticPdfBytes));
     expect(
       find.text('Finished reading Synthetic electricity bill.'),
       findsOneWidget,
@@ -1090,6 +1097,90 @@ void main() {
       find.text('I couldn’t read the selected file. Please choose it again.'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('cancelled file selection leaves Home without an error', (
+    t,
+  ) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(auth);
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: home,
+        pickUpload: () async => null,
+      ),
+    );
+    await t.pump();
+    await t.tap(find.byTooltip('Attach a document').last);
+    await t.pumpAndSettle();
+    expect(find.byIcon(Icons.error_outline), findsNothing);
+    expect(home.saveCalls, 0);
+    expect(home.analysisCalls, 0);
+  });
+
+  testWidgets('unsupported attachment shows a safe type error', (t) async {
+    final auth = authenticatedUser();
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: FakeHomeService(auth),
+        pickUpload: () async => SelectedUpload(
+          name: 'notes.txt',
+          bytes: Uint8List.fromList('notes'.codeUnits),
+          mimeType: 'text/plain',
+        ),
+      ),
+    );
+    await t.pump();
+    await t.tap(find.byTooltip('Attach a document').last);
+    await t.pumpAndSettle();
+    expect(
+      find.text('That file type isn’t supported. Choose a PDF, JPG or PNG.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('oversized attachment shows a safe size error', (t) async {
+    final auth = authenticatedUser();
+    final bytes = Uint8List(maxSelectedUploadBytes + 1)
+      ..setRange(0, 5, '%PDF-'.codeUnits);
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: FakeHomeService(auth),
+        pickUpload: () async => SelectedUpload(
+          name: 'large.pdf',
+          bytes: bytes,
+          mimeType: 'application/pdf',
+        ),
+      ),
+    );
+    await t.pump();
+    await t.tap(find.byTooltip('Attach a document').last);
+    await t.pumpAndSettle();
+    expect(
+      find.text('That file is too large. Choose a file up to 5 MB.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('attachment preview does not upload or start OCR', (t) async {
+    final auth = authenticatedUser();
+    final home = FakeHomeService(auth);
+    await t.pumpWidget(
+      FamilyDocumentsApp(
+        auth: auth,
+        homeService: home,
+        pickUpload: () async => syntheticUpload('synthetic-bill.pdf'),
+      ),
+    );
+    await t.pump();
+    await t.tap(find.byTooltip('Attach a document').last);
+    await t.pumpAndSettle();
+    expect(find.text('synthetic-bill.pdf'), findsOneWidget);
+    expect(home.saveCalls, 0);
+    expect(home.analysisCalls, 0);
   });
 
   testWidgets('app-wide processing indicator opens Timeline', (t) async {

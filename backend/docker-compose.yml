@@ -60,6 +60,7 @@ services:
       GOTRUE_JWT_SECRET: ${GOTRUE_JWT_SECRET:?required}
       GOTRUE_JWT_EXP: 300
       GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_ISSUER: ${JWT_EXPECTED_ISSUER:-familydocuments}
       GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
       GOTRUE_JWT_ADMIN_ROLES: service_role
       GOTRUE_PASSWORD_MIN_LENGTH: 14
@@ -121,6 +122,7 @@ services:
     environment:
       INGESTION_HMAC_SECRET: ${INGESTION_HMAC_SECRET:-not-configured}
       GOTRUE_JWT_SECRET: ${GOTRUE_JWT_SECRET:?required}
+      JWT_EXPECTED_ISSUER: ${JWT_EXPECTED_ISSUER:-familydocuments}
       FP_API_URL: http://rest:3000
       AUTH_UPSTREAM_URL: http://auth:9999
       OCR_UPSTREAM_URL: http://ocr:8080

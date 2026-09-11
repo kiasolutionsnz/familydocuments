@@ -94,6 +94,11 @@ begin
   result:=fp.decide_conversation_confirmation(confirmation_id,'confirm');
   if result->>'state'<>'retryable' or result->>'error_category'<>'stale_target' then raise exception 'stale reminder confirmation executed';end if;
 
+  result:=fp.submit_conversation_action(conversation_id,'hardening-reminder-exact-0001','create_reminder',1,'{"title":"Visit doctor","due_date":"2027-01-21","due_time":"11:00:00"}','hardening-reminder-exact-request',false);
+  if result->>'state'<>'succeeded' or result->'result'->>'due_time'<>'11:00:00' or result->'result'->>'due_time_zone'<>'Pacific/Auckland' then raise exception 'exact standalone reminder was not created authoritatively: %',result;end if;
+  result:=fp.submit_conversation_action(conversation_id,'hardening-reminder-exact-0001','create_reminder',1,'{"title":"Visit doctor","due_date":"2027-01-21","due_time":"11:00:00"}','hardening-reminder-exact-request',false);
+  if (result->>'duplicate')::boolean is not true or (select count(*) from fp.reminders where household_id=family_one and created_by=owner_id and client_request_id='hardening-reminder-exact-request')<>1 then raise exception 'reminder replay created a duplicate';end if;
+
   for i in 1..61 loop
     perform fp.append_conversation_message(conversation_id,'hardening-message-'||lpad(i::text,4,'0'),'user','text','Synthetic bounded message '||i,'{}');
   end loop;
@@ -109,6 +114,8 @@ begin
   result:=fp.start_conversation('hardening-viewer-conversation');
   result:=fp.submit_conversation_action((result->>'id')::uuid,'hardening-viewer-save-link','save_link',1,'{"url":"https://example.com/viewer","category_name":"Travel"}','hardening-viewer-request',false);
   if result->>'state'<>'failed_before_mutation' or result->>'error_category'<>'permission_denied' then raise exception 'read-only mutation was not denied authoritatively';end if;
+  result:=fp.submit_conversation_action((fp.conversation_workspace()->'conversation'->>'id')::uuid,'hardening-viewer-reminder','create_reminder',1,'{"title":"Denied reminder","due_date":"2027-01-21","due_time":"11:00:00"}','hardening-viewer-reminder-request',false);
+  if result->>'state'<>'failed_before_mutation' or result->>'error_category'<>'permission_denied' or exists(select 1 from fp.reminders where household_id=family_one and created_by=viewer_id) then raise exception 'read-only reminder creation was not denied authoritatively';end if;
 
   perform set_config('request.jwt.claims',jsonb_build_object('sub',owner_id,'email','hardening-owner@example.test','role','authenticated')::text,true);
   perform fp.select_active_family(family_one);

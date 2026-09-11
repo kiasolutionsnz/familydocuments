@@ -9,6 +9,7 @@ import 'core/auth/auth_service.dart';
 import 'core/home/home_intent.dart';
 import 'core/home/home_service.dart';
 import 'core/home/reminder_parser.dart';
+import 'core/home/selected_upload.dart';
 import 'core/navigation/destination_state.dart';
 import 'features/conversation/conversation_controller.dart';
 import 'features/conversation/data/conversation_service.dart';
@@ -25,12 +26,6 @@ import 'features/timeline/data/timeline_service.dart';
 import 'features/timeline/timeline_page.dart';
 
 void main() => runApp(const FamilyDocumentsApp());
-
-class SelectedUpload {
-  const SelectedUpload({required this.name, required this.bytes});
-  final String name;
-  final Uint8List bytes;
-}
 
 class FamilyDocumentsApp extends StatefulWidget {
   const FamilyDocumentsApp({
@@ -1001,6 +996,9 @@ class _AppState extends State<FamilyDocumentsApp> {
       selected = widget.pickUpload != null
           ? await widget.pickUpload!()
           : await _pickFile();
+    } on SelectedUploadException catch (failure) {
+      if (mounted) setState(() => error = failure.message);
+      return;
     } catch (_) {
       if (mounted) {
         setState(
@@ -1011,11 +1009,20 @@ class _AppState extends State<FamilyDocumentsApp> {
       return;
     }
     if (selected == null) return;
-    final upload = selected;
+    SelectedUpload upload;
+    try {
+      upload = prepareSelectedUpload(
+        name: selected.name,
+        bytes: selected.bytes,
+      );
+    } on SelectedUploadException catch (failure) {
+      if (mounted) setState(() => error = failure.message);
+      return;
+    }
     setState(() {
       error = null;
       uploadedName = upload.name;
-      uploadedMimeType = _mimeType(upload.name);
+      uploadedMimeType = upload.mimeType;
       uploadedBytes = upload.bytes;
       message = null;
       analysisRequestId = null;
@@ -1029,12 +1036,8 @@ class _AppState extends State<FamilyDocumentsApp> {
       allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
     );
     if (result == null) return null;
-    if (result.files.single.bytes == null ||
-        result.files.single.bytes!.isEmpty) {
-      throw StateError('selected file has no readable bytes');
-    }
     final file = result.files.single;
-    return SelectedUpload(name: file.name, bytes: file.bytes!);
+    return prepareSelectedUpload(name: file.name, bytes: file.bytes);
   }
 
   Future<void> _sendAttachment() async {
@@ -1608,16 +1611,6 @@ class _AppState extends State<FamilyDocumentsApp> {
     } on HomeServiceException catch (failure) {
       if (mounted) setState(() => error = failure.message);
     }
-  }
-
-  static String _mimeType(String name) {
-    final extension = name.split('.').last.toLowerCase();
-    return switch (extension) {
-      'pdf' => 'application/pdf',
-      'jpg' || 'jpeg' => 'image/jpeg',
-      'png' => 'image/png',
-      _ => 'application/octet-stream',
-    };
   }
 
   Future<void> signOut() async {
