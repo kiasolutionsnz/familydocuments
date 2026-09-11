@@ -233,6 +233,7 @@ class InboxPageState extends State<InboxPage> {
                 InboxFilter.unreviewed: 'Unreviewed',
                 InboxFilter.attachments: 'With attachments',
                 InboxFilter.links: 'With links',
+                InboxFilter.telegram: 'Telegram',
                 InboxFilter.reviewed: 'Reviewed',
               };
               return Padding(

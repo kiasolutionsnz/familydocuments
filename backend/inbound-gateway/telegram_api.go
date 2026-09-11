@@ -208,16 +208,18 @@ type telegramUpdate struct {
 			LastName  string `json:"last_name,omitempty"`
 		} `json:"from"`
 		Document *struct {
-			FileID   string `json:"file_id"`
-			FileName string `json:"file_name"`
-			MimeType string `json:"mime_type"`
-			FileSize int64  `json:"file_size"`
+			FileID       string `json:"file_id"`
+			FileUniqueID string `json:"file_unique_id,omitempty"`
+			FileName     string `json:"file_name"`
+			MimeType     string `json:"mime_type"`
+			FileSize     int64  `json:"file_size"`
 		} `json:"document,omitempty"`
 		Photo []struct {
-			FileID   string `json:"file_id"`
-			FileSize int64  `json:"file_size"`
-			Width    int    `json:"width"`
-			Height   int    `json:"height"`
+			FileID       string `json:"file_id"`
+			FileUniqueID string `json:"file_unique_id,omitempty"`
+			FileSize     int64  `json:"file_size"`
+			Width        int    `json:"width"`
+			Height       int    `json:"height"`
 		} `json:"photo,omitempty"`
 	} `json:"message,omitempty"`
 	Callback *struct {

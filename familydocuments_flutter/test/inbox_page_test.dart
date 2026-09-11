@@ -43,6 +43,19 @@ class _Service extends InboxService {
   final all = [
     _item('new', 'Travel insurance invoice', attachments: 1, links: 1),
     _item('chat', 'Family chat note', state: 'reviewed'),
+    InboxItem(
+      id: 'telegram',
+      sender: 'Telegram',
+      subject: 'Telegram attachment',
+      receivedAt: _now.subtract(const Duration(hours: 1)),
+      source: 'Telegram',
+      preview: 'synthetic.pdf',
+      attachmentCount: 1,
+      linkCount: 0,
+      reviewState: 'unreviewed',
+      updatedAt: _now,
+      actions: const [],
+    ),
   ];
 
   @override
@@ -70,6 +83,8 @@ class _Service extends InboxService {
       InboxFilter.attachments =>
         items.where((x) => x.attachmentCount > 0).toList(),
       InboxFilter.links => items.where((x) => x.linkCount > 0).toList(),
+      InboxFilter.telegram =>
+        items.where((x) => x.source == 'Telegram').toList(),
       InboxFilter.reviewed =>
         items.where((x) => x.reviewState == 'reviewed').toList(),
     };
@@ -223,6 +238,7 @@ void main() {
     for (final label in [
       'With attachments',
       'With links',
+      'Telegram',
       'Reviewed',
       'Unreviewed',
     ]) {
@@ -231,6 +247,18 @@ void main() {
       await tester.pumpAndSettle();
     }
     expect(service.lastFilter, InboxFilter.unreviewed);
+  });
+
+  testWidgets('Telegram source filter shows only Telegram review items', (
+    tester,
+  ) async {
+    await _pump(tester, _Service());
+    final filter = find.widgetWithText(ChoiceChip, 'Telegram');
+    await tester.ensureVisible(filter);
+    await tester.tap(filter);
+    await tester.pumpAndSettle();
+    expect(find.text('Telegram attachment'), findsOneWidget);
+    expect(find.text('Travel insurance invoice'), findsNothing);
   });
 
   testWidgets(

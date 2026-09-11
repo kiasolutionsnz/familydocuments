@@ -60,6 +60,28 @@ class _Client extends http.BaseClient {
         'links': [],
         'actions': [],
       },
+      '/rest/rpc/telegram_inbox_workspace' => {
+        'can_edit': true,
+        'total': 1,
+        'items': [
+          {
+            'id': 'telegram-1',
+            'sender': 'Telegram',
+            'subject': 'Telegram attachment',
+            'received_at': '2027-01-20T03:00:00Z',
+            'source': 'Telegram',
+            'preview': 'synthetic.pdf',
+            'attachment_count': 1,
+            'link_count': 0,
+            'review_state': 'unreviewed',
+            'updated_at': '2027-01-20T03:00:00Z',
+            'actions': [],
+          },
+        ],
+        'categories': [],
+        'tags': [],
+        'link_categories': [],
+      },
       '/rest/rpc/inbox_save_attachment' => {
         'document_id': 'document-1',
         'job_id': 'job-1',
@@ -83,11 +105,25 @@ void main() {
       filter: InboxFilter.attachments,
       offset: 30,
     );
-    expect(data.items.single.subject, 'Invoice');
-    final body = jsonDecode(client.requests.single.body) as Map;
+    expect(
+      data.items.map((item) => item.source),
+      containsAll(['Email', 'Telegram']),
+    );
+    final body = jsonDecode(client.requests.first.body) as Map;
     expect(body['search_query'], 'Invoice');
     expect(body['state_filter'], 'attachments');
     expect(body['result_offset'], 30);
+  });
+
+  test('Telegram filter returns only Telegram review items', () async {
+    final client = _Client();
+    final service = InboxService(_Auth(), client: client);
+    final data = await service.load(filter: InboxFilter.telegram);
+    expect(data.items.single.source, 'Telegram');
+    expect(
+      client.requests.map((item) => item.url.path),
+      contains('/rest/rpc/telegram_inbox_workspace'),
+    );
   });
 
   test('loads safe message detail', () async {

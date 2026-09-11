@@ -88,7 +88,7 @@ func TestConversationActionStrictEnvelopeAndProposalBinding(t *testing.T) {
 	verifier := accessTokenVerifier{secret: []byte(secret), issuer: "supabase", audience: "authenticated"}
 	service := newTrustedConversationAPI("https://familydocuments.app", api.URL, verifier, []byte(secret), nil)
 	action := modelActionEnvelope{ID: "proposal-action-0001", Type: "save_link", Version: 1, Parameters: map[string]any{"url": "https://example.com/path", "category_name": "Travel"}}
-	token := signProposalToken(testConversationUser, action, []byte(secret), time.Now().Add(time.Minute))
+	token := signProposalToken(testConversationUser, action, true, []byte(secret), time.Now().Add(time.Minute))
 	body, _ := json.Marshal(actionEnvelope{ConversationID: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", RequestKey: "action-request-0001", Action: action, ProposalToken: token})
 	req := httptest.NewRequest(http.MethodPost, "/conversation/action", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+conversationTestToken(secret, time.Now().Add(time.Hour)))
@@ -125,6 +125,18 @@ func TestConversationActionStrictEnvelopeAndProposalBinding(t *testing.T) {
 	service.action(response, req)
 	if response.Code != http.StatusUnprocessableEntity || len(bodies) != 1 {
 		t.Fatalf("proposal substitution reached backend: %d %#v", response.Code, bodies)
+	}
+}
+
+func TestProposalTokenPreservesTrustedInterpretationSource(t *testing.T) {
+	action := modelActionEnvelope{ID: "deterministic-action-0001", Type: "save_document", Version: 1, Parameters: map[string]any{"attachment_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "category_name": "Rental records"}}
+	key := []byte("proposal-source-test")
+	for _, expected := range []bool{false, true} {
+		token := signProposalToken(testConversationUser, action, expected, key, time.Now().Add(time.Minute))
+		valid, derived := verifyProposalToken(token, testConversationUser, action, key, time.Now())
+		if !valid || derived != expected {
+			t.Fatalf("proposal source was not preserved: valid=%v derived=%v expected=%v", valid, derived, expected)
+		}
 	}
 }
 

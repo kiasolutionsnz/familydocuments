@@ -1,4 +1,4 @@
-enum InboxFilter { all, unreviewed, attachments, links, reviewed }
+enum InboxFilter { all, unreviewed, attachments, links, telegram, reviewed }
 
 class InboxLocation {
   const InboxLocation({this.messageId});

@@ -193,6 +193,30 @@ without deleting previously created FamilyDocuments records. Transport records
 retain redacted delivery identifiers; a later configurable retention job may
 purge completed updates and outbox rows after the documented audit period.
 
+Migration 050 completes the transport lifecycle. The webhook now creates a
+durable attachment row before acknowledging an update. The worker binds that
+row to the linked actor and Family, leases it, records verified MIME type,
+size, checksum and an opaque staging key, and records retryable or terminal
+failure categories. Staging files are removed after acceptance or terminal
+failure; stored FamilyDocuments records are never part of staging cleanup.
+
+`/cancel`, `/family` and `/disconnect` are transport controls implemented by
+service-only database functions. Family and confirmation buttons carry only
+short-lived opaque nonces. Membership, private chat, bot, conversation,
+Family, expiry and single-use state are checked again when selected. Family
+switching and disconnect revoke outstanding callbacks and pending actions.
+Typed clarification labels are matched only against the current persisted
+clarification; unrelated input supersedes it and returns to the canonical
+orchestrator with at most eight structured references.
+
+Telegram items enter Inbox only when a persisted attachment still needs a
+decision. They are exposed through the Family-scoped
+`telegram_inbox_workspace`, `telegram_inbox_message_detail` and
+`set_telegram_inbox_review_state` RPCs and are labelled Telegram. Completed
+commands do not create Inbox rows. OCR status delivery reads the existing
+durable analysis-job state and writes one outbox notification per real state
+transition, without processing OCR itself.
+
 Real bot configuration is intentionally manual. Secrets are supplied only by
 the approved server-side environment. `scripts/telegram-bot.ps1` supports
 `get-me`, webhook registration/status/deletion and command registration without

@@ -188,7 +188,7 @@ try {
     await rpc(owner, 'create_category', {category_name: 'Finance'});
     const snapshot = await rpc(owner, 'household_snapshot');
     const category = name => snapshot.categories.find(item => item.name === name)?.id;
-    const ids = Object.fromEntries(['passport','bill','flight','travelOther','rentalInsurance','rentalOther','medical','revocable','foreign','tripFiji','tripSydney','propertyOne','propertyTwo','linkCategory'].map(key => [key, crypto.randomUUID()]));
+    const ids = Object.fromEntries(['passport','bill','flight','travelOther','rentalInsurance','rentalOther','medical','revocable','foreign','tripFiji','tripSydney','propertyOne','propertyTwo','linkCategory','linkCategoryTravel'].map(key => [key, crypto.randomUUID()]));
     const familyId = ownerFamily.household.id;
     const otherFamilyId = outsiderFamily.household.id;
     const otherCategory = outsiderFamily.categories[0].id;
@@ -217,7 +217,7 @@ try {
         ('${ids.propertyOne}','${familyId}','12 Example Street, Wellington','${owner.userId}'),
         ('${ids.propertyTwo}','${familyId}','8 Test Road, Auckland','${owner.userId}');
       insert into fp.rental_bills(household_id,property_entity_id,document_id,expense_category,confirmed_by) values('${familyId}','${ids.propertyOne}','${ids.rentalInsurance}','insurance','${owner.userId}');
-      insert into fp.saved_link_categories(id,household_id,owner_user_id,name) values('${ids.linkCategory}','${familyId}','${owner.userId}','Research');
+      insert into fp.saved_link_categories(id,household_id,owner_user_id,name) values('${ids.linkCategory}','${familyId}','${owner.userId}','Research'),('${ids.linkCategoryTravel}','${familyId}','${owner.userId}','Travel');
       insert into fp.saved_links(household_id,owner_user_id,category_id,url,normalized_url_hash,source_host,title) values
         ('${familyId}','${owner.userId}','${ids.linkCategory}','https://example.com/travel',repeat('8',64),'example.com','Synthetic travel research'),
         ('${familyId}','${owner.userId}','${ids.linkCategory}','https://example.org/home',repeat('9',64),'example.org','Synthetic home reference');
@@ -270,15 +270,18 @@ try {
     await workerLog.close();
     let fakeTelegram=null,telegramWorker=null,fakeTelegramLogPath=null,telegramWorkerLogPath=null;
     if(manualTelegram){
+      const pngPath=`${runtimeDir}\\synthetic-image.png`,jpegPath=`${runtimeDir}\\synthetic-image.jpg`;
+      await writeFile(pngPath,Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64'));
+      await writeFile(jpegPath,Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9oADAMBAAIAAwAAABD/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/EH//xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/EH//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/EH//2Q==','base64'));
       fakeTelegramLogPath=`${runtimeDir}\\fake-telegram.log`;telegramWorkerLogPath=`${runtimeDir}\\telegram-worker.log`;
       const fakeLog=await open(fakeTelegramLogPath,'a');
-      fakeTelegram=spawn(process.execPath,['tests/fake-telegram-api.mjs'],{cwd:root,env:{...env,FAKE_TELEGRAM_PORT:String(ports.TELEGRAM),FP_GATEWAY_URL:env.FD_GATEWAY_URL,FAKE_TELEGRAM_PDF:fileURLToPath(new URL('../tests/fixtures/synthetic-bill.pdf',import.meta.url))},windowsHide:true,detached:true,stdio:['ignore',fakeLog.fd,fakeLog.fd]});processes.push(fakeTelegram);fakeTelegram.unref();await fakeLog.close();await ready(`http://127.0.0.1:${ports.TELEGRAM}/health`);
+      fakeTelegram=spawn(process.execPath,['tests/fake-telegram-api.mjs'],{cwd:root,env:{...env,FAKE_TELEGRAM_PORT:String(ports.TELEGRAM),FP_GATEWAY_URL:env.FD_GATEWAY_URL,FAKE_TELEGRAM_PDF:fileURLToPath(new URL('../tests/fixtures/synthetic-bill.pdf',import.meta.url)),FAKE_TELEGRAM_PNG:pngPath,FAKE_TELEGRAM_JPEG:jpegPath},windowsHide:true,detached:true,stdio:['ignore',fakeLog.fd,fakeLog.fd]});processes.push(fakeTelegram);fakeTelegram.unref();await fakeLog.close();await ready(`http://127.0.0.1:${ports.TELEGRAM}/health`);
       const telegramLog=await open(telegramWorkerLogPath,'a');
-      telegramWorker=spawn(process.execPath,['telegram/worker.mjs','--watch'],{cwd:root,env:{...env,FP_API_URL:env.FD_API_URL,FP_GATEWAY_URL:env.FD_GATEWAY_URL,TELEGRAM_API_BASE_URL:`http://127.0.0.1:${ports.TELEGRAM}`,JWT_EXPECTED_ISSUER:'familydocuments'},windowsHide:true,detached:true,stdio:['ignore',telegramLog.fd,telegramLog.fd]});processes.push(telegramWorker);telegramWorker.unref();await telegramLog.close();
+      telegramWorker=spawn(process.execPath,['telegram/worker.mjs','--watch'],{cwd:root,env:{...env,FP_API_URL:env.FD_API_URL,FP_GATEWAY_URL:env.FD_GATEWAY_URL,TELEGRAM_API_BASE_URL:`http://127.0.0.1:${ports.TELEGRAM}`,TELEGRAM_STAGING_DIR:`${runtimeDir}\\staging`,JWT_EXPECTED_ISSUER:'familydocuments'},windowsHide:true,detached:true,stdio:['ignore',telegramLog.fd,telegramLog.fd]});processes.push(telegramWorker);telegramWorker.unref();await telegramLog.close();
     }
     const flutterLog = await open(flutterLogPath, 'a');
     const flutterCommand = process.env.FD_FLUTTER || 'C:\\src\\flutter\\bin\\flutter.bat';
-    const flutter = spawn(flutterCommand, ['run', '-d', 'web-server', '--web-hostname', '127.0.0.1', '--web-port', String(ports.WEB), `--dart-define=FAMILYDOCUMENTS_API_BASE_URL=${env.FD_GATEWAY_URL}`], {cwd: fileURLToPath(new URL('../../familydocuments_flutter/', import.meta.url)), env, shell: true, windowsHide: true, detached: true, stdio: ['ignore', flutterLog.fd, flutterLog.fd]});
+    const flutter = spawn(flutterCommand, ['run', '-d', 'web-server', '--web-hostname', '127.0.0.1', '--web-port', String(ports.WEB), `--dart-define=FAMILYDOCUMENTS_API_BASE_URL=${env.FD_GATEWAY_URL}`], {cwd: fileURLToPath(new URL('../../familydocuments_flutter/', import.meta.url)), env:{...env,FLUTTER_ALREADY_LOCKED:'true'}, shell: true, windowsHide: true, detached: true, stdio: ['ignore', flutterLog.fd, flutterLog.fd]});
     processes.push(flutter);
     flutter.unref();
     await flutterLog.close();
@@ -286,7 +289,7 @@ try {
     const credentialsPath = `${runtimeDir}\\credentials.txt`;
     await writeFile(credentialsPath, `Synthetic owner\nEmail: ${owner.email}\nPassword: ${owner.password}\n\nRead-only member\nEmail: ${viewer.email}\nPassword: ${viewer.password}\n${multiFamily ? `\nMultiple-Family member\nEmail: ${multiFamily.email}\nPassword: ${multiFamily.password}\n` : ''}`, {mode: 0o600});
     const runtimePath = `${runtimeDir}\\runtime.json`;
-    const migration = manualTelegram ? '049_telegram_transport.sql' : manualConversation ? '048_conversation_reminder_queries.sql' : manualInbox ? '044_flutter_inbox.sql' : '043_flutter_library.sql';
+    const migration = manualTelegram ? '050_complete_telegram_transport.sql' : manualConversation ? '048_conversation_reminder_queries.sql' : manualInbox ? '044_flutter_inbox.sql' : '043_flutter_library.sql';
     const seed = {
       documents: conversationFixtures ? 9 : 8,
       trips: 2,
@@ -299,7 +302,7 @@ try {
       revocable_document: ids.revocable,
       ...(inboxSeed ?? {}),
     };
-    await writeFile(runtimePath, JSON.stringify({runtime_id: prefix, label, candidate_commit: process.env.FD_CANDIDATE_COMMIT || null, created_at: new Date().toISOString(), containers, networks, processes: {worker: worker.pid, flutter: flutter.pid,...(manualTelegram?{telegram_worker:telegramWorker.pid,fake_telegram:fakeTelegram.pid}:{})}, urls: {flutter: `http://127.0.0.1:${ports.WEB}`, gateway: env.FD_GATEWAY_URL, auth: env.FD_AUTH_URL, api: env.FD_API_URL, ocr: env.FD_OCR_URL,...(manualTelegram?{fake_telegram:`http://127.0.0.1:${ports.TELEGRAM}`}:{})}, logs: {worker: workerLogPath, flutter: flutterLogPath,...(manualTelegram?{telegram_worker:telegramWorkerLogPath,fake_telegram:fakeTelegramLogPath}:{})}, credentials_file: credentialsPath, fixtures: [fileURLToPath(new URL('../tests/fixtures/synthetic-bill.pdf', import.meta.url)), fileURLToPath(new URL('../tests/fixtures/synthetic-malformed.pdf', import.meta.url))], migration, seed}, null, 2));
+    await writeFile(runtimePath, JSON.stringify({runtime_id: prefix, label, candidate_commit: process.env.FD_CANDIDATE_COMMIT || null, created_at: new Date().toISOString(), containers, networks, processes: {worker: worker.pid, flutter: flutter.pid,...(manualTelegram?{telegram_worker:telegramWorker.pid,fake_telegram:fakeTelegram.pid}:{})}, urls: {flutter: `http://127.0.0.1:${ports.WEB}`, gateway: env.FD_GATEWAY_URL, auth: env.FD_AUTH_URL, api: env.FD_API_URL, ocr: env.FD_OCR_URL,...(manualTelegram?{fake_telegram:`http://127.0.0.1:${ports.TELEGRAM}`}:{})}, logs: {worker: workerLogPath, flutter: flutterLogPath,...(manualTelegram?{telegram_worker:telegramWorkerLogPath,fake_telegram:fakeTelegramLogPath}:{})}, credentials_file: credentialsPath, fixtures: [fileURLToPath(new URL('../tests/fixtures/synthetic-bill.pdf', import.meta.url)), fileURLToPath(new URL('../tests/fixtures/synthetic-malformed.pdf', import.meta.url)),...(manualTelegram?[`${runtimeDir}\\synthetic-image.png`,`${runtimeDir}\\synthetic-image.jpg`]:[])], migration, seed}, null, 2));
     keepManualRuntime = true;
     console.log(JSON.stringify({[manualTelegram ? 'manual_telegram_runtime' : manualConversation ? 'manual_conversation_runtime' : manualInbox ? 'manual_inbox_runtime' : 'manual_library_runtime']: 'READY', flutter_url: `http://127.0.0.1:${ports.WEB}`, credentials_file: credentialsPath, runtime_manifest: runtimePath, worker_pid: worker.pid,...(manualTelegram?{fake_telegram_url:`http://127.0.0.1:${ports.TELEGRAM}`,telegram_worker_pid:telegramWorker.pid}:{}), migration}, null, 2));
   }

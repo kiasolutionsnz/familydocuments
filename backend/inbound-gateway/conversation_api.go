@@ -199,11 +199,12 @@ func (h *trustedConversationAPI) action(w http.ResponseWriter, r *http.Request) 
 	}
 	modelDerived := false
 	if input.ProposalToken != "" {
-		if !verifyProposalToken(input.ProposalToken, identity.UserID, input.Action, h.proposalKey, time.Now()) {
+		valid, derived := verifyProposalToken(input.ProposalToken, identity.UserID, input.Action, h.proposalKey, time.Now())
+		if !valid {
 			jsonReply(w, http.StatusUnprocessableEntity, map[string]string{"error": "action_rejected"})
 			return
 		}
-		modelDerived = true
+		modelDerived = derived
 	}
 	addTrustedClarificationOptions(&input.Action)
 	proposal = modelProposal{Type: input.Action.Type, Parameters: input.Action.Parameters}
@@ -384,42 +385,43 @@ func validateServerAction(proposal modelProposal) bool {
 }
 
 type proposalClaims struct {
-	Subject string              `json:"sub"`
-	Action  modelActionEnvelope `json:"action"`
-	Expiry  int64               `json:"exp"`
+	Subject      string              `json:"sub"`
+	Action       modelActionEnvelope `json:"action"`
+	ModelDerived bool                `json:"model_derived"`
+	Expiry       int64               `json:"exp"`
 }
 
-func signProposalToken(subject string, action modelActionEnvelope, key []byte, expires time.Time) string {
-	payload, _ := json.Marshal(proposalClaims{Subject: subject, Action: action, Expiry: expires.Unix()})
+func signProposalToken(subject string, action modelActionEnvelope, modelDerived bool, key []byte, expires time.Time) string {
+	payload, _ := json.Marshal(proposalClaims{Subject: subject, Action: action, ModelDerived: modelDerived, Expiry: expires.Unix()})
 	encoded := base64.RawURLEncoding.EncodeToString(payload)
 	mac := hmac.New(sha256.New, key)
 	_, _ = mac.Write([]byte(encoded))
 	return encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-func verifyProposalToken(token, subject string, action modelActionEnvelope, key []byte, now time.Time) bool {
+func verifyProposalToken(token, subject string, action modelActionEnvelope, key []byte, now time.Time) (bool, bool) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 2 {
-		return false
+		return false, false
 	}
 	signature, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return false
+		return false, false
 	}
 	mac := hmac.New(sha256.New, key)
 	_, _ = mac.Write([]byte(parts[0]))
 	if !hmac.Equal(signature, mac.Sum(nil)) {
-		return false
+		return false, false
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return false
+		return false, false
 	}
 	var claims proposalClaims
 	if decodeStrictJSON(payload, &claims) != nil || claims.Subject != subject || claims.Expiry <= now.Unix() {
-		return false
+		return false, false
 	}
 	want, _ := json.Marshal(claims.Action)
 	got, _ := json.Marshal(action)
-	return hmac.Equal(want, got)
+	return hmac.Equal(want, got), claims.ModelDerived
 }

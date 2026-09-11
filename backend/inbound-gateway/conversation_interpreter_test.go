@@ -37,7 +37,7 @@ func conversationTestHandler(t *testing.T, ollama string) (http.HandlerFunc, str
 		if err != nil || !strings.Contains(string(payload), `"role":"service_role"`) || !strings.Contains(string(payload), testConversationUser) {
 			t.Fatal("rate-limit call was not bound to the authenticated user through the service role")
 		}
-		jsonReply(w, http.StatusOK, map[string]any{"allowed": true, "family_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"})
+		jsonReply(w, http.StatusOK, map[string]any{"allowed": true, "remaining": 9, "family_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"})
 	}))
 	secret := "test-conversation-jwt-secret"
 	verifier := accessTokenVerifier{secret: []byte(secret), issuer: "supabase", audience: "authenticated"}
@@ -140,6 +140,47 @@ func TestConversationInterpreterAllowsTypedReminderQuery(t *testing.T) {
 	handler(response, req)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"type":"query_reminders"`) {
 		t.Fatalf("typed reminder query was rejected: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestConversationInterpreterDeterministicallyRoutesTelegramAttachment(t *testing.T) {
+	modelCalls := 0
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { modelCalls++ }))
+	defer ollama.Close()
+	handler, token, closeAPI := conversationTestHandler(t, ollama.URL)
+	defer closeAPI()
+	attachment := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	for _, test := range []struct{ message, expected string }{
+		{"Save this in Rentals", `"type":"save_document"`},
+		{"Read this bill and save it as an invoice", `"type":"request_document_ocr"`},
+		{"Save this document", `"type":"request_clarification"`},
+	} {
+		body := `{"message":"` + test.message + `","context":{"has_attachment":true,"attachment_id":"` + attachment + `","references":[]}}`
+		req := httptest.NewRequest(http.MethodPost, "/conversation/interpret", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		handler(response, req)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), test.expected) {
+			t.Fatalf("%q was not deterministically routed: %d %s", test.message, response.Code, response.Body.String())
+		}
+	}
+	if modelCalls != 0 {
+		t.Fatalf("deterministic attachment commands called the model %d times", modelCalls)
+	}
+}
+
+func TestConversationInterpreterDeterministicallyCapturesSafeLink(t *testing.T) {
+	modelCalls := 0
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { modelCalls++ }))
+	defer ollama.Close()
+	handler, token, closeAPI := conversationTestHandler(t, ollama.URL)
+	defer closeAPI()
+	req := httptest.NewRequest(http.MethodPost, "/conversation/interpret", strings.NewReader(`{"message":"https://familydocuments.app/","context":{"has_attachment":false,"references":[]}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	handler(response, req)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"missing_parameter":"link_action"`) || modelCalls != 0 {
+		t.Fatalf("safe link context was not retained deterministically: %d %s calls=%d", response.Code, response.Body.String(), modelCalls)
 	}
 }
 

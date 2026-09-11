@@ -22,6 +22,8 @@ const maxConversationInterpretMessage = 500
 var safeActionID = regexp.MustCompile(`^[A-Za-z0-9:_-]{8,100}$`)
 var safeDate = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 var safeTime = regexp.MustCompile(`^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$`)
+var conversationURL = regexp.MustCompile(`https://[^\s<>"']+`)
+var explicitDocumentCategory = regexp.MustCompile(`(?i)\b(?:in|to|as)\s+([a-z][a-z0-9 &-]{1,39})[.!]?$`)
 
 var actionParameters = map[string]map[string]bool{
 	"search_family_content":    {"query": true},
@@ -152,6 +154,10 @@ func (h *conversationInterpreter) serve(w http.ResponseWriter, r *http.Request) 
 		h.reply(w, modelProposal{Type: "unsupported_request", Parameters: map[string]any{"reason": "unsafe_instruction"}}, input.Message, identity.UserID, familyID, "action_rejected")
 		return
 	}
+	if proposal, ok := deterministicConversationProposal(input); ok {
+		h.reply(w, proposal, input.Message, identity.UserID, familyID, "deterministic")
+		return
+	}
 	select {
 	case h.modelSlots <- struct{}{}:
 		defer func() { <-h.modelSlots }()
@@ -178,6 +184,45 @@ func (h *conversationInterpreter) serve(w http.ResponseWriter, r *http.Request) 
 	h.reply(w, proposal, input.Message, identity.UserID, familyID, modelStatus)
 }
 
+func deterministicConversationProposal(input interpreterInput) (modelProposal, bool) {
+	message := strings.TrimSpace(input.Message)
+	lower := strings.ToLower(message)
+	if input.Context.HasAttachment {
+		if strings.Contains(lower, "ocr") || strings.Contains(lower, "read") || strings.Contains(lower, "scan") || strings.Contains(lower, "bill") || strings.Contains(lower, "invoice") || strings.Contains(lower, "extract") {
+			mode := "document"
+			if strings.Contains(lower, "bill") || strings.Contains(lower, "invoice") {
+				mode = "invoice"
+			}
+			return modelProposal{Type: "request_document_ocr", Parameters: map[string]any{"attachment_id": input.Context.AttachmentID, "mode": mode}}, true
+		}
+		if match := explicitDocumentCategory.FindStringSubmatch(message); len(match) == 2 && (strings.Contains(lower, "save") || strings.Contains(lower, "add")) {
+			return modelProposal{Type: "save_document", Parameters: map[string]any{"attachment_id": input.Context.AttachmentID, "category_name": strings.TrimSpace(match[1]), "tags": []any{}}}, true
+		}
+		return modelProposal{Type: "request_clarification", Parameters: map[string]any{"question": "Which category should I save this document in?", "missing_parameter": "category_name", "attachment_id": input.Context.AttachmentID, "tags": []any{}}}, true
+	}
+	if raw := conversationURL.FindString(message); raw != "" {
+		parsed, err := url.Parse(strings.TrimRight(raw, ".,;!"))
+		if err != nil || parsed.Scheme != "https" || parsed.User != nil || !publicConversationHost(parsed.Hostname()) {
+			return modelProposal{Type: "unsupported_request", Parameters: map[string]any{"reason": "unsafe_url"}}, true
+		}
+		return modelProposal{Type: "request_clarification", Parameters: map[string]any{"question": "Would you like me to save this link?", "missing_parameter": "link_action", "link_url": parsed.String(), "link_title": parsed.Hostname(), "choices": []any{"Save link", "Cancel"}}}, true
+	}
+	if strings.Contains(lower, "reminder") || strings.Contains(lower, "reminders") {
+		scope := "upcoming"
+		if strings.Contains(lower, "today") {
+			scope = "today"
+		} else if strings.Contains(lower, "tomorrow") {
+			scope = "tomorrow"
+		} else if strings.Contains(lower, "overdue") {
+			scope = "overdue"
+		}
+		if strings.Contains(lower, "show") || strings.Contains(lower, "find") || strings.Contains(lower, "what") {
+			return modelProposal{Type: "query_reminders", Parameters: map[string]any{"scope": scope}}, true
+		}
+	}
+	return modelProposal{}, false
+}
+
 func (h *conversationInterpreter) consumeRateLimit(identity accessIdentity) (bool, string) {
 	payload := []byte(`{"bucket_name":"conversation_interpret","request_limit":10,"window_seconds":60}`)
 	req, _ := http.NewRequest(http.MethodPost, h.api+"/rpc/consume_conversation_rate_limit", bytes.NewReader(payload))
@@ -192,8 +237,9 @@ func (h *conversationInterpreter) consumeRateLimit(identity accessIdentity) (boo
 		return false, ""
 	}
 	var result struct {
-		Allowed  bool   `json:"allowed"`
-		FamilyID string `json:"family_id"`
+		Allowed   bool   `json:"allowed"`
+		Remaining int    `json:"remaining"`
+		FamilyID  string `json:"family_id"`
 	}
 	if decodeRequestStrict(io.LimitReader(resp.Body, 4096), &result) != nil || !uuidPattern.MatchString(result.FamilyID) {
 		return false, ""
@@ -466,6 +512,6 @@ func (h *conversationInterpreter) reply(w http.ResponseWriter, proposal modelPro
 		nested["version"] = 1
 	}
 	action := modelActionEnvelope{ID: id, Type: proposal.Type, Version: 1, Parameters: proposal.Parameters}
-	proposalToken := signProposalToken(subject, action, h.proposalKey, time.Now().Add(5*time.Minute))
+	proposalToken := signProposalToken(subject, action, interpretationStatus != "deterministic", h.proposalKey, time.Now().Add(5*time.Minute))
 	jsonReply(w, http.StatusOK, map[string]any{"action": action, "proposal_token": proposalToken, "interpretation_status": interpretationStatus})
 }

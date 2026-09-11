@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {detectSupportedFile, processTransportCycle, TELEGRAM_MAX_FILE_BYTES} from '../telegram/worker-core.mjs';
+import {matchingChoice} from '../telegram/worker.mjs';
+
+test('typed Rentals safely selects the existing Rental records choice',()=>{
+  const action={id:'save-rental-records'};
+  const clarification={data:{choices:['Travel','Rental records'],choice_actions:[{id:'save-travel'},action]}};
+  assert.equal(matchingChoice(clarification,'Rentals'),action);
+  assert.equal(matchingChoice(clarification,'Unknown'),null);
+});
 
 test('validates PDF JPEG and PNG signatures and rejects mismatches', () => {
   assert.equal(detectSupportedFile(Buffer.from('%PDF-1.7 test')), 'application/pdf');
@@ -29,5 +37,25 @@ test('terminal attachment errors are not retried', async () => {
   let failure;
   const adapter={claimUpdates:async()=>[{id:'u',lease_token:'l'}],handleUpdate:async()=>{throw new Error('mime mismatch')},completeUpdate:async()=>assert.fail(),failUpdate:async(...x)=>failure=x,claimOutbox:async()=>[],send:async()=>{},completeOutbox:async()=>{},failOutbox:async()=>{}};
   await processTransportCycle(adapter);
-  assert.deepEqual(failure,['u','l',false,'invalid_attachment']);
+  assert.deepEqual(failure.slice(0,4),['u','l',false,'invalid_attachment']);
+  assert.match(failure[4].message,/mime mismatch/);
+});
+
+test('retryable attachment failure retains the original error for durable recovery',async()=>{
+  let failure;
+  const original=Object.assign(new Error('truncated download'),{attachmentID:'a1',category:'truncated'});
+  const adapter={claimUpdates:async()=>[{id:'u',lease_token:'l'}],handleUpdate:async()=>{throw original},completeUpdate:async()=>assert.fail(),failUpdate:async(...args)=>{failure=args},claimOutbox:async()=>[],send:async()=>{},completeOutbox:async()=>{},failOutbox:async()=>{}};
+  const result=await processTransportCycle(adapter);
+  assert.equal(result.retrying,1);
+  assert.equal(result.failed,0);
+  assert.equal(failure[4],original);
+});
+
+test('job bridge runs before claims and a reply timeout never replays the action',async()=>{
+  const calls=[];
+  const adapter={beforeCycle:async()=>calls.push('jobs'),claimUpdates:async()=>{calls.push('updates');return[]},completeUpdate:async()=>assert.fail(),failUpdate:async()=>assert.fail(),claimOutbox:async()=>[{id:'reply-1',lease_token:'lease-1'}],send:async()=>{throw new Error('Telegram timeout')},completeOutbox:async()=>assert.fail(),failOutbox:async(id,lease,retryable)=>calls.push(['retry',id,lease,retryable])};
+  const result=await processTransportCycle(adapter);
+  assert.deepEqual(calls.slice(0,2),['jobs','updates']);
+  assert.deepEqual(calls[2],['retry','reply-1','lease-1',true]);
+  assert.equal(result.updates,0);
 });

@@ -12,7 +12,7 @@ export function detectSupportedFile(bytes) {
 
 export function safeTelegramFailure(error) {
   const value = String(error?.code || error?.message || '').toLowerCase();
-  if (/unsupported|mismatch|too large|truncated/.test(value)) return {outcome: 'invalid_attachment', retryable: false};
+  if (/unsupported|mismatch|too large/.test(value)) return {outcome: 'invalid_attachment', retryable: false};
   if (/not authorised|permission|revoked/.test(value)) return {outcome: 'permission_denied', retryable: false};
   return {outcome: 'service_unavailable', retryable: true};
 }
@@ -21,6 +21,7 @@ export function checksum(bytes) { return createHash('sha256').update(bytes).dige
 
 export async function processTransportCycle(adapter, {batchSize = 4} = {}) {
   const totals = {updates: 0, completed: 0, retrying: 0, failed: 0, outbound: 0, sent: 0};
+  if (adapter.beforeCycle) await adapter.beforeCycle();
   const updates = await adapter.claimUpdates(batchSize);
   totals.updates = updates.length;
   for (const update of updates) {
@@ -30,7 +31,7 @@ export async function processTransportCycle(adapter, {batchSize = 4} = {}) {
       totals.completed++;
     } catch (error) {
       const failure = safeTelegramFailure(error);
-      await adapter.failUpdate(update.id, update.lease_token, failure.retryable, failure.outcome);
+      await adapter.failUpdate(update.id, update.lease_token, failure.retryable, failure.outcome, error, update);
       failure.retryable ? totals.retrying++ : totals.failed++;
     }
   }

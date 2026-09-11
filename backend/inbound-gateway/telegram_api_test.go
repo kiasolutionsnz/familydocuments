@@ -59,6 +59,27 @@ func TestTelegramWebhookPersistsPrivateUpdatesAndRejectsGroups(t *testing.T) {
 	}
 }
 
+func TestTelegramWebhookRetainsSafeAttachmentIdentifiers(t *testing.T) {
+	var body map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		jsonReply(w, http.StatusOK, map[string]any{"accepted": true})
+	}))
+	defer upstream.Close()
+	secret := strings.Repeat("a", 32)
+	h := newTelegramAPI("https://familydocuments.app", upstream.URL, "test-bot", "FamilyDocumentsTestBot", secret, "", accessTokenVerifier{secret: []byte("jwt")}, nil)
+	payload := `{"update_id":43,"message":{"message_id":8,"chat":{"id":123,"type":"private"},"from":{"id":123},"document":{"file_id":"opaque-file","file_unique_id":"stable-file","file_name":"synthetic.pdf","mime_type":"application/pdf","file_size":123}}}`
+	req := httptest.NewRequest(http.MethodPost, "/integrations/telegram/webhook", strings.NewReader(payload))
+	req.Header.Set("X-Telegram-Bot-Api-Secret-Token", secret)
+	response := httptest.NewRecorder()
+	h.webhook(response, req)
+	envelope := body["envelope"].(map[string]any)
+	document := envelope["message"].(map[string]any)["document"].(map[string]any)
+	if response.Code != http.StatusOK || document["file_unique_id"] != "stable-file" {
+		t.Fatalf("safe durable attachment metadata was lost: code=%d document=%#v", response.Code, document)
+	}
+}
+
 func TestTelegramConnectStoresOnlyHashAndReturnsDeepLink(t *testing.T) {
 	var body map[string]any
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

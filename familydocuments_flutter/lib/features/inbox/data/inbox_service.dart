@@ -48,9 +48,11 @@ class InboxService {
     int limit = 30,
     int offset = 0,
   }) async {
+    final telegramOnly = filter == InboxFilter.telegram;
+    final effectiveFilter = telegramOnly ? InboxFilter.all : filter;
     final response = await _post('/rest/rpc/inbox_workspace', {
       'search_query': query.trim().isEmpty ? null : query.trim(),
-      'state_filter': filter.name,
+      'state_filter': effectiveFilter.name,
       'result_limit': limit,
       'result_offset': offset,
     });
@@ -60,7 +62,50 @@ class InboxService {
       );
     }
     try {
-      return InboxData.fromJson(jsonDecode(response.body) as Map);
+      final email = InboxData.fromJson(jsonDecode(response.body) as Map);
+      if (filter == InboxFilter.links) {
+        return email;
+      }
+      final telegramResponse = await _post(
+        '/rest/rpc/telegram_inbox_workspace',
+        {
+          'search_query': query.trim().isEmpty ? null : query.trim(),
+          'state_filter': effectiveFilter.name,
+          'result_limit': limit,
+          'result_offset': offset,
+        },
+      );
+      if (telegramResponse.statusCode != 200) {
+        if (telegramOnly) {
+          throw const InboxServiceException(
+            'Inbox could not be loaded. Try again.',
+          );
+        }
+        return email;
+      }
+      final telegram = InboxData.fromJson(
+        jsonDecode(telegramResponse.body) as Map,
+      );
+      if (telegramOnly) {
+        return InboxData(
+          canEdit: telegram.canEdit,
+          total: telegram.total,
+          items: telegram.items,
+          categories: email.categories,
+          tags: email.tags,
+          linkCategories: email.linkCategories,
+        );
+      }
+      final items = [...email.items, ...telegram.items]
+        ..sort((a, b) => b.receivedAt.compareTo(a.receivedAt));
+      return InboxData(
+        canEdit: email.canEdit,
+        total: email.total + telegram.total,
+        items: items.take(limit).toList(),
+        categories: email.categories,
+        tags: email.tags,
+        linkCategories: email.linkCategories,
+      );
     } catch (_) {
       throw const InboxServiceException(
         'Inbox returned an unexpected response.',
@@ -69,9 +114,14 @@ class InboxService {
   }
 
   Future<InboxMessage> detail(String id) async {
-    final response = await _post('/rest/rpc/inbox_message_detail', {
+    var response = await _post('/rest/rpc/inbox_message_detail', {
       'message': id,
     });
+    if ({403, 404}.contains(response.statusCode)) {
+      response = await _post('/rest/rpc/telegram_inbox_message_detail', {
+        'message': id,
+      });
+    }
     if ({401, 403, 404}.contains(response.statusCode)) {
       throw const InboxServiceException(
         'You no longer have access to this item.',
@@ -85,11 +135,18 @@ class InboxService {
   }
 
   Future<void> setReviewState(InboxMessage message, String state) async {
-    final response = await _post('/rest/rpc/set_inbox_review_state', {
+    var response = await _post('/rest/rpc/set_inbox_review_state', {
       'message': message.id,
       'new_state': state,
       'expected_updated_at': message.updatedAt.toUtc().toIso8601String(),
     });
+    if ({403, 404}.contains(response.statusCode)) {
+      response = await _post('/rest/rpc/set_telegram_inbox_review_state', {
+        'message': message.id,
+        'new_state': state,
+        'expected_updated_at': message.updatedAt.toUtc().toIso8601String(),
+      });
+    }
     if ({401, 403, 404}.contains(response.statusCode)) {
       throw const InboxServiceException(
         'You cannot change this message.',
