@@ -14,6 +14,7 @@ class ConversationTranscript extends StatelessWidget {
     this.activeClarificationId,
     this.onClarificationOption,
     this.onCancelClarification,
+    this.onMoreCategories,
     this.scrollController,
   });
 
@@ -26,6 +27,7 @@ class ConversationTranscript extends StatelessWidget {
   final String? activeClarificationId;
   final ValueChanged<ConversationClarificationOption>? onClarificationOption;
   final VoidCallback? onCancelClarification;
+  final VoidCallback? onMoreCategories;
   final ScrollController? scrollController;
 
   @override
@@ -54,6 +56,7 @@ class ConversationTranscript extends StatelessWidget {
               message.clarificationId == activeClarificationId,
           onClarificationOption: onClarificationOption,
           onCancelClarification: onCancelClarification,
+          onMoreCategories: onMoreCategories,
         );
       },
     ),
@@ -70,6 +73,7 @@ class _MessageBubble extends StatelessWidget {
     required this.clarificationActive,
     required this.onClarificationOption,
     required this.onCancelClarification,
+    required this.onMoreCategories,
   });
 
   final ConversationMessage message;
@@ -80,6 +84,7 @@ class _MessageBubble extends StatelessWidget {
   final bool clarificationActive;
   final ValueChanged<ConversationClarificationOption>? onClarificationOption;
   final VoidCallback? onCancelClarification;
+  final VoidCallback? onMoreCategories;
 
   @override
   Widget build(BuildContext context) {
@@ -254,6 +259,12 @@ class _MessageBubble extends StatelessWidget {
                             : () => onClarificationOption!(option),
                       ),
                     ),
+                    if (message.offersMoreCategories)
+                      OutlinedButton(
+                        key: const ValueKey('more-conversation-categories'),
+                        onPressed: onMoreCategories,
+                        child: const Text('More categories'),
+                      ),
                     OutlinedButton(
                       onPressed: onCancelClarification,
                       child: const Text('Cancel'),

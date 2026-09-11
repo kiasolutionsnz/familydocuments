@@ -112,3 +112,45 @@ func TestTelegramConfigurationRequiresCompleteSecrets(t *testing.T) {
 		t.Fatal("short webhook secret was accepted")
 	}
 }
+
+func TestTelegramBrowserPreflightDoesNotRequireAuthentication(t *testing.T) {
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+	}))
+	defer upstream.Close()
+	h := newTelegramAPI("https://familydocuments.app", upstream.URL, "test-bot", "FamilyDocumentsTestBot", strings.Repeat("s", 32), "", accessTokenVerifier{secret: []byte("jwt")}, nil)
+	mux := http.NewServeMux()
+	h.register(mux)
+	for _, path := range []string{"status", "connect", "disconnect"} {
+		req := httptest.NewRequest(http.MethodOptions, "/integrations/telegram/"+path, nil)
+		req.Header.Set("Origin", "https://familydocuments.app")
+		req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+		req.Header.Set("Access-Control-Request-Headers", "authorization,content-type")
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, req)
+		if response.Code != http.StatusNoContent || response.Header().Get("Access-Control-Allow-Origin") != "https://familydocuments.app" {
+			t.Fatalf("%s preflight failed: code=%d headers=%v", path, response.Code, response.Header())
+		}
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("preflight reached the upstream RPC: calls=%d", calls.Load())
+	}
+}
+
+func TestTelegramStatusPassesThroughStableTypedState(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jsonReply(w, http.StatusOK, map[string]any{"state": "not_connected", "selection_required": false, "family_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "family_name": "Test Family", "display_name": nil, "username": nil, "connected_at": nil, "link_expires_at": nil})
+	}))
+	defer upstream.Close()
+	secret := "correct"
+	h := newTelegramAPI("https://familydocuments.app", upstream.URL, "test-bot", "FamilyDocumentsTestBot", strings.Repeat("s", 32), "", accessTokenVerifier{secret: []byte(secret), issuer: "supabase", audience: "authenticated"}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/integrations/telegram/status", strings.NewReader(`{}`))
+	req.Header.Set("Origin", "https://familydocuments.app")
+	req.Header.Set("Authorization", "Bearer "+conversationTestToken(secret, time.Now().Add(time.Hour)))
+	response := httptest.NewRecorder()
+	h.status(response, req)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"state":"not_connected"`) {
+		t.Fatalf("stable status was not returned: code=%d body=%s", response.Code, response.Body.String())
+	}
+}

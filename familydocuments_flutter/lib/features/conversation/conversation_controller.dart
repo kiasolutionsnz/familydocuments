@@ -389,15 +389,9 @@ class ConversationController extends ChangeNotifier {
     if (hasAttachment) {
       if (intent.type == HomeIntentType.saveAttachment &&
           (intent.destination == null || intent.destination!.trim().isEmpty)) {
-        return ConversationAction(
-          id: _newId('action'),
-          type: ConversationActionType.requestClarification,
-          parameters: {
-            'question': 'Which category should I save this document in?',
-            'missing_parameter': 'document_category',
-            'attachment_id': attachmentId ?? 'current-attachment',
-            'tags': <String>[],
-          },
+        return _attachmentClarification(
+          attachmentId ?? 'current-attachment',
+          attachmentLabel,
         );
       }
       return switch (intent.type) {
@@ -755,12 +749,22 @@ class ConversationController extends ChangeNotifier {
       }
       if (missing == 'document_category' &&
           pending.parameters['attachment_id'] != null) {
+        final category = answer
+            .trim()
+            .replaceFirst(
+              RegExp(
+                r'^(?:save|put|add)(?: this)? in\s+',
+                caseSensitive: false,
+              ),
+              '',
+            )
+            .trim();
         return ConversationAction(
           id: _newId('action'),
           type: ConversationActionType.saveDocument,
           parameters: {
             'attachment_id': pending.parameters['attachment_id'],
-            'category_name': answer.trim(),
+            'category_name': category,
             'tags': pending.parameters['tags'] ?? const <String>[],
           },
         );
@@ -946,6 +950,7 @@ class ConversationController extends ChangeNotifier {
   }
 
   Future<void> _route(ConversationAction action) async {
+    action = await _prepareCategoryClarification(action);
     action.validate();
     final outcome = await _repository.submitAction(
       _conversationId!,
@@ -953,6 +958,110 @@ class ConversationController extends ChangeNotifier {
       action.id,
     );
     await _applyOutcome(outcome);
+  }
+
+  Future<ConversationAction> _prepareCategoryClarification(
+    ConversationAction action,
+  ) async {
+    if (action.type != ConversationActionType.requestClarification ||
+        action.parameters['missing_parameter'] != 'document_category') {
+      return action;
+    }
+    final attachmentId = action.parameters['attachment_id']?.toString();
+    if (attachmentId == null || _conversationId == null) return action;
+    ConversationCategoryOptions options;
+    try {
+      options = await _repository.categoryOptions(
+        conversationId: _conversationId!,
+        attachmentId: attachmentId,
+        fileName: action.parameters['attachment_label']?.toString() ?? '',
+      );
+    } on ConversationServiceException {
+      return action;
+    }
+    final categoryActions = options.categories
+        .take(2)
+        .map(
+          (category) => ConversationAction(
+            id: _newId('action'),
+            type: ConversationActionType.saveDocument,
+            parameters: {
+              'attachment_id': attachmentId,
+              'category_name': category.name,
+              'tags': action.parameters['tags'] ?? const <String>[],
+            },
+          ),
+        );
+    final readAction = ConversationAction(
+      id: _newId('action'),
+      type: ConversationActionType.requestDocumentOcr,
+      parameters: {'attachment_id': attachmentId, 'mode': 'document'},
+    );
+    return ConversationAction(
+      id: action.id,
+      type: action.type,
+      parameters: {
+        ...action.parameters,
+        'choices': [
+          ...options.categories.take(2).map((category) => category.name),
+          'Read document',
+        ],
+        'choice_actions': [
+          ...categoryActions.map((item) => item.toJson()),
+          readAction.toJson(),
+        ],
+      },
+    );
+  }
+
+  Future<ConversationCategoryOptions> categoryOptionsForClarification() async {
+    final pending = _pendingClarification;
+    final attachmentId = pending?.parameters['attachment_id']?.toString();
+    if (pending == null ||
+        pending.parameters['missing_parameter'] != 'document_category' ||
+        attachmentId == null ||
+        _conversationId == null) {
+      throw const ConversationServiceException(
+        'That category choice is no longer available.',
+      );
+    }
+    return _repository.categoryOptions(
+      conversationId: _conversationId!,
+      attachmentId: attachmentId,
+      fileName: pending.parameters['attachment_label']?.toString() ?? '',
+    );
+  }
+
+  Future<void> createCategoryAndSave(String name) async {
+    final pending = _pendingClarification;
+    final clarificationId = _pendingClarificationId;
+    final attachmentId = pending?.parameters['attachment_id']?.toString();
+    if (_loading ||
+        pending == null ||
+        clarificationId == null ||
+        attachmentId == null) {
+      return;
+    }
+    _setLoading(true);
+    try {
+      await _supersedeClarification();
+      await _route(
+        ConversationAction(
+          id: _newId('action'),
+          type: ConversationActionType.saveDocument,
+          parameters: {
+            'attachment_id': attachmentId,
+            'category_name': name.trim(),
+            'tags': pending.parameters['tags'] ?? const <String>[],
+            'create_category': true,
+          },
+        ),
+      );
+    } on ConversationServiceException catch (error) {
+      _showTransportFailure(error.message);
+    } finally {
+      _setLoading(false);
+    }
   }
 
   Future<void> _applyOutcome(ConversationAuthoritativeOutcome outcome) async {

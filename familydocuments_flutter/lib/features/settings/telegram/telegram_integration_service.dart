@@ -10,31 +10,65 @@ class TelegramIntegrationException implements Exception {
   final String message;
 }
 
+enum TelegramConnectionState {
+  notConnected,
+  linkPending,
+  connected,
+  disconnected,
+  membershipRevoked,
+}
+
 class TelegramConnection {
   const TelegramConnection({
-    required this.connected,
+    required bool connected,
     required this.selectionRequired,
+    TelegramConnectionState? state,
     this.familyId,
     this.familyName,
     this.displayName,
     this.username,
     this.connectedAt,
-  });
-  final bool connected;
+    this.linkExpiresAt,
+  }) : state =
+           state ??
+           (connected
+               ? TelegramConnectionState.connected
+               : TelegramConnectionState.notConnected);
+  final TelegramConnectionState state;
   final bool selectionRequired;
   final String? familyId, familyName, displayName, username;
   final DateTime? connectedAt;
+  final DateTime? linkExpiresAt;
+  bool get connected => state == TelegramConnectionState.connected;
 
-  factory TelegramConnection.fromJson(Map<String, dynamic> value) =>
-      TelegramConnection(
-        connected: value['connected'] == true,
-        selectionRequired: value['selection_required'] == true,
-        familyId: value['family_id']?.toString(),
-        familyName: value['family_name']?.toString(),
-        displayName: value['display_name']?.toString(),
-        username: value['username']?.toString(),
-        connectedAt: DateTime.tryParse(value['connected_at']?.toString() ?? ''),
-      );
+  factory TelegramConnection.fromJson(Map<String, dynamic> value) {
+    final rawState = value['state']?.toString();
+    final state = switch (rawState) {
+      'not_connected' => TelegramConnectionState.notConnected,
+      'link_pending' => TelegramConnectionState.linkPending,
+      'connected' => TelegramConnectionState.connected,
+      'disconnected' => TelegramConnectionState.disconnected,
+      'membership_revoked' => TelegramConnectionState.membershipRevoked,
+      null =>
+        value['connected'] == true
+            ? TelegramConnectionState.connected
+            : TelegramConnectionState.notConnected,
+      _ => throw const FormatException('Unknown Telegram connection state'),
+    };
+    return TelegramConnection(
+      connected: state == TelegramConnectionState.connected,
+      state: state,
+      selectionRequired: value['selection_required'] == true,
+      familyId: value['family_id']?.toString(),
+      familyName: value['family_name']?.toString(),
+      displayName: value['display_name']?.toString(),
+      username: value['username']?.toString(),
+      connectedAt: DateTime.tryParse(value['connected_at']?.toString() ?? ''),
+      linkExpiresAt: DateTime.tryParse(
+        value['link_expires_at']?.toString() ?? '',
+      ),
+    );
+  }
 }
 
 class TelegramConnectLink {
@@ -93,9 +127,21 @@ class TelegramIntegrationService implements TelegramIntegrationRepository {
   }
 
   @override
-  Future<TelegramConnection> status() async => TelegramConnection.fromJson(
-    await _post('/integrations/telegram/status', const {}),
-  );
+  Future<TelegramConnection> status() async {
+    try {
+      return TelegramConnection.fromJson(
+        await _post('/integrations/telegram/status', const {}),
+      );
+    } on TelegramIntegrationException {
+      rethrow;
+    } on AuthException {
+      rethrow;
+    } catch (_) {
+      throw const TelegramIntegrationException(
+        'Telegram returned an unexpected status. Try again.',
+      );
+    }
+  }
 
   @override
   Future<TelegramConnectLink> connect(String familyId) async {

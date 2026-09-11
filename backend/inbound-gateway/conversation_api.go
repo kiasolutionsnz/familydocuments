@@ -130,6 +130,7 @@ func (h *trustedConversationAPI) register(mux *http.ServeMux) {
 	mux.HandleFunc("/conversation/decision", h.decision)
 	mux.HandleFunc("/conversation/clarification", h.clarification)
 	mux.HandleFunc("/conversation/attachment", h.attachment)
+	mux.HandleFunc("/conversation/categories", h.categories)
 }
 
 func (h *trustedConversationAPI) prepare(w http.ResponseWriter, r *http.Request, limit int64) (accessIdentity, bool) {
@@ -287,6 +288,23 @@ func (h *trustedConversationAPI) attachment(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	h.proxyTrustedRPC(w, identity, "stage_conversation_attachment", map[string]any{"conversation": input.ConversationID, "file_name": input.FileName, "source_mime_type": input.MimeType, "content_base64": input.ContentBase64})
+}
+
+func (h *trustedConversationAPI) categories(w http.ResponseWriter, r *http.Request) {
+	identity, ok := h.prepare(w, r, 2048)
+	if !ok {
+		return
+	}
+	var input struct {
+		ConversationID string `json:"conversation_id"`
+		AttachmentID   string `json:"attachment_id"`
+		FileName       string `json:"file_name"`
+	}
+	if decodeRequestStrict(r.Body, &input) != nil || !uuidPattern.MatchString(input.ConversationID) || !uuidPattern.MatchString(input.AttachmentID) || len(input.FileName) > 255 {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		return
+	}
+	h.proxyTrustedRPC(w, identity, "conversation_category_options", map[string]any{"conversation": input.ConversationID, "attachment": input.AttachmentID, "file_name": input.FileName})
 }
 
 func decodeRequestStrict(reader io.Reader, target any) error {

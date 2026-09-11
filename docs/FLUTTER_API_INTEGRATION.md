@@ -222,3 +222,21 @@ the approved server-side environment. `scripts/telegram-bot.ps1` supports
 `get-me`, webhook registration/status/deletion and command registration without
 printing the token or webhook secret. Automated and disposable tests must set
 `TELEGRAM_API_BASE_URL` to the fake Bot API and must not contact Telegram.
+
+Migration 051 makes `POST /integrations/telegram/status` a stable, read-only
+browser API. Its CORS preflight is handled before authentication; the POST still
+requires a valid access token. The Family-scoped RPC returns `not_connected`,
+`link_pending`, `connected`, `disconnected` or `membership_revoked`, plus only
+safe optional display metadata. A status read never creates a link token or an
+identity record. An expired pending link is reported as not connected (or as
+historically disconnected when a revoked identity exists).
+
+The same migration adds the read-only
+`POST /conversation/categories` route for attachment clarification. It verifies
+the conversation and staged attachment against the authenticated active Family,
+returns real categories and role-derived save/create capabilities, and ranks a
+matching category such as Finance for bill/invoice filenames ahead of recently
+used categories. Flutter shows bounded category choices and loads the full list
+only when the user selects More categories. Saving a selected category uses the
+existing trusted action executor and never starts OCR; explicit Read document
+continues to enqueue the existing durable OCR workflow.

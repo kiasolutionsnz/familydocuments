@@ -592,6 +592,15 @@ class ConversationMessage {
 
   String? get clarificationId => data['clarification_id']?.toString();
 
+  bool get offersMoreCategories {
+    final action = data['action'];
+    if (action is! Map) return false;
+    final parameters = action['parameters'];
+    return parameters is Map &&
+        parameters['missing_parameter'] == 'document_category' &&
+        parameters['attachment_id'] != null;
+  }
+
   Map<String, dynamic> toData() => {
     ...data,
     if (suggestions.isNotEmpty)

@@ -221,4 +221,47 @@ void main() {
     expect(find.text('Doctor appointment'), findsOneWidget);
     expect(find.text('2027-01-20 at 14:00:00'), findsOneWidget);
   });
+
+  testWidgets('document category clarification exposes More categories', (
+    tester,
+  ) async {
+    var opened = false;
+    const clarificationId = '11111111-1111-4111-8111-111111111111';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConversationTranscript(
+          messages: [
+            message(
+              'category-clarification',
+              ConversationRole.assistant,
+              ConversationMessageKind.clarification,
+              'Which category should I use?',
+              data: const {
+                'clarification_id': clarificationId,
+                'action': {
+                  'id': 'category-action-1234',
+                  'type': 'request_clarification',
+                  'version': 1,
+                  'parameters': {
+                    'question': 'Which category should I use?',
+                    'missing_parameter': 'document_category',
+                    'attachment_id': '22222222-2222-4222-8222-222222222222',
+                  },
+                },
+              },
+            ),
+          ],
+          loading: false,
+          confirmation: null,
+          activeClarificationId: clarificationId,
+          onConfirm: () {},
+          onCancelConfirmation: () {},
+          onSuggestion: (_) {},
+          onMoreCategories: () => opened = true,
+        ),
+      ),
+    );
+    await tester.tap(find.text('More categories'));
+    expect(opened, isTrue);
+  });
 }

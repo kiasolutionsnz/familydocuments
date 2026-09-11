@@ -30,6 +30,26 @@ func TestAccessTokenVerifierRejectsMalformedForgedAndExpiredTokens(t *testing.T)
 	}
 }
 
+func TestConversationCategoriesUsesAuthenticatedScopedRPC(t *testing.T) {
+	var path string
+	var body map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		jsonReply(w, http.StatusOK, map[string]any{"can_save": true, "can_create": true, "categories": []any{map[string]any{"id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "name": "Finance", "relevant": true}}})
+	}))
+	defer upstream.Close()
+	secret := "correct"
+	h := newTrustedConversationAPI("https://familydocuments.app", upstream.URL, accessTokenVerifier{secret: []byte(secret), issuer: "supabase", audience: "authenticated"}, []byte("proposal"), nil)
+	req := httptest.NewRequest(http.MethodPost, "/conversation/categories", strings.NewReader(`{"conversation_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","attachment_id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","file_name":"synthetic-bill.pdf"}`))
+	req.Header.Set("Authorization", "Bearer "+conversationTestToken(secret, time.Now().Add(time.Hour)))
+	response := httptest.NewRecorder()
+	h.categories(response, req)
+	if response.Code != http.StatusOK || path != "/rpc/conversation_category_options" || body["conversation"] != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" {
+		t.Fatalf("category options were not scoped through the trusted RPC: code=%d path=%q body=%#v", response.Code, path, body)
+	}
+}
+
 func TestInterpreterRejectsInvalidJWTBeforeRateLimitOrModel(t *testing.T) {
 	var upstreamCalls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { upstreamCalls.Add(1) }))

@@ -272,4 +272,43 @@ void main() {
       ]);
     },
   );
+
+  test(
+    'category options decode only scoped real categories and permissions',
+    () async {
+      final service = ConversationService(
+        FakeAuth(),
+        client: FakeClient((request, body) async {
+          expect(request.url.path, '/conversation/categories');
+          final payload = jsonDecode(body) as Map<String, dynamic>;
+          expect(
+            payload['attachment_id'],
+            'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          );
+          return http.Response(
+            jsonEncode({
+              'can_save': false,
+              'can_create': false,
+              'categories': [
+                {
+                  'id': 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+                  'name': 'Finance',
+                  'relevant': true,
+                },
+              ],
+            }),
+            200,
+          );
+        }),
+      );
+      final result = await service.categoryOptions(
+        conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        attachmentId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        fileName: 'synthetic-bill.pdf',
+      );
+      expect(result.categories.single.name, 'Finance');
+      expect(result.canSave, isFalse);
+      expect(result.canCreate, isFalse);
+    },
+  );
 }

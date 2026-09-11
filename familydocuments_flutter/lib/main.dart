@@ -192,6 +192,31 @@ class _AppState extends State<FamilyDocumentsApp> {
     await conversationController.newConversation();
   }
 
+  Future<void> _showConversationCategories() async {
+    final context = navigatorKey.currentContext;
+    if (context == null) return;
+    try {
+      final options = await conversationController
+          .categoryOptionsForClarification();
+      if (!context.mounted) return;
+      final selection = await showDialog<_CategoryPickerResult>(
+        context: context,
+        builder: (_) => _ConversationCategoryDialog(options: options),
+      );
+      if (selection == null) return;
+      if (selection.create) {
+        await conversationController.createCategoryAndSave(selection.name);
+      } else {
+        await conversationController.submit(selection.name);
+      }
+    } on ConversationServiceException catch (failure) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(failure.message)));
+      }
+    }
+  }
+
   Future<ConversationExecutionResult> _executeConversationAction(
     ConversationAction action,
   ) async {
@@ -1696,6 +1721,7 @@ class _AppState extends State<FamilyDocumentsApp> {
                 conversationController.chooseClarificationOption,
             onCancelConversationClarification:
                 conversationController.cancelClarification,
+            onMoreConversationCategories: _showConversationCategories,
             query: query,
             busy: busy,
             message: message,
@@ -1891,6 +1917,7 @@ class Shell extends StatelessWidget {
     required this.onConversationSuggestion,
     required this.onConversationClarificationOption,
     required this.onCancelConversationClarification,
+    required this.onMoreConversationCategories,
     required this.query,
     required this.busy,
     required this.message,
@@ -1948,6 +1975,7 @@ class Shell extends StatelessWidget {
   final Future<void> Function(ConversationClarificationOption)
   onConversationClarificationOption;
   final Future<void> Function() onCancelConversationClarification;
+  final Future<void> Function() onMoreConversationCategories;
   final TextEditingController query;
   final bool busy;
   final String? message;
@@ -2026,6 +2054,7 @@ class Shell extends StatelessWidget {
         onConversationSuggestion: onConversationSuggestion,
         onConversationClarificationOption: onConversationClarificationOption,
         onCancelConversationClarification: onCancelConversationClarification,
+        onMoreConversationCategories: onMoreConversationCategories,
         query: query,
         busy: busy,
         message: message,
@@ -2281,6 +2310,7 @@ class Home extends StatelessWidget {
     required this.onConversationSuggestion,
     required this.onConversationClarificationOption,
     required this.onCancelConversationClarification,
+    required this.onMoreConversationCategories,
     required this.query,
     required this.busy,
     required this.message,
@@ -2320,6 +2350,7 @@ class Home extends StatelessWidget {
   final Future<void> Function(ConversationClarificationOption)
   onConversationClarificationOption;
   final Future<void> Function() onCancelConversationClarification;
+  final Future<void> Function() onMoreConversationCategories;
   final TextEditingController query;
   final bool busy;
   final String? message;
@@ -2364,6 +2395,7 @@ class Home extends StatelessWidget {
           onSuggestion: onConversationSuggestion,
           onClarificationOption: onConversationClarificationOption,
           onCancelClarification: onCancelConversationClarification,
+          onMoreCategories: onMoreConversationCategories,
           onSend: onSend,
           onUpload: onUpload,
           onClearAttachment: onClearAttachment,
@@ -2710,6 +2742,7 @@ class _ActiveConversation extends StatefulWidget {
     required this.onSuggestion,
     required this.onClarificationOption,
     required this.onCancelClarification,
+    required this.onMoreCategories,
     required this.onSend,
     required this.onUpload,
     required this.onClearAttachment,
@@ -2728,6 +2761,7 @@ class _ActiveConversation extends StatefulWidget {
   final Future<void> Function(ConversationClarificationOption)
   onClarificationOption;
   final Future<void> Function() onCancelClarification;
+  final Future<void> Function() onMoreCategories;
   final VoidCallback onSend, onUpload, onClearAttachment;
 
   @override
@@ -2790,6 +2824,7 @@ class _ActiveConversationState extends State<_ActiveConversation> {
                 onSuggestion: widget.onSuggestion,
                 onClarificationOption: widget.onClarificationOption,
                 onCancelClarification: widget.onCancelClarification,
+                onMoreCategories: widget.onMoreCategories,
                 scrollController: scroll,
               ),
             ),
@@ -2824,6 +2859,101 @@ class _ActiveConversationState extends State<_ActiveConversation> {
       ),
     ),
   );
+}
+
+class _CategoryPickerResult {
+  const _CategoryPickerResult(this.name, {this.create = false});
+  final String name;
+  final bool create;
+}
+
+class _ConversationCategoryDialog extends StatefulWidget {
+  const _ConversationCategoryDialog({required this.options});
+  final ConversationCategoryOptions options;
+
+  @override
+  State<_ConversationCategoryDialog> createState() =>
+      _ConversationCategoryDialogState();
+}
+
+class _ConversationCategoryDialogState
+    extends State<_ConversationCategoryDialog> {
+  final search = TextEditingController();
+
+  @override
+  void dispose() {
+    search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = search.text.trim().toLowerCase();
+    final categories = widget.options.categories
+        .where((category) => category.name.toLowerCase().contains(query))
+        .toList();
+    return AlertDialog(
+      key: const ValueKey('conversation-category-dialog'),
+      title: const Text('Choose a category'),
+      content: SizedBox(
+        width: 480,
+        height: 420,
+        child: Column(
+          children: [
+            TextField(
+              key: const ValueKey('conversation-category-search'),
+              controller: search,
+              autofocus: true,
+              decoration: const InputDecoration(
+                hintText: 'Search categories',
+                prefixIcon: Icon(Icons.search),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: categories.isEmpty
+                  ? const Center(child: Text('No categories available.'))
+                  : ListView.builder(
+                      itemCount: categories.length,
+                      itemBuilder: (context, index) {
+                        final category = categories[index];
+                        return ListTile(
+                          title: Text(category.name),
+                          enabled: widget.options.canSave,
+                          onTap: widget.options.canSave
+                              ? () => Navigator.pop(
+                                  context,
+                                  _CategoryPickerResult(category.name),
+                                )
+                              : null,
+                        );
+                      },
+                    ),
+            ),
+            if (!widget.options.canSave)
+              const Text('You can view categories but cannot save documents.'),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        if (widget.options.canCreate)
+          TextButton(
+            onPressed: search.text.trim().isEmpty
+                ? null
+                : () => Navigator.pop(
+                    context,
+                    _CategoryPickerResult(search.text.trim(), create: true),
+                  ),
+            child: const Text('Create category'),
+          ),
+      ],
+    );
+  }
 }
 
 class _InitialConversation extends StatelessWidget {

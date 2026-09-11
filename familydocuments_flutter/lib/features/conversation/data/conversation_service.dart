@@ -44,6 +44,23 @@ class ActiveFamilyWorkspace {
   final List<ActiveFamilyChoice> families;
 }
 
+class ConversationCategoryOption {
+  const ConversationCategoryOption({required this.id, required this.name});
+  final String id;
+  final String name;
+}
+
+class ConversationCategoryOptions {
+  const ConversationCategoryOptions({
+    required this.categories,
+    required this.canSave,
+    required this.canCreate,
+  });
+  final List<ConversationCategoryOption> categories;
+  final bool canSave;
+  final bool canCreate;
+}
+
 abstract class ConversationRepository {
   Future<ConversationSnapshot> restore([String? conversationId]);
   Future<String> start(String requestId);
@@ -81,6 +98,11 @@ abstract class ConversationRepository {
   Future<void> delete(String conversationId);
   Future<ActiveFamilyWorkspace> activeFamilyWorkspace();
   Future<void> selectActiveFamily(String familyId);
+  Future<ConversationCategoryOptions> categoryOptions({
+    required String conversationId,
+    required String attachmentId,
+    required String fileName,
+  });
 }
 
 /// Used only by injected widget/fake-service harnesses. Production constructs
@@ -407,6 +429,21 @@ class MemoryConversationRepository implements ConversationRepository {
   Future<void> selectActiveFamily(String familyId) async {}
 
   @override
+  Future<ConversationCategoryOptions> categoryOptions({
+    required String conversationId,
+    required String attachmentId,
+    required String fileName,
+  }) async => const ConversationCategoryOptions(
+    categories: [
+      ConversationCategoryOption(id: 'category-finance', name: 'Finance'),
+      ConversationCategoryOption(id: 'category-rentals', name: 'Rentals'),
+      ConversationCategoryOption(id: 'category-travel', name: 'Travel'),
+    ],
+    canSave: true,
+    canCreate: true,
+  );
+
+  @override
   Future<String> start(String requestId) async {
     id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     messages.clear();
@@ -729,6 +766,48 @@ class ConversationService implements ConversationRepository {
     if (response.statusCode != 200) {
       throw const ConversationServiceException(
         'That Family is no longer available.',
+      );
+    }
+  }
+
+  @override
+  Future<ConversationCategoryOptions> categoryOptions({
+    required String conversationId,
+    required String attachmentId,
+    required String fileName,
+  }) async {
+    final response = await _post('/conversation/categories', {
+      'conversation_id': conversationId,
+      'attachment_id': attachmentId,
+      'file_name': fileName,
+    });
+    if (response.statusCode != 200) {
+      throw const ConversationServiceException(
+        'Categories could not be loaded. Try again.',
+      );
+    }
+    try {
+      final payload = Map<String, dynamic>.from(
+        jsonDecode(response.body) as Map,
+      );
+      final categories = (payload['categories'] as List? ?? const [])
+          .whereType<Map>()
+          .map(
+            (value) => ConversationCategoryOption(
+              id: value['id']?.toString() ?? '',
+              name: value['name']?.toString() ?? '',
+            ),
+          )
+          .where((value) => value.id.isNotEmpty && value.name.isNotEmpty)
+          .toList();
+      return ConversationCategoryOptions(
+        categories: categories,
+        canSave: payload['can_save'] == true,
+        canCreate: payload['can_create'] == true,
+      );
+    } catch (_) {
+      throw const ConversationServiceException(
+        'Categories returned an unexpected response.',
       );
     }
   }

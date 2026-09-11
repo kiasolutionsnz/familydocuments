@@ -15,6 +15,23 @@ class FakeRepository extends MemoryConversationRepository {
   bool expireConfirmation = false;
   final List<Map<String, dynamic>> jobTransitions = [];
   int interpretCalls = 0;
+  ConversationCategoryOptions availableCategories =
+      const ConversationCategoryOptions(
+        categories: [
+          ConversationCategoryOption(id: 'finance', name: 'Finance'),
+          ConversationCategoryOption(id: 'rentals', name: 'Rentals'),
+          ConversationCategoryOption(id: 'travel', name: 'Travel'),
+        ],
+        canSave: true,
+        canCreate: true,
+      );
+
+  @override
+  Future<ConversationCategoryOptions> categoryOptions({
+    required String conversationId,
+    required String attachmentId,
+    required String fileName,
+  }) async => availableCategories;
 
   @override
   Future<ConversationAction> interpret({
@@ -982,6 +999,162 @@ void main() {
         'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab',
       );
       expect(subject.pendingClarificationId, isNull);
+    },
+  );
+
+  test('save this offers real category buttons and reading', () async {
+    final repository = FakeRepository();
+    final subject = controller(repository, RecordingExecutor());
+    await subject.submit(
+      'save this',
+      hasAttachment: true,
+      attachmentLabel: 'synthetic-bill.pdf',
+      attachmentMimeType: 'application/pdf',
+      attachmentBytes: const [37, 80, 68, 70],
+    );
+    final clarification = subject.messages.last;
+    expect(clarification.clarificationOptions.map((item) => item.label), [
+      'Finance',
+      'Rentals',
+      'Read document',
+    ]);
+    expect(clarification.offersMoreCategories, isTrue);
+  });
+
+  test(
+    'typed category and Save in category preserve the staged attachment',
+    () async {
+      for (final answer in ['Travel', 'Save in Travel']) {
+        final repository = FakeRepository();
+        final executor = RecordingExecutor();
+        final subject = controller(repository, executor);
+        await subject.submit(
+          'save this',
+          hasAttachment: true,
+          attachmentLabel: 'synthetic-bill.pdf',
+          attachmentMimeType: 'application/pdf',
+          attachmentBytes: const [37, 80, 68, 70],
+        );
+        await subject.submit(answer);
+        expect(
+          executor.actions.single.type,
+          ConversationActionType.saveDocument,
+        );
+        expect(executor.actions.single.parameters['category_name'], 'Travel');
+        expect(
+          executor.actions.single.parameters['attachment_id'],
+          'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab',
+        );
+      }
+    },
+  );
+
+  test(
+    'More categories restores from the pending attachment after refresh',
+    () async {
+      final repository = FakeRepository();
+      final first = controller(repository, RecordingExecutor());
+      await first.submit(
+        'save this',
+        hasAttachment: true,
+        attachmentLabel: 'synthetic-bill.pdf',
+        attachmentMimeType: 'application/pdf',
+        attachmentBytes: const [37, 80, 68, 70],
+      );
+      final restored = controller(repository, RecordingExecutor());
+      await restored.restore();
+      final options = await restored.categoryOptionsForClarification();
+      expect(options.categories.map((item) => item.name), contains('Travel'));
+      expect(restored.pendingClarificationId, isNotNull);
+    },
+  );
+
+  test(
+    'no-category state retains reading, cancellation and creation routes',
+    () async {
+      final repository = FakeRepository()
+        ..availableCategories = const ConversationCategoryOptions(
+          categories: [],
+          canSave: true,
+          canCreate: true,
+        );
+      final executor = RecordingExecutor();
+      final subject = controller(repository, executor);
+      await subject.submit(
+        'save this',
+        hasAttachment: true,
+        attachmentLabel: 'unknown.pdf',
+        attachmentMimeType: 'application/pdf',
+        attachmentBytes: const [37, 80, 68, 70],
+      );
+      expect(
+        subject.messages.last.clarificationOptions.single.label,
+        'Read document',
+      );
+      expect(subject.messages.last.offersMoreCategories, isTrue);
+      await subject.createCategoryAndSave('Receipts');
+      expect(subject.confirmation, isNotNull);
+      expect(
+        subject.confirmation!.action?.parameters['create_category'],
+        isTrue,
+      );
+
+      final cancelledRepository = FakeRepository();
+      final cancelled = controller(cancelledRepository, RecordingExecutor());
+      await cancelled.submit(
+        'save this',
+        hasAttachment: true,
+        attachmentLabel: 'unknown.pdf',
+        attachmentMimeType: 'application/pdf',
+        attachmentBytes: const [37, 80, 68, 70],
+      );
+      await cancelled.cancelClarification();
+      expect(cancelled.pendingClarificationId, isNull);
+    },
+  );
+
+  test('Read document selection queues OCR and never saves directly', () async {
+    final repository = FakeRepository();
+    final executor = RecordingExecutor();
+    final subject = controller(repository, executor);
+    await subject.submit(
+      'save this',
+      hasAttachment: true,
+      attachmentLabel: 'synthetic-bill.pdf',
+      attachmentMimeType: 'application/pdf',
+      attachmentBytes: const [37, 80, 68, 70],
+    );
+    final option = subject.messages.last.clarificationOptions.last;
+    await subject.chooseClarificationOption(option);
+    expect(
+      executor.actions.single.type,
+      ConversationActionType.requestDocumentOcr,
+    );
+  });
+
+  test(
+    'read-only category list remains visible but reports no save authority',
+    () async {
+      final repository = FakeRepository()
+        ..availableCategories = const ConversationCategoryOptions(
+          categories: [
+            ConversationCategoryOption(id: 'finance', name: 'Finance'),
+          ],
+          canSave: false,
+          canCreate: false,
+        );
+      final subject = controller(repository, RecordingExecutor());
+      await subject.submit(
+        'save this',
+        hasAttachment: true,
+        attachmentLabel: 'synthetic-bill.pdf',
+        attachmentMimeType: 'application/pdf',
+        attachmentBytes: const [37, 80, 68, 70],
+      );
+      final options = await subject.categoryOptionsForClarification();
+      expect(options.categories.single.name, 'Finance');
+      expect(options.canSave, isFalse);
+      expect(options.canCreate, isFalse);
     },
   );
 }

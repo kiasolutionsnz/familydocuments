@@ -117,7 +117,7 @@ try {
   await ready(`${env.FD_GATEWAY_URL}/health`);
   env.FD_SEARCH_URL = `${env.FD_GATEWAY_URL}/search`;
   console.log(`Isolated database container: ${env.FD_TEST_CONTAINER}`);
-  const suites = process.argv.slice(2).filter(value => value !== '--manual-library' && value !== '--manual-inbox' && value !== '--manual-conversation');
+  const suites = process.argv.slice(2).filter(value => value !== '--manual-library' && value !== '--manual-inbox' && value !== '--manual-conversation' && value !== '--manual-telegram');
   const selected = suites.length ? suites : ['email-password-auth.mjs', 'family-foundation.mjs', 'totp-mfa-e2e.mjs', 'google-oauth-contract.mjs', 'email-ingestion-e2e.mjs', 'search-assistant-e2e.mjs', 'ocr-reminder-e2e.mjs', 'attachment-scanner-e2e.mjs', 'google-drive-exact-files.sql', 'operational-hardening.sql', 'ux-phase-a-original-sources.sql'];
   async function startOcr() {
     console.log('Starting isolated real PaddleOCR (models baked in cached image; no external AI).');
@@ -289,7 +289,7 @@ try {
     const credentialsPath = `${runtimeDir}\\credentials.txt`;
     await writeFile(credentialsPath, `Synthetic owner\nEmail: ${owner.email}\nPassword: ${owner.password}\n\nRead-only member\nEmail: ${viewer.email}\nPassword: ${viewer.password}\n${multiFamily ? `\nMultiple-Family member\nEmail: ${multiFamily.email}\nPassword: ${multiFamily.password}\n` : ''}`, {mode: 0o600});
     const runtimePath = `${runtimeDir}\\runtime.json`;
-    const migration = manualTelegram ? '050_complete_telegram_transport.sql' : manualConversation ? '048_conversation_reminder_queries.sql' : manualInbox ? '044_flutter_inbox.sql' : '043_flutter_library.sql';
+    const migration = manualTelegram ? '051_telegram_status_and_conversation_categories.sql' : manualConversation ? '048_conversation_reminder_queries.sql' : manualInbox ? '044_flutter_inbox.sql' : '043_flutter_library.sql';
     const seed = {
       documents: conversationFixtures ? 9 : 8,
       trips: 2,

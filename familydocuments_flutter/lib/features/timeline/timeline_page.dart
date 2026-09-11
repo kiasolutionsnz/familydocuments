@@ -374,23 +374,39 @@ class TimelinePageState extends State<TimelinePage> {
   }
 
   Future<void> _openItem(TimelineItem item) async {
-    await showModalBottomSheet<void>(
+    await showDialog<void>(
       context: context,
-      isScrollControlled: true,
-      builder: (context) => _TimelineDetail(
-        item: item,
-        onRetry: item.jobId == null
-            ? null
-            : () => widget.onRetryJob(item.jobId!),
-        onSaveWithoutReading: item.jobId == null
-            ? null
-            : () => widget.onSaveWithoutReading(item.jobId!),
-        onChooseCategory: item.jobId == null
-            ? null
-            : () => widget.onChooseCategory(item.jobId!),
-        onDismiss: item.jobId == null
-            ? null
-            : () => widget.onDismissJob(item.jobId!),
+      builder: (context) => LayoutBuilder(
+        builder: (context, constraints) {
+          final detail = _TimelineDetail(
+            item: item,
+            onRetry: item.jobId == null
+                ? null
+                : () => widget.onRetryJob(item.jobId!),
+            onSaveWithoutReading: item.jobId == null
+                ? null
+                : () => widget.onSaveWithoutReading(item.jobId!),
+            onChooseCategory: item.jobId == null
+                ? null
+                : () => widget.onChooseCategory(item.jobId!),
+            onDismiss: item.jobId == null
+                ? null
+                : () => widget.onDismissJob(item.jobId!),
+          );
+          if (constraints.maxWidth < 360 || constraints.maxHeight < 520) {
+            return Dialog.fullscreen(child: detail);
+          }
+          return Dialog(
+            child: ConstrainedBox(
+              key: const ValueKey('timeline-detail-dialog'),
+              constraints: BoxConstraints(
+                maxWidth: 620,
+                maxHeight: constraints.maxHeight * .86,
+              ),
+              child: detail,
+            ),
+          );
+        },
       ),
     );
   }
@@ -541,85 +557,113 @@ class _TimelineDetail extends StatelessWidget {
   final Future<void> Function()? onDismiss;
 
   @override
-  Widget build(BuildContext context) => SafeArea(
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(24, 22, 24, 28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(item.title, style: Theme.of(context).textTheme.titleLarge),
-          if ((item.context ?? '').isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(item.context!),
-          ],
-          if ((item.category ?? '').isNotEmpty) ...[
-            const SizedBox(height: 18),
-            const Text(
-              'Category',
-              style: TextStyle(fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 6),
-            Chip(label: Text(item.category!)),
-          ],
-          if (item.kind == TimelineItemKind.document) ...[
-            const SizedBox(height: 10),
-            const Text('Tags', style: TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 6),
-            if (item.tags.isEmpty)
-              const Text('No tags added')
-            else
-              Wrap(
-                spacing: 6,
-                children: item.tags
-                    .map((tag) => Chip(label: Text(tag)))
-                    .toList(),
-              ),
-          ],
-          if ((item.url ?? '').isNotEmpty) ...[
-            const SizedBox(height: 14),
-            SelectableText(item.url!),
-          ],
-          if (item.isFailed) ...[
-            const SizedBox(height: 18),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
+  Widget build(BuildContext context) => Semantics(
+    scopesRoute: true,
+    namesRoute: true,
+    explicitChildNodes: true,
+    label: 'Timeline item details',
+    child: SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 14, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
               children: [
-                if (item.retryAllowed && onRetry != null)
-                  FilledButton(
-                    onPressed: () => _run(context, onRetry!),
-                    child: const Text('Retry reading'),
+                Expanded(
+                  child: Text(
+                    item.title,
+                    style: Theme.of(context).textTheme.titleLarge,
                   ),
-                if (onSaveWithoutReading != null)
-                  OutlinedButton(
-                    onPressed: () => _run(context, onSaveWithoutReading!),
-                    child: const Text('Save without reading'),
-                  ),
-                if (onChooseCategory != null)
-                  TextButton(
-                    onPressed: () => _run(context, onChooseCategory!),
-                    child: const Text('Choose category'),
-                  ),
-                if (onDismiss != null)
-                  TextButton(
-                    onPressed: () => _run(context, onDismiss!),
-                    child: const Text('Dismiss'),
-                  ),
+                ),
+                IconButton(
+                  autofocus: true,
+                  tooltip: 'Close details',
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close),
+                ),
               ],
             ),
-          ],
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
+            const Divider(),
+            Flexible(
+              child: SingleChildScrollView(
+                key: const ValueKey('timeline-detail-scroll'),
+                child: _detailContent(context),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     ),
+  );
+
+  Widget _detailContent(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      if ((item.context ?? '').isNotEmpty) ...[
+        const SizedBox(height: 8),
+        Text(item.context!),
+      ],
+      if ((item.category ?? '').isNotEmpty) ...[
+        const SizedBox(height: 18),
+        const Text('Category', style: TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 6),
+        Chip(label: Text(item.category!)),
+      ],
+      if (item.kind == TimelineItemKind.document) ...[
+        const SizedBox(height: 10),
+        const Text('Tags', style: TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 6),
+        if (item.tags.isEmpty)
+          const Text('No tags added')
+        else
+          Wrap(
+            spacing: 6,
+            children: item.tags.map((tag) => Chip(label: Text(tag))).toList(),
+          ),
+      ],
+      if ((item.url ?? '').isNotEmpty) ...[
+        const SizedBox(height: 14),
+        SelectableText(item.url!),
+      ],
+      if (item.isFailed) ...[
+        const SizedBox(height: 18),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            if (item.retryAllowed && onRetry != null)
+              FilledButton(
+                onPressed: () => _run(context, onRetry!),
+                child: const Text('Retry reading'),
+              ),
+            if (onSaveWithoutReading != null)
+              OutlinedButton(
+                onPressed: () => _run(context, onSaveWithoutReading!),
+                child: const Text('Save without reading'),
+              ),
+            if (onChooseCategory != null)
+              TextButton(
+                onPressed: () => _run(context, onChooseCategory!),
+                child: const Text('Choose category'),
+              ),
+            if (onDismiss != null)
+              TextButton(
+                onPressed: () => _run(context, onDismiss!),
+                child: const Text('Dismiss'),
+              ),
+          ],
+        ),
+      ],
+      const SizedBox(height: 12),
+      Align(
+        alignment: Alignment.centerRight,
+        child: TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+      ),
+    ],
   );
 
   Future<void> _run(

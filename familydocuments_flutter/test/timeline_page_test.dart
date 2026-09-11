@@ -6,6 +6,7 @@ import 'package:familydocuments_flutter/features/timeline/data/timeline_service.
 import 'package:familydocuments_flutter/features/timeline/models/timeline_item.dart';
 import 'package:familydocuments_flutter/features/timeline/timeline_page.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class FakeTimelineService extends TimelineService {
@@ -585,4 +586,42 @@ void main() {
       addTearDown(() => t.binding.setSurfaceSize(null));
     },
   );
+
+  testWidgets('Timeline details are centred, bounded and dismissible', (
+    tester,
+  ) async {
+    for (final size in [
+      const Size(1200, 900),
+      const Size(820, 900),
+      const Size(390, 800),
+    ]) {
+      await tester.binding.setSurfaceSize(size);
+      await tester.pumpWidget(
+        timelineHarness(
+          FakeTimelineService(
+            items: [item('dialog', TimelineItemKind.document, now)],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('dialog title'));
+      await tester.pumpAndSettle();
+      final dialog = find.byKey(const ValueKey('timeline-detail-dialog'));
+      expect(dialog, findsOneWidget);
+      final rect = tester.getRect(dialog);
+      expect(rect.width, lessThanOrEqualTo(620));
+      expect(rect.height, lessThanOrEqualTo(size.height * .86 + 1));
+      expect((rect.center.dx - size.width / 2).abs(), lessThan(2));
+      expect(find.byTooltip('Close details'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('timeline-detail-scroll')),
+        findsOneWidget,
+      );
+      expect(find.bySemanticsLabel('Timeline item details'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(dialog, findsNothing);
+    }
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+  });
 }

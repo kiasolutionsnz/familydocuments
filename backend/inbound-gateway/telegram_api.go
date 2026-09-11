@@ -44,14 +44,21 @@ func newTelegramAPI(origin, api, botIdentity, botUsername, webhookSecret, deepLi
 }
 
 func (h *telegramAPI) register(mux *http.ServeMux) {
+	mux.HandleFunc("OPTIONS /integrations/telegram/status", h.status)
 	mux.HandleFunc("POST /integrations/telegram/status", h.status)
+	mux.HandleFunc("OPTIONS /integrations/telegram/connect", h.connect)
 	mux.HandleFunc("POST /integrations/telegram/connect", h.connect)
+	mux.HandleFunc("OPTIONS /integrations/telegram/disconnect", h.disconnect)
 	mux.HandleFunc("POST /integrations/telegram/disconnect", h.disconnect)
 	mux.HandleFunc("POST /integrations/telegram/webhook", h.webhook)
 }
 
 func (h *telegramAPI) authenticated(w http.ResponseWriter, r *http.Request, limit int64) (accessIdentity, bool) {
 	if !conversationCORS(w, r, h.origin) {
+		return accessIdentity{}, false
+	}
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
 		return accessIdentity{}, false
 	}
 	identity, err := h.verifier.verifyAuthorization(r.Header.Get("Authorization"))

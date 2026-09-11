@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/auth/auth_service.dart';
 import '../../library/safe_open.dart';
 import 'telegram_integration_service.dart';
 
@@ -32,9 +33,15 @@ class _TelegramIntegrationPageState extends State<TelegramIntegrationPage> {
     try {
       final value = await widget.repository.status();
       if (mounted) setState(() => connection = value);
-    } catch (_) {
+    } on AuthException {
       if (mounted) {
-        setState(() => error = 'Telegram status could not be loaded.');
+        setState(
+          () => error = 'Your session has expired. Please sign in again.',
+        );
+      }
+    } on TelegramIntegrationException catch (failure) {
+      if (mounted) {
+        setState(() => error = failure.message);
       }
     } finally {
       if (mounted) setState(() => loading = false);
@@ -51,6 +58,7 @@ class _TelegramIntegrationPageState extends State<TelegramIntegrationPage> {
     try {
       final value = await widget.repository.connect(familyId);
       if (mounted) setState(() => link = value);
+      await _load();
     } catch (_) {
       if (mounted) {
         setState(() => error = 'A connection link could not be created.');
@@ -122,6 +130,14 @@ class _TelegramIntegrationPageState extends State<TelegramIntegrationPage> {
         message: 'Choose an active Family before connecting Telegram.',
       );
     }
+    if (value.state == TelegramConnectionState.membershipRevoked) {
+      return const _MessageState(
+        message:
+            'Your Family access changed. Reconnect after resolving access.',
+      );
+    }
+    final pending = value.state == TelegramConnectionState.linkPending;
+    final disconnected = value.state == TelegramConnectionState.disconnected;
     return ListView(
       children: [
         Text('Telegram', style: Theme.of(context).textTheme.headlineSmall),
@@ -136,6 +152,10 @@ class _TelegramIntegrationPageState extends State<TelegramIntegrationPage> {
                 ? (value.displayName?.isNotEmpty == true
                       ? value.displayName!
                       : 'Connected account')
+                : pending
+                ? 'Link pending'
+                : disconnected
+                ? 'Disconnected'
                 : 'Not connected',
           ),
           subtitle: Text(
@@ -162,6 +182,17 @@ class _TelegramIntegrationPageState extends State<TelegramIntegrationPage> {
             onPressed: changing ? null : _connect,
             child: const Text('Generate a new link'),
           ),
+        ] else if (pending) ...[
+          const SizedBox(height: 16),
+          Text(
+            value.linkExpiresAt == null
+                ? 'Your connection link is pending.'
+                : 'Connection link expires ${_friendlyExpiry(value.linkExpiresAt!)}.',
+          ),
+          TextButton(
+            onPressed: changing ? null : _connect,
+            child: const Text('Generate a new link'),
+          ),
         ] else if (value.connected)
           OutlinedButton(
             onPressed: changing ? null : _disconnect,
@@ -170,10 +201,22 @@ class _TelegramIntegrationPageState extends State<TelegramIntegrationPage> {
         else
           FilledButton(
             onPressed: changing ? null : _connect,
-            child: Text(changing ? 'Creating link…' : 'Connect Telegram'),
+            child: Text(
+              changing
+                  ? 'Creating link…'
+                  : disconnected
+                  ? 'Reconnect Telegram'
+                  : 'Connect Telegram',
+            ),
           ),
       ],
     );
+  }
+
+  String _friendlyExpiry(DateTime value) {
+    final local = value.toLocal();
+    final minute = local.minute.toString().padLeft(2, '0');
+    return 'at ${local.hour}:$minute';
   }
 }
 
