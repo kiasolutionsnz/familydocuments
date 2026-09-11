@@ -460,7 +460,8 @@ void main() {
     expect(find.text('Settings'), findsOneWidget);
     await t.tap(find.text('Settings'));
     await t.pumpAndSettle();
-    expect(find.text('Settings will be connected in Phase 2.'), findsOneWidget);
+    expect(find.text('Integrations'), findsOneWidget);
+    expect(find.text('Telegram'), findsOneWidget);
   });
   testWidgets('avatar sign out returns to signed-out screen', (t) async {
     final auth = FakeAuth(

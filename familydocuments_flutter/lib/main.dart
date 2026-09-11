@@ -22,6 +22,7 @@ import 'features/library/data/library_service.dart';
 import 'features/library/library_page.dart';
 import 'features/library/library_navigation.dart';
 import 'features/library/models/library_models.dart';
+import 'features/settings/settings_page.dart';
 import 'features/timeline/data/timeline_service.dart';
 import 'features/timeline/timeline_page.dart';
 
@@ -1667,6 +1668,7 @@ class _AppState extends State<FamilyDocumentsApp> {
             onSignOut: signOut,
           )
         : Shell(
+            auth: auth,
             tab: tab,
             onTab: _selectTab,
             timelineService: timelineService,
@@ -1866,6 +1868,7 @@ class Shell extends StatelessWidget {
   const Shell({
     super.key,
     required this.tab,
+    required this.auth,
     required this.onTab,
     required this.timelineService,
     required this.libraryService,
@@ -1921,6 +1924,7 @@ class Shell extends StatelessWidget {
     required this.onSignOut,
   });
   final int tab;
+  final AuthService auth;
   final ValueChanged<int> onTab;
   final TimelineService timelineService;
   final LibraryService libraryService;
@@ -1996,16 +2000,8 @@ class Shell extends StatelessWidget {
     onSelected: (value) {
       if (value == 'signout') onSignOut();
       if (value == 'settings') {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => Scaffold(
-              appBar: AppBar(title: const Text('Settings')),
-              body: const Center(
-                child: Text('Settings will be connected in Phase 2.'),
-              ),
-            ),
-          ),
-        );
+        Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => SettingsPage(auth: auth)));
       }
     },
     itemBuilder: (_) => const [

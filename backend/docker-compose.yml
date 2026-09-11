@@ -133,6 +133,9 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       HELP_CHAT_MODEL: ${HELP_CHAT_MODEL:-qwen3:4b}
       DOCUMENT_CLASSIFIER_MODEL: ${DOCUMENT_CLASSIFIER_MODEL:-qwen3:4b}
+      TELEGRAM_BOT_IDENTITY: ${TELEGRAM_BOT_IDENTITY:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
     ports: ["127.0.0.1:55327:8080"]
     networks: [application]
     restart: unless-stopped

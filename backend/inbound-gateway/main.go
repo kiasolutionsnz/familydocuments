@@ -206,6 +206,18 @@ func main() {
 	}
 	mux.HandleFunc("/conversation/interpret", newConversationInterpreter(allowedOrigin, optionalEnv("OLLAMA_BASE_URL"), conversationModel, api, accessVerifier, []byte(jwtSecret), nil))
 	newTrustedConversationAPI(allowedOrigin, api, accessVerifier, []byte(jwtSecret), nil).register(mux)
+	telegramBotIdentity := optionalEnv("TELEGRAM_BOT_IDENTITY")
+	telegramBotUsername := optionalEnv("TELEGRAM_BOT_USERNAME")
+	telegramWebhookSecret := optionalEnv("TELEGRAM_WEBHOOK_SECRET")
+	telegramDeepLinkBase := optionalEnv("TELEGRAM_DEEP_LINK_BASE_URL")
+	telegramIsolated := optionalEnv("FD_TEST_CONTEXT") == "isolated"
+	if err := validateTelegramConfiguration(telegramBotIdentity, telegramBotUsername, telegramWebhookSecret, telegramDeepLinkBase, telegramIsolated); err != nil {
+		log.Fatalf("Telegram configuration invalid: %v", err)
+	}
+	if telegramBotIdentity != "" {
+		newTelegramAPI(allowedOrigin, api, telegramBotIdentity, telegramBotUsername, telegramWebhookSecret, telegramDeepLinkBase, accessVerifier, nil).register(mux)
+		log.Print(telegramConfigurationSummary(telegramBotIdentity, telegramBotUsername))
+	}
 	mux.HandleFunc("/help/chat", newHelpChatHandler(allowedOrigin, optionalEnv("OLLAMA_BASE_URL"), optionalEnv("HELP_CHAT_MODEL"), nil))
 	driveGateway, driveErr := newDriveGateway(api, allowedOrigin, jwtSecret)
 	if driveErr != nil {

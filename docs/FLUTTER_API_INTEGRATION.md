@@ -167,3 +167,34 @@ writer. Flutter retains one shared application polling source and an in-flight
 guard; unchanged job states do not append messages. Saved links accept only
 public HTTPS URLs without credentials, and the destination hostname is shown
 before opening or saving.
+
+# Phase 2E Telegram transport
+
+Telegram is a private-chat transport into the Phase 2D trusted orchestrator;
+it has no independent action or permission authority. Migration 049 adds
+provider-neutral external identities, short-lived hashed link tokens, durable
+inbound updates, transport attachments, conversation bindings, opaque callback
+tokens and a durable reply outbox. `fp.inbound_emails` remains email-specific.
+
+The webhook validates the configured Telegram secret before decoding a bounded
+request, accepts only private `message` and `callback_query` updates and
+deduplicates by provider, bot identity and Telegram `update_id`. The Telegram
+worker leases persisted updates, revalidates the numeric Telegram identity and
+Family membership, calls the existing conversation interpreter/action API with
+a signed request-scoped Family binding, and leases outbound replies separately.
+Retries are fenced and idempotent. Stored transport envelopes are cleared when
+processing completes; no bot-token download URL is persisted.
+
+Flutter exposes only Settings → Integrations → Telegram. A connection token is
+random, stored as a SHA-256 hash, bound to the signed-in user and selected
+Family, single-use, attempt-limited and valid for ten minutes. Disconnect
+revokes the identity, unused link tokens, callbacks and pending confirmations
+without deleting previously created FamilyDocuments records. Transport records
+retain redacted delivery identifiers; a later configurable retention job may
+purge completed updates and outbox rows after the documented audit period.
+
+Real bot configuration is intentionally manual. Secrets are supplied only by
+the approved server-side environment. `scripts/telegram-bot.ps1` supports
+`get-me`, webhook registration/status/deletion and command registration without
+printing the token or webhook secret. Automated and disposable tests must set
+`TELEGRAM_API_BASE_URL` to the fake Bot API and must not contact Telegram.
