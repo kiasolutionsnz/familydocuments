@@ -14,6 +14,7 @@ enum ConversationMessageKind {
 
 enum ConversationActionType {
   searchFamilyContent('search_family_content'),
+  queryReminders('query_reminders'),
   saveDocument('save_document'),
   requestDocumentOcr('request_document_ocr'),
   updateDocumentCategory('update_document_category'),
@@ -144,6 +145,8 @@ class ConversationAction {
       'link_url',
       'link_title',
       'recurrence',
+      'scope',
+      'date',
     ]) {
       final value = parameters[key];
       if (value != null && value is! String) {
@@ -262,6 +265,27 @@ class ConversationAction {
         );
       }
     }
+    if (type == ConversationActionType.queryReminders) {
+      final scope = parameters['scope']?.toString();
+      if (!const {
+        'today',
+        'tomorrow',
+        'upcoming',
+        'overdue',
+        'date',
+      }.contains(scope)) {
+        throw const ConversationActionValidationException(
+          'Unsupported reminder query.',
+        );
+      }
+      final queryDate = parameters['date']?.toString();
+      if ((scope == 'date' && (queryDate == null || !_validDate(queryDate))) ||
+          (scope != 'date' && queryDate != null)) {
+        throw const ConversationActionValidationException(
+          'Invalid reminder query date.',
+        );
+      }
+    }
     final changes = parameters['changes'];
     if (changes != null && changes is! Map) {
       throw const ConversationActionValidationException(
@@ -323,6 +347,7 @@ class ConversationAction {
 
 const _allowedParameters = <ConversationActionType, Set<String>>{
   ConversationActionType.searchFamilyContent: {'query'},
+  ConversationActionType.queryReminders: {'scope', 'date'},
   ConversationActionType.saveDocument: {
     'attachment_id',
     'category_name',
@@ -391,6 +416,7 @@ const _allowedParameters = <ConversationActionType, Set<String>>{
 
 const _requiredParameters = <ConversationActionType, Set<String>>{
   ConversationActionType.searchFamilyContent: {'query'},
+  ConversationActionType.queryReminders: {'scope'},
   ConversationActionType.saveDocument: {'attachment_id', 'category_name'},
   ConversationActionType.requestDocumentOcr: {'mode'},
   ConversationActionType.updateDocumentCategory: {
@@ -475,6 +501,18 @@ class ConversationSuggestion {
   Map<String, dynamic> toJson() => {'label': label, 'action': action.toJson()};
 }
 
+class ConversationClarificationOption {
+  const ConversationClarificationOption({
+    required this.id,
+    required this.label,
+    this.description,
+  });
+
+  final String id;
+  final String label;
+  final String? description;
+}
+
 class ConversationMessage {
   const ConversationMessage({
     required this.id,
@@ -527,12 +565,41 @@ class ConversationMessage {
   final Map<String, dynamic> data;
   final List<ConversationSuggestion> suggestions;
 
+  List<ConversationClarificationOption> get clarificationOptions {
+    final labels = (data['choices'] as List? ?? const [])
+        .map((value) => value.toString())
+        .toList();
+    final actions = data['choice_actions'] as List? ?? const [];
+    final options = <ConversationClarificationOption>[];
+    for (
+      var index = 0;
+      index < labels.length && index < actions.length;
+      index++
+    ) {
+      final raw = actions[index];
+      if (raw is! Map) continue;
+      final id = raw['id']?.toString() ?? '';
+      if (!_clarificationOptionId.hasMatch(id) ||
+          labels[index].trim().isEmpty) {
+        continue;
+      }
+      options.add(
+        ConversationClarificationOption(id: id, label: labels[index].trim()),
+      );
+    }
+    return options;
+  }
+
+  String? get clarificationId => data['clarification_id']?.toString();
+
   Map<String, dynamic> toData() => {
     ...data,
     if (suggestions.isNotEmpty)
       'suggestions': suggestions.map((item) => item.toJson()).toList(),
   };
 }
+
+final _clarificationOptionId = RegExp(r'^[A-Za-z0-9:_-]{8,100}$');
 
 class ConversationConfirmation {
   ConversationConfirmation({

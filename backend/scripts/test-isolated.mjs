@@ -272,7 +272,7 @@ try {
     const credentialsPath = `${runtimeDir}\\credentials.txt`;
     await writeFile(credentialsPath, `Synthetic owner\nEmail: ${owner.email}\nPassword: ${owner.password}\n\nRead-only member\nEmail: ${viewer.email}\nPassword: ${viewer.password}\n`, {mode: 0o600});
     const runtimePath = `${runtimeDir}\\runtime.json`;
-    const migration = manualConversation ? '047_trusted_conversation_orchestration.sql' : manualInbox ? '044_flutter_inbox.sql' : '043_flutter_library.sql';
+    const migration = manualConversation ? '048_conversation_reminder_queries.sql' : manualInbox ? '044_flutter_inbox.sql' : '043_flutter_library.sql';
     const seed = {
       documents: manualConversation ? 9 : 8,
       trips: 2,

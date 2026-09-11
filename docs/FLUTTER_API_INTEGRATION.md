@@ -127,7 +127,11 @@ action. Every model-derived mutation requires confirmation. Invalid, timed-out
 or unavailable model output becomes a plain-language clarification.
 
 `POST /conversation/action` submits an action to
-`submit_conversation_action`; `POST /conversation/decision` accepts only an
+`submit_conversation_action`; read-only `query_reminders` actions use the
+Family-scoped `submit_conversation_reminder_query` RPC introduced by migration
+048. It supports today, tomorrow, upcoming, overdue and an explicit Auckland
+local date, and returns only authorised reminder metadata. `POST
+/conversation/decision` accepts only an
 opaque confirmation identifier and Confirm/Cancel. Migration 047 binds a
 confirmation to the authenticated user, active Family, conversation, canonical
 action digest, target, complete values, target timestamp, expiry and request
@@ -136,6 +140,12 @@ durably queued while the transaction is held. Server idempotency is unique by
 Family, actor and request key, so a lost response or replay returns the original
 execution result rather than repeating a document, OCR job, link, metadata
 change, reminder or Inbox mutation.
+
+Clarification choices are validated and persisted by the trusted backend.
+Flutter renders their labels but selects them through `POST
+/conversation/clarification` using only the clarification and option opaque
+identifiers. The same endpoint durably handles redisplay, cancellation and
+superseding a stale clarification; Flutter never submits executable choice JSON.
 
 Users with one Family are selected automatically. Users with multiple active
 Families must explicitly select one; conversations and pending confirmations

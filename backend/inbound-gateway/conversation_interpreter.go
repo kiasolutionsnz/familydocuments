@@ -25,6 +25,7 @@ var safeTime = regexp.MustCompile(`^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$`)
 
 var actionParameters = map[string]map[string]bool{
 	"search_family_content":    {"query": true},
+	"query_reminders":          {"scope": true, "date": true},
 	"save_document":            {"attachment_id": true, "category_name": true, "tags": true, "create_category": true},
 	"request_document_ocr":     {"attachment_id": true, "document_id": true, "mode": true},
 	"update_document_category": {"document_id": true, "category_name": true, "expected_updated_at": true, "ambiguous": true},
@@ -41,6 +42,7 @@ var actionParameters = map[string]map[string]bool{
 
 var requiredActionParameters = map[string][]string{
 	"search_family_content":    {"query"},
+	"query_reminders":          {"scope"},
 	"save_document":            {"attachment_id", "category_name"},
 	"request_document_ocr":     {"mode"},
 	"update_document_category": {"document_id", "category_name"},
@@ -279,6 +281,16 @@ func validateModelProposalDepth(proposal modelProposal, context interpreterConte
 	if value, ok := proposal.Parameters["due_time"].(string); ok && !safeTime.MatchString(value) {
 		return false
 	}
+	if proposal.Type == "query_reminders" {
+		scope := conversationString(proposal.Parameters["scope"])
+		if !map[string]bool{"today": true, "tomorrow": true, "upcoming": true, "overdue": true, "date": true}[scope] {
+			return false
+		}
+		date, hasDate := proposal.Parameters["date"].(string)
+		if (scope == "date" && (!hasDate || !validConversationDate(date))) || (scope != "date" && hasDate) {
+			return false
+		}
+	}
 	if proposal.Type == "request_document_ocr" && !map[string]bool{"document": true, "invoice": true}[conversationString(proposal.Parameters["mode"])] {
 		return false
 	}
@@ -439,7 +451,7 @@ func (h *conversationInterpreter) propose(input interpreterInput) (modelProposal
 }
 
 func sortedActionNames() []string {
-	return []string{"create_reminder", "dismiss_inbox_item", "mark_inbox_reviewed", "open_app_destination", "request_clarification", "request_document_ocr", "save_document", "save_link", "search_family_content", "unsupported_request", "update_document_category", "update_document_tags", "update_reminder"}
+	return []string{"create_reminder", "dismiss_inbox_item", "mark_inbox_reviewed", "open_app_destination", "query_reminders", "request_clarification", "request_document_ocr", "save_document", "save_link", "search_family_content", "unsupported_request", "update_document_category", "update_document_tags", "update_reminder"}
 }
 
 func (h *conversationInterpreter) reply(w http.ResponseWriter, proposal modelProposal, message, subject, familyID, interpretationStatus string) {

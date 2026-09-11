@@ -21,6 +21,29 @@ void main() {
     );
   });
 
+  test('OCR request synonyms are case-insensitive', () {
+    for (final command in const [
+      'Add the document and do ocr',
+      'Perform OCR',
+      'READ this document',
+      'Scan this document',
+      'Extract the text',
+    ]) {
+      expect(
+        parseHomeIntent(command, hasAttachment: true).type,
+        HomeIntentType.readAttachment,
+        reason: command,
+      );
+    }
+  });
+
+  test('conversational greeting is deterministic', () {
+    expect(
+      parseHomeIntent('Hi how are you', hasAttachment: false).type,
+      HomeIntentType.greeting,
+    );
+  });
+
   test('vague attachment remains metadata-first', () {
     expect(
       parseHomeIntent('', hasAttachment: true).type,

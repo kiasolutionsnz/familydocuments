@@ -32,7 +32,7 @@ HomeIntent parseHomeIntent(String message, {required bool hasAttachment}) {
   final text = message.trim();
   final lower = text.toLowerCase();
   if (RegExp(
-    r'^(hi|hello|hey|good morning|good afternoon|good evening)[.!?]*$',
+    r'^(hi|hello|hey|good morning|good afternoon|good evening)(?:\s+how are you)?[.!?]*$',
     caseSensitive: false,
   ).hasMatch(text)) {
     return const HomeIntent(HomeIntentType.greeting);

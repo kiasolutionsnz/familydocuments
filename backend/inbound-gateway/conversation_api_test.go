@@ -145,3 +145,53 @@ func TestConversationActionRejectsTrailingJSONAndUnsafeURL(t *testing.T) {
 		}
 	}
 }
+
+func TestReminderQueryUsesDedicatedAuthoritativeRPC(t *testing.T) {
+	var path string
+	var body map[string]any
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		jsonReply(w, http.StatusOK, map[string]any{"execution_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "state": "succeeded", "action_type": "query_reminders", "result": map[string]any{"results": []any{}}})
+	}))
+	defer api.Close()
+	secret := "correct"
+	service := newTrustedConversationAPI("https://familydocuments.app", api.URL, accessTokenVerifier{secret: []byte(secret), issuer: "supabase", audience: "authenticated"}, []byte(secret), nil)
+	action := modelActionEnvelope{ID: "reminder-query-0001", Type: "query_reminders", Version: 1, Parameters: map[string]any{"scope": "today"}}
+	encoded, _ := json.Marshal(actionEnvelope{ConversationID: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", RequestKey: "reminder-query-request-0001", Action: action})
+	req := httptest.NewRequest(http.MethodPost, "/conversation/action", bytes.NewReader(encoded))
+	req.Header.Set("Authorization", "Bearer "+conversationTestToken(secret, time.Now().Add(time.Hour)))
+	response := httptest.NewRecorder()
+	service.action(response, req)
+	if response.Code != http.StatusOK || path != "/rpc/submit_conversation_reminder_query" || body["action_type"] != nil || body["model_derived"] != nil {
+		t.Fatalf("reminder query did not use its strict RPC: code=%d path=%s body=%#v", response.Code, path, body)
+	}
+}
+
+func TestClarificationDecisionSendsOnlyOpaqueIdentifiers(t *testing.T) {
+	var body map[string]any
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		jsonReply(w, http.StatusOK, map[string]any{"execution_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "state": "succeeded", "action_type": "query_reminders", "result": map[string]any{}})
+	}))
+	defer api.Close()
+	secret := "correct"
+	service := newTrustedConversationAPI("https://familydocuments.app", api.URL, accessTokenVerifier{secret: []byte(secret), issuer: "supabase", audience: "authenticated"}, []byte(secret), nil)
+	req := httptest.NewRequest(http.MethodPost, "/conversation/clarification", strings.NewReader(`{"clarification_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","decision":"select","option_id":"option-reminders-1234"}`))
+	req.Header.Set("Authorization", "Bearer "+conversationTestToken(secret, time.Now().Add(time.Hour)))
+	response := httptest.NewRecorder()
+	service.clarification(response, req)
+	if response.Code != http.StatusOK || body["clarification"] == nil || body["option_id"] != "option-reminders-1234" || body["action"] != nil {
+		t.Fatalf("clarification decision was not opaque: code=%d body=%#v", response.Code, body)
+	}
+}
+
+func TestTrustedGatewayAddsVisibleOptionsToEmptyClarification(t *testing.T) {
+	action := modelActionEnvelope{ID: "clarification-action-0001", Type: "request_clarification", Version: 1, Parameters: map[string]any{"question": "What would you like me to do?", "missing_parameter": "intent"}}
+	addTrustedClarificationOptions(&action)
+	choices, choicesOK := action.Parameters["choices"].([]any)
+	actions, actionsOK := action.Parameters["choice_actions"].([]any)
+	if !choicesOK || !actionsOK || len(choices) != 2 || choices[0] != "Open Reminders" || len(actions) != 2 || !validateServerAction(modelProposal{Type: action.Type, Parameters: action.Parameters}) {
+		t.Fatalf("trusted clarification options were not valid: %#v", action.Parameters)
+	}
+}

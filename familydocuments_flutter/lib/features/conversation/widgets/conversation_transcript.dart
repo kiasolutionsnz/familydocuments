@@ -11,6 +11,9 @@ class ConversationTranscript extends StatelessWidget {
     required this.onConfirm,
     required this.onCancelConfirmation,
     required this.onSuggestion,
+    this.activeClarificationId,
+    this.onClarificationOption,
+    this.onCancelClarification,
     this.scrollController,
   });
 
@@ -20,6 +23,9 @@ class ConversationTranscript extends StatelessWidget {
   final VoidCallback onConfirm;
   final VoidCallback onCancelConfirmation;
   final ValueChanged<ConversationSuggestion> onSuggestion;
+  final String? activeClarificationId;
+  final ValueChanged<ConversationClarificationOption>? onClarificationOption;
+  final VoidCallback? onCancelClarification;
   final ScrollController? scrollController;
 
   @override
@@ -43,6 +49,11 @@ class ConversationTranscript extends StatelessWidget {
           onConfirm: onConfirm,
           onCancelConfirmation: onCancelConfirmation,
           onSuggestion: onSuggestion,
+          clarificationActive:
+              message.clarificationId != null &&
+              message.clarificationId == activeClarificationId,
+          onClarificationOption: onClarificationOption,
+          onCancelClarification: onCancelClarification,
         );
       },
     ),
@@ -56,6 +67,9 @@ class _MessageBubble extends StatelessWidget {
     required this.onConfirm,
     required this.onCancelConfirmation,
     required this.onSuggestion,
+    required this.clarificationActive,
+    required this.onClarificationOption,
+    required this.onCancelClarification,
   });
 
   final ConversationMessage message;
@@ -63,6 +77,9 @@ class _MessageBubble extends StatelessWidget {
   final VoidCallback onConfirm;
   final VoidCallback onCancelConfirmation;
   final ValueChanged<ConversationSuggestion> onSuggestion;
+  final bool clarificationActive;
+  final ValueChanged<ConversationClarificationOption>? onClarificationOption;
+  final VoidCallback? onCancelClarification;
 
   @override
   Widget build(BuildContext context) {
@@ -155,15 +172,27 @@ class _MessageBubble extends StatelessWidget {
                             ),
                             if (result['category'] != null)
                               Text(result['category'].toString()),
-                            Text(
-                              result['match_type'] == 'ocr'
-                                  ? 'Matched document text'
-                                  : 'Matched saved details',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Color(0xff64748b),
+                            if (result['type'] == 'reminder') ...[
+                              Text(
+                                [
+                                  result['due_date'],
+                                  result['due_time'],
+                                ].where((value) => value != null).join(' at '),
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xff64748b),
+                                ),
                               ),
-                            ),
+                            ] else
+                              Text(
+                                result['match_type'] == 'ocr'
+                                    ? 'Matched document text'
+                                    : 'Matched saved details',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xff64748b),
+                                ),
+                              ),
                           ],
                         ),
                       ),
@@ -206,6 +235,27 @@ class _MessageBubble extends StatelessWidget {
                       onPressed: confirmation!.expired
                           ? null
                           : onCancelConfirmation,
+                      child: const Text('Cancel'),
+                    ),
+                  ],
+                ),
+              ],
+              if (clarificationActive) ...[
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ...message.clarificationOptions.map(
+                      (option) => ActionChip(
+                        label: Text(option.label),
+                        onPressed: onClarificationOption == null
+                            ? null
+                            : () => onClarificationOption!(option),
+                      ),
+                    ),
+                    OutlinedButton(
+                      onPressed: onCancelClarification,
                       child: const Text('Cancel'),
                     ),
                   ],

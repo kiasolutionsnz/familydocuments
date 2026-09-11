@@ -28,6 +28,7 @@ class ConversationController extends ChangeNotifier {
   final List<ConversationReference> _references = [];
   String? _conversationId;
   ConversationAction? _pendingClarification;
+  String? _pendingClarificationId;
   ConversationConfirmation? _confirmation;
   bool _loading = false;
   bool _familySelectionRequired = false;
@@ -44,6 +45,7 @@ class ConversationController extends ChangeNotifier {
   List<ActiveFamilyChoice> get families => List.unmodifiable(_families);
   String get activeFamilyName => _activeFamilyName ?? 'Family';
   String? get conversationId => _conversationId;
+  String? get pendingClarificationId => _pendingClarificationId;
   bool hasCorrelation(String correlationId) => _messages.any(
     (message) => message.data['correlation_id'] == correlationId,
   );
@@ -102,6 +104,7 @@ class ConversationController extends ChangeNotifier {
       _messages.clear();
       _references.clear();
       _pendingClarification = null;
+      _pendingClarificationId = null;
       _confirmation = null;
       notifyListeners();
     } finally {
@@ -114,6 +117,7 @@ class ConversationController extends ChangeNotifier {
     _messages.clear();
     _references.clear();
     _pendingClarification = null;
+    _pendingClarificationId = null;
     _confirmation = null;
     _loading = false;
     _familySelectionRequired = false;
@@ -155,17 +159,50 @@ class ConversationController extends ChangeNotifier {
           data: {if (hasAttachment) 'attachment_label': attachmentLabel},
         ),
       );
+      final deterministic = _deterministic(
+        message,
+        hasAttachment: hasAttachment,
+        attachmentId: attachmentId,
+        attachmentLabel: attachmentLabel,
+      );
       ConversationAction action;
-      if (_pendingClarification != null) {
-        action = _resolveClarification(message);
+      if (_pendingClarification != null && _pendingClarificationId != null) {
+        if (_asksForOptions(message)) {
+          final outcome = await _repository.decideClarification(
+            _pendingClarificationId!,
+            decision: 'redisplay',
+          );
+          await _applyOutcome(outcome);
+          return;
+        }
+        if (_isCancel(message)) {
+          final outcome = await _repository.decideClarification(
+            _pendingClarificationId!,
+            decision: 'cancel',
+          );
+          await _applyOutcome(outcome);
+          return;
+        }
+        final optionId = _optionIdForAnswer(message);
+        if (optionId != null) {
+          final outcome = await _repository.decideClarification(
+            _pendingClarificationId!,
+            decision: 'select',
+            optionId: optionId,
+          );
+          await _applyOutcome(outcome);
+          return;
+        }
+        if (deterministic != null) {
+          await _supersedeClarification();
+          action = deterministic;
+        } else {
+          action = _resolveClarification(message);
+          await _supersedeClarification();
+        }
       } else {
         action =
-            _deterministic(
-              message,
-              hasAttachment: hasAttachment,
-              attachmentId: attachmentId,
-              attachmentLabel: attachmentLabel,
-            ) ??
+            deterministic ??
             await _modelOrClarification(
               message,
               hasAttachment,
@@ -188,11 +225,49 @@ class ConversationController extends ChangeNotifier {
     try {
       await _ensureConversation();
       _pendingClarification = null;
+      _pendingClarificationId = null;
       await _route(suggestion.action);
     } on ConversationServiceException catch (error) {
       _showTransportFailure(error.message);
     } on Object {
       _showTransportFailure('FamilyDocuments could not be reached. Try again.');
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<void> chooseClarificationOption(
+    ConversationClarificationOption option,
+  ) async {
+    final clarificationId = _pendingClarificationId;
+    if (_loading || clarificationId == null) return;
+    _setLoading(true);
+    try {
+      final outcome = await _repository.decideClarification(
+        clarificationId,
+        decision: 'select',
+        optionId: option.id,
+      );
+      await _applyOutcome(outcome);
+    } on ConversationServiceException catch (error) {
+      _showTransportFailure(error.message);
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<void> cancelClarification() async {
+    final clarificationId = _pendingClarificationId;
+    if (_loading || clarificationId == null) return;
+    _setLoading(true);
+    try {
+      final outcome = await _repository.decideClarification(
+        clarificationId,
+        decision: 'cancel',
+      );
+      await _applyOutcome(outcome);
+    } on ConversationServiceException catch (error) {
+      _showTransportFailure(error.message);
     } finally {
       _setLoading(false);
     }
@@ -301,6 +376,16 @@ class ConversationController extends ChangeNotifier {
         parameters: const {'reason': 'greeting'},
       );
     }
+    if (_asksForOptions(message)) {
+      return ConversationAction(
+        id: _newId('action'),
+        type: ConversationActionType.requestClarification,
+        parameters: const {
+          'question': 'What would you like to do?',
+          'missing_parameter': 'intent',
+        },
+      );
+    }
     if (hasAttachment) {
       if (intent.type == HomeIntentType.saveAttachment &&
           (intent.destination == null || intent.destination!.trim().isEmpty)) {
@@ -341,6 +426,14 @@ class ConversationController extends ChangeNotifier {
           attachmentLabel,
         ),
       };
+    }
+    final reminderQuery = _reminderQuery(message);
+    if (reminderQuery != null) {
+      return ConversationAction(
+        id: _newId('action'),
+        type: ConversationActionType.queryReminders,
+        parameters: reminderQuery,
+      );
     }
     if (RegExp(
       r'^(?:read|scan) (?:it|that document|the document)(?: for ocr)?$',
@@ -743,6 +836,91 @@ class ConversationController extends ChangeNotifier {
     );
   }
 
+  Future<void> _supersedeClarification() async {
+    final id = _pendingClarificationId;
+    _pendingClarification = null;
+    _pendingClarificationId = null;
+    if (id != null) {
+      await _repository.decideClarification(id, decision: 'supersede');
+    }
+  }
+
+  String? _optionIdForAnswer(String answer) {
+    final actions = _pendingClarification?.parameters['choice_actions'];
+    final labels =
+        (_pendingClarification?.parameters['choices'] as List? ?? const [])
+            .map((value) => value.toString())
+            .toList();
+    if (actions is! List || actions.length != labels.length) return null;
+    final selected = labels.indexWhere(
+      (label) => label.trim().toLowerCase() == answer.trim().toLowerCase(),
+    );
+    if (selected < 0 || actions[selected] is! Map) return null;
+    return (actions[selected] as Map)['id']?.toString();
+  }
+
+  bool _asksForOptions(String message) => RegExp(
+    r'^(?:what|which) options(?: are there)?[?!.]*$',
+    caseSensitive: false,
+  ).hasMatch(message.trim());
+
+  bool _isCancel(String message) => RegExp(
+    r'^(?:cancel|never mind|nevermind)[?!.]*$',
+    caseSensitive: false,
+  ).hasMatch(message.trim());
+
+  Map<String, dynamic>? _reminderQuery(String message) {
+    final text = message.trim();
+    if (!RegExp(r'\breminders?\b', caseSensitive: false).hasMatch(text) ||
+        RegExp(
+          r'^(?:add|create|set|remind me)\b',
+          caseSensitive: false,
+        ).hasMatch(text)) {
+      return null;
+    }
+    final lower = text.toLowerCase();
+    if (RegExp(r'\boverdue\b').hasMatch(lower)) return {'scope': 'overdue'};
+    if (RegExp(r'\btomorrow\b').hasMatch(lower)) return {'scope': 'tomorrow'};
+    if (RegExp(r'\btoday\b').hasMatch(lower)) return {'scope': 'today'};
+    final iso = RegExp(r'\b(\d{4}-\d{2}-\d{2})\b').firstMatch(lower)?.group(1);
+    if (iso != null) return {'scope': 'date', 'date': iso};
+    final named = RegExp(
+      r'\b(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})\b',
+    ).firstMatch(lower);
+    if (named != null) {
+      final month =
+          const [
+            'january',
+            'february',
+            'march',
+            'april',
+            'may',
+            'june',
+            'july',
+            'august',
+            'september',
+            'october',
+            'november',
+            'december',
+          ].indexOf(named.group(2)!) +
+          1;
+      final date = DateTime.utc(
+        int.parse(named.group(3)!),
+        month,
+        int.parse(named.group(1)!),
+      );
+      if (date.year == int.parse(named.group(3)!) &&
+          date.month == month &&
+          date.day == int.parse(named.group(1)!)) {
+        return {
+          'scope': 'date',
+          'date': date.toIso8601String().substring(0, 10),
+        };
+      }
+    }
+    return {'scope': 'upcoming'};
+  }
+
   Future<ConversationAction> _modelOrClarification(
     String message,
     bool hasAttachment, {
@@ -847,8 +1025,10 @@ class ConversationController extends ChangeNotifier {
 
   void _restorePendingClarification() {
     _pendingClarification = null;
+    _pendingClarificationId = null;
     for (final message in _messages.reversed) {
-      if (message.kind != ConversationMessageKind.clarification) continue;
+      if (message.role != ConversationRole.assistant) continue;
+      if (message.kind != ConversationMessageKind.clarification) return;
       final rawAction = message.data['action'];
       if (rawAction is! Map) continue;
       final parameters = rawAction['parameters'];
@@ -858,8 +1038,23 @@ class ConversationController extends ChangeNotifier {
         _pendingClarification = proposed is Map
             ? ConversationAction.fromJson(Map<String, dynamic>.from(proposed))
             : ConversationAction.fromJson(Map<String, dynamic>.from(rawAction));
+        _pendingClarificationId = message.clarificationId;
       } on ConversationActionValidationException {
-        _pendingClarification = null;
+        if (message.clarificationId != null &&
+            message.clarificationOptions.isNotEmpty) {
+          _pendingClarification = ConversationAction(
+            id: 'restored-clarification',
+            type: ConversationActionType.requestClarification,
+            parameters: {
+              'question': message.content,
+              'missing_parameter': 'selection',
+            },
+          );
+          _pendingClarificationId = message.clarificationId;
+        } else {
+          _pendingClarification = null;
+          _pendingClarificationId = null;
+        }
       }
       return;
     }

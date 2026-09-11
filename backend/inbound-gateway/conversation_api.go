@@ -128,6 +128,7 @@ func newTrustedConversationAPI(origin, api string, verifier accessTokenVerifier,
 func (h *trustedConversationAPI) register(mux *http.ServeMux) {
 	mux.HandleFunc("/conversation/action", h.action)
 	mux.HandleFunc("/conversation/decision", h.decision)
+	mux.HandleFunc("/conversation/clarification", h.clarification)
 	mux.HandleFunc("/conversation/attachment", h.attachment)
 }
 
@@ -204,8 +205,36 @@ func (h *trustedConversationAPI) action(w http.ResponseWriter, r *http.Request) 
 		}
 		modelDerived = true
 	}
+	addTrustedClarificationOptions(&input.Action)
+	proposal = modelProposal{Type: input.Action.Type, Parameters: input.Action.Parameters}
+	if !validateServerAction(proposal) {
+		jsonReply(w, http.StatusUnprocessableEntity, map[string]string{"error": "action_rejected"})
+		return
+	}
 	payload := map[string]any{"conversation": input.ConversationID, "action_id": input.Action.ID, "action_type": input.Action.Type, "action_version": input.Action.Version, "parameters": input.Action.Parameters, "request_key": input.RequestKey, "model_derived": modelDerived}
+	if input.Action.Type == "query_reminders" {
+		h.proxyTrustedRPC(w, identity, "submit_conversation_reminder_query", map[string]any{"conversation": input.ConversationID, "action_id": input.Action.ID, "action_version": input.Action.Version, "parameters": input.Action.Parameters, "request_key": input.RequestKey})
+		return
+	}
 	h.proxyTrustedRPC(w, identity, "submit_conversation_action", payload)
+}
+
+func addTrustedClarificationOptions(action *modelActionEnvelope) {
+	if action.Type != "request_clarification" {
+		return
+	}
+	if choices, ok := action.Parameters["choice_actions"].([]any); ok && len(choices) > 0 {
+		return
+	}
+	sum := sha256.Sum256([]byte(action.ID))
+	suffix := base64.RawURLEncoding.EncodeToString(sum[:9])
+	reminderID := "option-reminders-" + suffix
+	libraryID := "option-library-" + suffix
+	action.Parameters["choices"] = []any{"Open Reminders", "Open Library"}
+	action.Parameters["choice_actions"] = []any{
+		map[string]any{"id": reminderID, "type": "open_app_destination", "version": 1, "parameters": map[string]any{"destination": "reminders"}},
+		map[string]any{"id": libraryID, "type": "open_app_destination", "version": 1, "parameters": map[string]any{"destination": "library"}},
+	}
 }
 
 func (h *trustedConversationAPI) decision(w http.ResponseWriter, r *http.Request) {
@@ -222,6 +251,23 @@ func (h *trustedConversationAPI) decision(w http.ResponseWriter, r *http.Request
 		return
 	}
 	h.proxyTrustedRPC(w, identity, "decide_conversation_confirmation", map[string]any{"confirmation": input.ConfirmationID, "decision": input.Decision})
+}
+
+func (h *trustedConversationAPI) clarification(w http.ResponseWriter, r *http.Request) {
+	identity, ok := h.prepare(w, r, 2048)
+	if !ok {
+		return
+	}
+	var input struct {
+		ClarificationID string `json:"clarification_id"`
+		Decision        string `json:"decision"`
+		OptionID        string `json:"option_id,omitempty"`
+	}
+	if decodeRequestStrict(r.Body, &input) != nil || !uuidPattern.MatchString(input.ClarificationID) || !map[string]bool{"redisplay": true, "select": true, "cancel": true, "supersede": true}[input.Decision] || (input.Decision == "select" && !safeActionID.MatchString(input.OptionID)) || (input.Decision != "select" && input.OptionID != "") {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		return
+	}
+	h.proxyTrustedRPC(w, identity, "decide_conversation_clarification", map[string]any{"clarification": input.ClarificationID, "decision": input.Decision, "option_id": input.OptionID})
 }
 
 func (h *trustedConversationAPI) attachment(w http.ResponseWriter, r *http.Request) {

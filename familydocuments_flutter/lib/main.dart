@@ -258,6 +258,10 @@ class _AppState extends State<FamilyDocumentsApp> {
                   ),
                 ],
         );
+      case ConversationActionType.queryReminders:
+        throw HomeServiceException(
+          'Reminder queries require the authenticated conversation service.',
+        );
       case ConversationActionType.saveDocument:
         final bytes = uploadedBytes;
         final name = uploadedName;
@@ -1679,11 +1683,17 @@ class _AppState extends State<FamilyDocumentsApp> {
             conversationMessages: conversationController.messages,
             conversationLoading: conversationController.loading,
             conversationConfirmation: conversationController.confirmation,
+            activeClarificationId:
+                conversationController.pendingClarificationId,
             onNewConversation: _newConversation,
             onConfirmConversation: conversationController.confirm,
             onCancelConversationConfirmation:
                 conversationController.cancelConfirmation,
             onConversationSuggestion: conversationController.chooseSuggestion,
+            onConversationClarificationOption:
+                conversationController.chooseClarificationOption,
+            onCancelConversationClarification:
+                conversationController.cancelClarification,
             query: query,
             busy: busy,
             message: message,
@@ -1871,10 +1881,13 @@ class Shell extends StatelessWidget {
     required this.conversationMessages,
     required this.conversationLoading,
     required this.conversationConfirmation,
+    required this.activeClarificationId,
     required this.onNewConversation,
     required this.onConfirmConversation,
     required this.onCancelConversationConfirmation,
     required this.onConversationSuggestion,
+    required this.onConversationClarificationOption,
+    required this.onCancelConversationClarification,
     required this.query,
     required this.busy,
     required this.message,
@@ -1923,10 +1936,14 @@ class Shell extends StatelessWidget {
   final List<ConversationMessage> conversationMessages;
   final bool conversationLoading;
   final ConversationConfirmation? conversationConfirmation;
+  final String? activeClarificationId;
   final Future<void> Function() onNewConversation;
   final Future<void> Function() onConfirmConversation;
   final Future<void> Function() onCancelConversationConfirmation;
   final Future<void> Function(ConversationSuggestion) onConversationSuggestion;
+  final Future<void> Function(ConversationClarificationOption)
+  onConversationClarificationOption;
+  final Future<void> Function() onCancelConversationClarification;
   final TextEditingController query;
   final bool busy;
   final String? message;
@@ -2006,10 +2023,13 @@ class Shell extends StatelessWidget {
         conversationMessages: conversationMessages,
         conversationLoading: conversationLoading,
         conversationConfirmation: conversationConfirmation,
+        activeClarificationId: activeClarificationId,
         onNewConversation: onNewConversation,
         onConfirmConversation: onConfirmConversation,
         onCancelConversationConfirmation: onCancelConversationConfirmation,
         onConversationSuggestion: onConversationSuggestion,
+        onConversationClarificationOption: onConversationClarificationOption,
+        onCancelConversationClarification: onCancelConversationClarification,
         query: query,
         busy: busy,
         message: message,
@@ -2258,10 +2278,13 @@ class Home extends StatelessWidget {
     required this.conversationMessages,
     required this.conversationLoading,
     required this.conversationConfirmation,
+    required this.activeClarificationId,
     required this.onNewConversation,
     required this.onConfirmConversation,
     required this.onCancelConversationConfirmation,
     required this.onConversationSuggestion,
+    required this.onConversationClarificationOption,
+    required this.onCancelConversationClarification,
     required this.query,
     required this.busy,
     required this.message,
@@ -2293,10 +2316,14 @@ class Home extends StatelessWidget {
   final List<ConversationMessage> conversationMessages;
   final bool conversationLoading;
   final ConversationConfirmation? conversationConfirmation;
+  final String? activeClarificationId;
   final Future<void> Function() onNewConversation;
   final Future<void> Function() onConfirmConversation;
   final Future<void> Function() onCancelConversationConfirmation;
   final Future<void> Function(ConversationSuggestion) onConversationSuggestion;
+  final Future<void> Function(ConversationClarificationOption)
+  onConversationClarificationOption;
+  final Future<void> Function() onCancelConversationClarification;
   final TextEditingController query;
   final bool busy;
   final String? message;
@@ -2332,12 +2359,15 @@ class Home extends StatelessWidget {
           messages: conversationMessages,
           loading: conversationLoading,
           confirmation: conversationConfirmation,
+          activeClarificationId: activeClarificationId,
           query: query,
           uploadedName: uploadedName,
           onNewConversation: onNewConversation,
           onConfirm: onConfirmConversation,
           onCancelConfirmation: onCancelConversationConfirmation,
           onSuggestion: onConversationSuggestion,
+          onClarificationOption: onConversationClarificationOption,
+          onCancelClarification: onCancelConversationClarification,
           onSend: onSend,
           onUpload: onUpload,
           onClearAttachment: onClearAttachment,
@@ -2675,12 +2705,15 @@ class _ActiveConversation extends StatefulWidget {
     required this.messages,
     required this.loading,
     required this.confirmation,
+    required this.activeClarificationId,
     required this.query,
     required this.uploadedName,
     required this.onNewConversation,
     required this.onConfirm,
     required this.onCancelConfirmation,
     required this.onSuggestion,
+    required this.onClarificationOption,
+    required this.onCancelClarification,
     required this.onSend,
     required this.onUpload,
     required this.onClearAttachment,
@@ -2689,12 +2722,16 @@ class _ActiveConversation extends StatefulWidget {
   final List<ConversationMessage> messages;
   final bool loading;
   final ConversationConfirmation? confirmation;
+  final String? activeClarificationId;
   final TextEditingController query;
   final String? uploadedName;
   final Future<void> Function() onNewConversation;
   final Future<void> Function() onConfirm;
   final Future<void> Function() onCancelConfirmation;
   final Future<void> Function(ConversationSuggestion) onSuggestion;
+  final Future<void> Function(ConversationClarificationOption)
+  onClarificationOption;
+  final Future<void> Function() onCancelClarification;
   final VoidCallback onSend, onUpload, onClearAttachment;
 
   @override
@@ -2751,9 +2788,12 @@ class _ActiveConversationState extends State<_ActiveConversation> {
                 messages: widget.messages,
                 loading: widget.loading,
                 confirmation: widget.confirmation,
+                activeClarificationId: widget.activeClarificationId,
                 onConfirm: widget.onConfirm,
                 onCancelConfirmation: widget.onCancelConfirmation,
                 onSuggestion: widget.onSuggestion,
+                onClarificationOption: widget.onClarificationOption,
+                onCancelClarification: widget.onCancelClarification,
                 scrollController: scroll,
               ),
             ),

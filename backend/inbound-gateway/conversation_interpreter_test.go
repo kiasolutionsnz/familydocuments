@@ -127,6 +127,22 @@ func TestConversationInterpreterReturnsValidAllowlistedProposal(t *testing.T) {
 	}
 }
 
+func TestConversationInterpreterAllowsTypedReminderQuery(t *testing.T) {
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jsonReply(w, http.StatusOK, map[string]any{"message": map[string]string{"content": `{"type":"query_reminders","parameters":{"scope":"today"}}`}})
+	}))
+	defer ollama.Close()
+	handler, token, closeAPI := conversationTestHandler(t, ollama.URL)
+	defer closeAPI()
+	req := httptest.NewRequest(http.MethodPost, "/conversation/interpret", strings.NewReader(`{"message":"any reminders for today","context":{"has_attachment":false,"references":[]}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	handler(response, req)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"type":"query_reminders"`) {
+		t.Fatalf("typed reminder query was rejected: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestConversationInterpreterRejectsMissingRequiredParameter(t *testing.T) {
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusOK, map[string]any{"message": map[string]string{"content": `{"type":"save_link","parameters":{"url":"https://example.com"}}`}})

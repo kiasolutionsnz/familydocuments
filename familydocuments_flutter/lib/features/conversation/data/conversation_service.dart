@@ -63,6 +63,11 @@ abstract class ConversationRepository {
     String confirmationId, {
     required bool confirm,
   });
+  Future<ConversationAuthoritativeOutcome> decideClarification(
+    String clarificationId, {
+    required String decision,
+    String? optionId,
+  });
   Future<String> stageAttachment({
     required String conversationId,
     required String fileName,
@@ -189,9 +194,17 @@ class MemoryConversationRepository implements ConversationRepository {
         content: outcome.message,
         createdAt: DateTime.now(),
         data: action.type == ConversationActionType.requestClarification
-            ? {'action': action.toJson()}
+            ? {
+                'clarification_id': action.id,
+                'action': action.toJson(),
+                'choices': action.parameters['choices'] ?? const <String>[],
+                'choice_actions':
+                    action.parameters['choice_actions'] ?? const <Object>[],
+              }
             : outcome.result,
-        suggestions: _memorySuggestions(action, outcome.result),
+        suggestions: action.type == ConversationActionType.requestClarification
+            ? const []
+            : _memorySuggestions(action, outcome.result),
       ),
     );
     return outcome;
@@ -234,6 +247,68 @@ class MemoryConversationRepository implements ConversationRepository {
       }
     }
     return suggestions;
+  }
+
+  @override
+  Future<ConversationAuthoritativeOutcome> decideClarification(
+    String clarificationId, {
+    required String decision,
+    String? optionId,
+  }) async {
+    final clarification = messages.lastWhere(
+      (message) => message.clarificationId == clarificationId,
+    );
+    if (decision == 'redisplay') {
+      messages.add(
+        ConversationMessage(
+          id: 'redisplay-${messages.length + 100}',
+          role: ConversationRole.assistant,
+          kind: ConversationMessageKind.clarification,
+          content: clarification.content,
+          createdAt: DateTime.now(),
+          data: clarification.data,
+        ),
+      );
+      return ConversationAuthoritativeOutcome(
+        executionId: clarificationId,
+        state: 'awaiting_clarification',
+        actionType: 'request_clarification',
+        result: {'message': clarification.content},
+      );
+    }
+    if (decision == 'select') {
+      final action = (clarification.data['choice_actions'] as List? ?? const [])
+          .whereType<Map>()
+          .map((value) => Map<String, dynamic>.from(value))
+          .where((value) => value['id'] == optionId)
+          .map(ConversationAction.fromJson)
+          .first;
+      return submitAction(
+        id!,
+        action,
+        'clarification-$clarificationId-$optionId',
+      );
+    }
+    final message = decision == 'cancel'
+        ? 'Okay, cancelled.'
+        : 'Superseded by your new request.';
+    if (decision == 'cancel') {
+      messages.add(
+        ConversationMessage(
+          id: 'cancel-${messages.length + 100}',
+          role: ConversationRole.assistant,
+          kind: ConversationMessageKind.result,
+          content: message,
+          createdAt: DateTime.now(),
+        ),
+      );
+    }
+    return ConversationAuthoritativeOutcome(
+      executionId: clarificationId,
+      state: 'cancelled',
+      actionType: 'request_clarification',
+      result: {'message': message},
+    );
   }
 
   @override
@@ -535,6 +610,20 @@ class ConversationService implements ConversationRepository {
       _proposalTokens.remove(action.id);
     }
     return outcome;
+  }
+
+  @override
+  Future<ConversationAuthoritativeOutcome> decideClarification(
+    String clarificationId, {
+    required String decision,
+    String? optionId,
+  }) async {
+    final response = await _post('/conversation/clarification', {
+      'clarification_id': clarificationId,
+      'decision': decision,
+      'option_id': ?optionId,
+    });
+    return _outcome(response, 'That choice could not be completed.');
   }
 
   @override

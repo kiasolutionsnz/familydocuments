@@ -133,4 +133,92 @@ void main() {
       semantics.dispose();
     },
   );
+
+  testWidgets('clarification renders trusted options and Cancel', (
+    tester,
+  ) async {
+    ConversationClarificationOption? selected;
+    var cancelled = false;
+    const clarificationId = '11111111-1111-4111-8111-111111111111';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ConversationTranscript(
+            messages: [
+              message(
+                'clarification-12345678',
+                ConversationRole.assistant,
+                ConversationMessageKind.clarification,
+                'What would you like me to do?',
+                data: const {
+                  'clarification_id': clarificationId,
+                  'choices': ['Show reminders'],
+                  'choice_actions': [
+                    {
+                      'id': 'option-reminders-1234',
+                      'type': 'query_reminders',
+                      'version': 1,
+                      'parameters': {'scope': 'upcoming'},
+                    },
+                  ],
+                },
+              ),
+            ],
+            loading: false,
+            confirmation: null,
+            activeClarificationId: clarificationId,
+            onConfirm: () {},
+            onCancelConfirmation: () {},
+            onSuggestion: (_) {},
+            onClarificationOption: (value) => selected = value,
+            onCancelClarification: () => cancelled = true,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Show reminders'), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
+    await tester.tap(find.text('Show reminders'));
+    expect(selected?.id, 'option-reminders-1234');
+    await tester.tap(find.text('Cancel'));
+    expect(cancelled, isTrue);
+  });
+
+  testWidgets('reminder result renders its local date and time', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConversationTranscript(
+          messages: [
+            message(
+              'reminders-12345678',
+              ConversationRole.assistant,
+              ConversationMessageKind.result,
+              'Here are your reminders for today.',
+              data: const {
+                'results': [
+                  {
+                    'type': 'reminder',
+                    'title': 'Doctor appointment',
+                    'due_date': '2027-01-20',
+                    'due_time': '14:00:00',
+                  },
+                ],
+              },
+            ),
+          ],
+          loading: false,
+          confirmation: null,
+          onConfirm: () {},
+          onCancelConfirmation: () {},
+          onSuggestion: (_) {},
+        ),
+      ),
+    );
+
+    expect(find.text('Doctor appointment'), findsOneWidget);
+    expect(find.text('2027-01-20 at 14:00:00'), findsOneWidget);
+  });
 }

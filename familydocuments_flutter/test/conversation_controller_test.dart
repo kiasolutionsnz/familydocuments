@@ -328,7 +328,9 @@ void main() {
     expect(subject.messages.last.content, contains('more than one'));
     expect(subject.messages.last.data.toString(), isNot(contains('storage')));
 
-    await subject.chooseSuggestion(subject.messages.last.suggestions.first);
+    await subject.chooseClarificationOption(
+      subject.messages.last.clarificationOptions.first,
+    );
     expect(subject.confirmation, isNotNull);
     expect(
       executor.actions.where(
@@ -768,6 +770,218 @@ void main() {
         ConversationActionType.dismissInboxItem,
       );
       expect(executor.actions.last.parameters['inbox_id'], inboxOne);
+    },
+  );
+
+  test('reminder queries are deterministic and never call the model', () async {
+    final repository = FakeRepository()..modelFails = true;
+    final executor = RecordingExecutor();
+    final subject = controller(repository, executor);
+
+    await subject.submit('Any reminders for today?');
+    expect(repository.interpretCalls, 0);
+    expect(executor.actions.single.type, ConversationActionType.queryReminders);
+    expect(executor.actions.single.parameters, {'scope': 'today'});
+
+    await subject.submit('Show me reminders');
+    expect(repository.interpretCalls, 0);
+    expect(executor.actions.last.type, ConversationActionType.queryReminders);
+    expect(executor.actions.last.parameters, {'scope': 'upcoming'});
+  });
+
+  test('specific reminder query validates a named local date', () async {
+    final repository = FakeRepository();
+    final executor = RecordingExecutor();
+    final subject = controller(repository, executor);
+
+    await subject.submit('Show reminders for 20 January 2027');
+    expect(executor.actions.single.type, ConversationActionType.queryReminders);
+    expect(executor.actions.single.parameters, {
+      'scope': 'date',
+      'date': '2027-01-20',
+    });
+  });
+
+  test(
+    'What options redisplays persisted visible clarification choices',
+    () async {
+      final repository = FakeRepository();
+      final executor = RecordingExecutor();
+      repository.modelAction = ConversationAction(
+        id: 'clarify-options-1234',
+        type: ConversationActionType.requestClarification,
+        parameters: {
+          'question': 'What would you like me to do?',
+          'missing_parameter': 'intent',
+          'choices': const ['Show reminders'],
+          'choice_actions': [
+            ConversationAction(
+              id: 'option-reminders-1234',
+              type: ConversationActionType.queryReminders,
+              parameters: const {'scope': 'upcoming'},
+            ).toJson(),
+          ],
+        },
+      );
+      final subject = controller(repository, executor);
+
+      await subject.submit('Help me');
+      final restored = controller(repository, executor);
+      await restored.restore();
+      expect(restored.pendingClarificationId, isNotNull);
+      expect(
+        restored.messages.last.clarificationOptions.single.label,
+        'Show reminders',
+      );
+      await subject.submit('What options?');
+
+      expect(subject.messages.last.kind, ConversationMessageKind.clarification);
+      expect(
+        subject.messages.last.clarificationOptions.single.label,
+        'Show reminders',
+      );
+      expect(subject.pendingClarificationId, isNotNull);
+    },
+  );
+
+  test(
+    'trusted opaque options survive redundant action parse failure',
+    () async {
+      final repository = FakeRepository();
+      final executor = RecordingExecutor();
+      repository.id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+      repository.messages.add(
+        ConversationMessage(
+          id: 'opaque-options-message',
+          role: ConversationRole.assistant,
+          kind: ConversationMessageKind.clarification,
+          content: 'What would you like to do?',
+          createdAt: DateTime.now(),
+          data: {
+            'clarification_id': '55555555-5555-4555-8555-555555555555',
+            'choices': const ['Open Reminders'],
+            'choice_actions': [
+              {
+                'id': 'option-reminders-valid',
+                'type': 'open_app_destination',
+                'version': 1,
+                'parameters': {'destination': 'reminders'},
+              },
+            ],
+            'action': {
+              'id': 'invalid embedded action',
+              'type': 'request_clarification',
+              'version': 1,
+              'parameters': const {
+                'question': 'What would you like to do?',
+                'missing_parameter': 'intent',
+              },
+            },
+          },
+        ),
+      );
+      final subject = controller(repository, executor);
+
+      await subject.restore();
+
+      expect(
+        subject.pendingClarificationId,
+        '55555555-5555-4555-8555-555555555555',
+      );
+      expect(
+        subject.messages.single.clarificationOptions.single.label,
+        'Open Reminders',
+      );
+    },
+  );
+
+  test('What options requests trusted choices without stale context', () async {
+    final repository = FakeRepository();
+    final executor = RecordingExecutor();
+    final subject = controller(repository, executor);
+
+    await subject.submit('What options?');
+
+    expect(repository.interpretCalls, 0);
+    expect(subject.messages.last.kind, ConversationMessageKind.clarification);
+    expect(subject.messages.last.content, 'What would you like to do?');
+    expect(subject.pendingClarificationId, isNotNull);
+  });
+
+  test('cancel clears clarification and survives restoration', () async {
+    final repository = FakeRepository();
+    final executor = RecordingExecutor();
+    repository.modelAction = ConversationAction(
+      id: 'clarify-cancel-1234',
+      type: ConversationActionType.requestClarification,
+      parameters: const {
+        'question': 'What should I do?',
+        'missing_parameter': 'intent',
+      },
+    );
+    final subject = controller(repository, executor);
+
+    await subject.submit('Help me');
+    await subject.cancelClarification();
+    await subject.restore();
+
+    expect(subject.pendingClarificationId, isNull);
+    expect(subject.messages.last.content, 'Okay, cancelled.');
+  });
+
+  test('deterministic reminder query supersedes stale clarification', () async {
+    final repository = FakeRepository();
+    final executor = RecordingExecutor();
+    repository.modelAction = ConversationAction(
+      id: 'clarify-stale-1234',
+      type: ConversationActionType.requestClarification,
+      parameters: const {
+        'question': 'What should I do?',
+        'missing_parameter': 'intent',
+      },
+    );
+    final subject = controller(repository, executor);
+
+    await subject.submit('Help me');
+    await subject.submit('Show me reminders');
+
+    expect(executor.actions.single.type, ConversationActionType.queryReminders);
+    expect(subject.pendingClarificationId, isNull);
+  });
+
+  test(
+    'attachment OCR command supersedes stale clarification without loss',
+    () async {
+      final repository = FakeRepository();
+      final executor = RecordingExecutor();
+      repository.modelAction = ConversationAction(
+        id: 'clarify-upload-1234',
+        type: ConversationActionType.requestClarification,
+        parameters: const {
+          'question': 'What should I do?',
+          'missing_parameter': 'intent',
+        },
+      );
+      final subject = controller(repository, executor);
+
+      await subject.submit('Help me');
+      await subject.submit(
+        'Add the document and do ocr',
+        hasAttachment: true,
+        attachmentLabel: 'synthetic-bill.pdf',
+        attachmentMimeType: 'application/pdf',
+        attachmentBytes: const [37, 80, 68, 70],
+      );
+
+      expect(
+        executor.actions.single.type,
+        ConversationActionType.requestDocumentOcr,
+      );
+      expect(
+        executor.actions.single.parameters['attachment_id'],
+        'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab',
+      );
+      expect(subject.pendingClarificationId, isNull);
     },
   );
 }
