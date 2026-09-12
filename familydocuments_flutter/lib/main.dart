@@ -165,7 +165,10 @@ class _AppState extends State<FamilyDocumentsApp> {
   Future<void> send() async {
     final instruction = query.text.trim();
     if (busy || conversationController.loading) return;
-    final hasAttachment = uploadedBytes != null;
+    // A typed clarification answer acts on the already-staged attachment.
+    final hasAttachment =
+        uploadedBytes != null &&
+        conversationController.pendingClarificationId == null;
     await conversationController.submit(
       instruction,
       hasAttachment: hasAttachment,

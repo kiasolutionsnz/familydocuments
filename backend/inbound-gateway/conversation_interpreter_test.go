@@ -298,3 +298,19 @@ func TestConversationInterpreterReportsModelTimeoutWithoutInternalDetails(t *tes
 		t.Fatalf("model timeout was not safely distinguished: %s", body)
 	}
 }
+
+func TestReminderDraftInterpretationIsDeterministic(t *testing.T) {
+	now := time.Date(2026, time.September, 12, 0, 0, 0, 0, time.UTC)
+	start, ok := deterministicReminderDraft("Set reminder", now)
+	if !ok || start.Type != "request_clarification" || start.Parameters["missing_parameter"] != "reminder" || start.Parameters["question"] != "What should I remind you about, and when?" {
+		t.Fatalf("unexpected reminder draft: %#v", start)
+	}
+	complete, ok := deterministicReminderDraft("Remind me about Doctor appointment tomorrow at 11 am", now)
+	if !ok || complete.Type != "create_reminder" || complete.Parameters["title"] != "Doctor appointment" || complete.Parameters["due_date"] != "2026-09-13" || complete.Parameters["due_time"] != "11:00:00" {
+		t.Fatalf("unexpected completed reminder: %#v", complete)
+	}
+	dateFirst, ok := deterministicReminderDraft("Remind me about Tomorrow at 11 am", now)
+	if !ok || dateFirst.Type != "request_clarification" || dateFirst.Parameters["missing_parameter"] != "reminder_title" || dateFirst.Parameters["draft_date"] != "2026-09-13" || dateFirst.Parameters["draft_time"] != "11:00:00" {
+		t.Fatalf("unexpected date-first draft: %#v", dateFirst)
+	}
+}

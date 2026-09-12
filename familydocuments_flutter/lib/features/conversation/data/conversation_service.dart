@@ -191,7 +191,9 @@ class MemoryConversationRepository implements ConversationRepository {
       );
     }
     final outcome =
-        await actionHandler?.call(action) ??
+        (action.type == ConversationActionType.requestClarification
+            ? null
+            : await actionHandler?.call(action)) ??
         ConversationAuthoritativeOutcome(
           executionId: action.id,
           state: action.type == ConversationActionType.requestClarification

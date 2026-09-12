@@ -1,5 +1,5 @@
 import {spawn} from 'node:child_process';
-import {randomBytes} from 'node:crypto';
+import {randomBytes, createHash} from 'node:crypto';
 import {readFile, readdir, mkdir, writeFile, open} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {createServer} from 'node:net';
@@ -11,10 +11,11 @@ const manualLibrary = process.argv.includes('--manual-library');
 const manualInbox = process.argv.includes('--manual-inbox');
 const manualConversation = process.argv.includes('--manual-conversation');
 const manualTelegram = process.argv.includes('--manual-telegram');
-if ([manualLibrary, manualInbox, manualConversation, manualTelegram].filter(Boolean).length > 1) throw new Error('Choose one manual runtime');
-const manualRuntime = manualLibrary || manualInbox || manualConversation || manualTelegram;
-const conversationFixtures = manualConversation || manualTelegram;
-const prefix = `${manualTelegram ? 'fd-telegram' : manualConversation ? 'fd-conversation' : manualInbox ? 'fd-inbox' : manualLibrary ? 'fd-library' : 'fd-test'}-${randomBytes(6).toString('hex')}`;
+const manualPhase2F = process.argv.includes('--manual-phase2f');
+if ([manualLibrary, manualInbox, manualConversation, manualTelegram, manualPhase2F].filter(Boolean).length > 1) throw new Error('Choose one manual runtime');
+const manualRuntime = manualLibrary || manualInbox || manualConversation || manualTelegram || manualPhase2F;
+const conversationFixtures = manualConversation || manualTelegram || manualPhase2F;
+const prefix = `${manualPhase2F ? 'fd-phase2f' : manualTelegram ? 'fd-telegram' : manualConversation ? 'fd-conversation' : manualInbox ? 'fd-inbox' : manualLibrary ? 'fd-library' : 'fd-test'}-${randomBytes(6).toString('hex')}`;
 const label = manualRuntime ? 'app.familydocuments.manual-runtime' : 'app.familydocuments.test-run';
 const containers = [], networks = [], processes = [];
 let keepManualRuntime = false;
@@ -81,7 +82,15 @@ async function cleanup() {
 }
 
 const results = [];
+const appliedMigrations = [];
+let candidateCommit = null, candidateTree = null;
 try {
+  if (manualPhase2F) {
+    candidateCommit = await command('git', ['rev-parse', 'HEAD'], {quiet: true});
+    candidateTree = await command('git', ['rev-parse', 'HEAD^{tree}'], {quiet: true});
+    if (await command('git', ['status', '--porcelain', '--untracked-files=no'], {quiet: true})) throw new Error('Phase 2F candidate requires a clean tracked checkout');
+    if (!process.env.FD_GATEWAY_IMAGE) throw new Error('Phase 2F requires an explicitly built candidate gateway image');
+  }
   console.log(`Starting ${prefix}: disposable synthetic database; no production credentials, volumes or external email.`);
   for (const scope of ['db', 'app']) {
     const name = `${prefix}_${scope}`;
@@ -107,7 +116,9 @@ try {
   }).flatMap(([key, value]) => ['-e', `${key}=${value}`])]);
   await ready(`${env.FD_AUTH_URL}/health`);
   for (const file of (await readdir(new URL('../migrations/', import.meta.url))).filter(file => file.endsWith('.sql')).sort()) {
-    await sql(await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8'));
+    const source = await readFile(new URL(`../migrations/${file}`, import.meta.url));
+    await sql(source.toString('utf8'));
+    appliedMigrations.push({file, sha256: createHash('sha256').update(source).digest('hex')});
   }
   console.log('All migrations replayed in disposable PostgreSQL.');
   await run('rest', images.rest, ['--network', `name=${networks[1]},alias=rest`, '--network', networks[0], '-p', `127.0.0.1:${ports.API}:3000`, '--read-only', '--cap-drop', 'ALL', '-e', `PGRST_DB_URI=postgres://authenticator:${password}@db:5432/postgres`, '-e', 'PGRST_DB_SCHEMAS=fp', '-e', 'PGRST_DB_ANON_ROLE=anon', '-e', `PGRST_JWT_SECRET=${env.GOTRUE_JWT_SECRET}`]);
@@ -117,7 +128,7 @@ try {
   await ready(`${env.FD_GATEWAY_URL}/health`);
   env.FD_SEARCH_URL = `${env.FD_GATEWAY_URL}/search`;
   console.log(`Isolated database container: ${env.FD_TEST_CONTAINER}`);
-  const suites = process.argv.slice(2).filter(value => value !== '--manual-library' && value !== '--manual-inbox' && value !== '--manual-conversation' && value !== '--manual-telegram');
+  const suites = process.argv.slice(2).filter(value => value !== '--manual-library' && value !== '--manual-inbox' && value !== '--manual-conversation' && value !== '--manual-telegram' && value !== '--manual-phase2f');
   const selected = suites.length ? suites : ['email-password-auth.mjs', 'family-foundation.mjs', 'totp-mfa-e2e.mjs', 'google-oauth-contract.mjs', 'email-ingestion-e2e.mjs', 'search-assistant-e2e.mjs', 'ocr-reminder-e2e.mjs', 'attachment-scanner-e2e.mjs', 'google-drive-exact-files.sql', 'operational-hardening.sql', 'ux-phase-a-original-sources.sql'];
   async function startOcr() {
     console.log('Starting isolated real PaddleOCR (models baked in cached image; no external AI).');
@@ -139,8 +150,11 @@ try {
     }
   }
   if (manualRuntime) {
-    const runtimeDir = fileURLToPath(new URL(`../supabase/.temp/${manualTelegram ? 'phase2e' : manualConversation ? 'phase2d' : manualInbox ? 'phase2c' : 'phase2b'}-manual-${prefix}/`, import.meta.url));
+    const runtimeDir = fileURLToPath(new URL(`../supabase/.temp/${manualPhase2F ? 'phase2f' : manualTelegram ? 'phase2e' : manualConversation ? 'phase2d' : manualInbox ? 'phase2c' : 'phase2b'}-manual-${prefix}/`, import.meta.url));
     await mkdir(runtimeDir, {recursive: true});
+    if (manualPhase2F && process.platform === 'win32') {
+      await command('icacls', [runtimeDir, '/inheritance:r', '/grant:r', `${process.env.USERDOMAIN}\\${process.env.USERNAME}:(OI)(CI)F`], {quiet: true});
+    }
     await startOcr();
     const ollama = await fetch('http://127.0.0.1:11434/api/tags', {signal: AbortSignal.timeout(5000)}).then(response => response.json());
     if (!ollama.models?.some(item => String(item.name).startsWith('qwen3:4b'))) throw new Error('Local qwen3:4b is unavailable');
@@ -175,8 +189,8 @@ try {
       return body;
     }
 
-    const mode = manualTelegram ? 'telegram' : manualConversation ? 'conversation' : manualInbox ? 'inbox' : 'library';
-    const phase = manualTelegram ? 'Phase 2E' : manualConversation ? 'Phase 2D' : manualInbox ? 'Phase 2C' : 'Phase 2B';
+    const mode = manualPhase2F ? 'phase2f' : manualTelegram ? 'telegram' : manualConversation ? 'conversation' : manualInbox ? 'inbox' : 'library';
+    const phase = manualPhase2F ? 'Phase 2F' : manualTelegram ? 'Phase 2E' : manualConversation ? 'Phase 2D' : manualInbox ? 'Phase 2C' : 'Phase 2B';
     const owner = await createManualAccount(`${mode}-owner`);
     const viewer = await createManualAccount(`${mode}-viewer`);
     const outsider = await createManualAccount(`${mode}-outsider`);
@@ -262,6 +276,9 @@ try {
     }
 
     const workerLogPath = `${runtimeDir}\\worker.log`;
+    if (manualPhase2F) {
+      await writeFile(`${runtimeDir}\\synthetic-image.png`, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
+    }
     const flutterLogPath = `${runtimeDir}\\flutter.log`;
     const workerLog = await open(workerLogPath, 'a');
     const worker = spawn(process.execPath, ['document-analysis/worker.mjs', '--watch'], {cwd: root, env: {...env, FP_API_URL: env.FD_API_URL, FP_OCR_URL: env.FD_OCR_URL, FP_OLLAMA_URL: 'http://127.0.0.1:11434', FP_OLLAMA_MODEL: 'qwen3:4b'}, windowsHide: true, detached: true, stdio: ['ignore', workerLog.fd, workerLog.fd]});
@@ -289,7 +306,7 @@ try {
     const credentialsPath = `${runtimeDir}\\credentials.txt`;
     await writeFile(credentialsPath, `Synthetic owner\nEmail: ${owner.email}\nPassword: ${owner.password}\n\nRead-only member\nEmail: ${viewer.email}\nPassword: ${viewer.password}\n${multiFamily ? `\nMultiple-Family member\nEmail: ${multiFamily.email}\nPassword: ${multiFamily.password}\n` : ''}`, {mode: 0o600});
     const runtimePath = `${runtimeDir}\\runtime.json`;
-    const migration = manualTelegram ? '051_telegram_status_and_conversation_categories.sql' : manualConversation ? '048_conversation_reminder_queries.sql' : manualInbox ? '044_flutter_inbox.sql' : '043_flutter_library.sql';
+    const migration = appliedMigrations.at(-1).file;
     const seed = {
       documents: conversationFixtures ? 9 : 8,
       trips: 2,
@@ -302,7 +319,7 @@ try {
       revocable_document: ids.revocable,
       ...(inboxSeed ?? {}),
     };
-    await writeFile(runtimePath, JSON.stringify({runtime_id: prefix, label, candidate_commit: process.env.FD_CANDIDATE_COMMIT || null, created_at: new Date().toISOString(), containers, networks, processes: {worker: worker.pid, flutter: flutter.pid,...(manualTelegram?{telegram_worker:telegramWorker.pid,fake_telegram:fakeTelegram.pid}:{})}, urls: {flutter: `http://127.0.0.1:${ports.WEB}`, gateway: env.FD_GATEWAY_URL, auth: env.FD_AUTH_URL, api: env.FD_API_URL, ocr: env.FD_OCR_URL,...(manualTelegram?{fake_telegram:`http://127.0.0.1:${ports.TELEGRAM}`}:{})}, logs: {worker: workerLogPath, flutter: flutterLogPath,...(manualTelegram?{telegram_worker:telegramWorkerLogPath,fake_telegram:fakeTelegramLogPath}:{})}, credentials_file: credentialsPath, fixtures: [fileURLToPath(new URL('../tests/fixtures/synthetic-bill.pdf', import.meta.url)), fileURLToPath(new URL('../tests/fixtures/synthetic-malformed.pdf', import.meta.url)),...(manualTelegram?[`${runtimeDir}\\synthetic-image.png`,`${runtimeDir}\\synthetic-image.jpg`]:[])], migration, seed}, null, 2));
+    await writeFile(runtimePath, JSON.stringify({runtime_id: prefix, label, candidate_commit: candidateCommit || process.env.FD_CANDIDATE_COMMIT || null, candidate_tree: candidateTree, source_root: fileURLToPath(new URL('../../', import.meta.url)), applied_migrations: appliedMigrations, gateway_image: images.gateway, gateway_image_id: await command(docker, ['image', 'inspect', '-f', '{{.Id}}', images.gateway], {quiet: true}), created_at: new Date().toISOString(), containers, networks, processes: {worker: worker.pid, flutter: flutter.pid,...(manualTelegram?{telegram_worker:telegramWorker.pid,fake_telegram:fakeTelegram.pid}:{})}, urls: {flutter: `http://127.0.0.1:${ports.WEB}`, gateway: env.FD_GATEWAY_URL, auth: env.FD_AUTH_URL, api: env.FD_API_URL, ocr: env.FD_OCR_URL,...(manualTelegram?{fake_telegram:`http://127.0.0.1:${ports.TELEGRAM}`}:{})}, logs: {worker: workerLogPath, flutter: flutterLogPath,...(manualTelegram?{telegram_worker:telegramWorkerLogPath,fake_telegram:fakeTelegramLogPath}:{})}, credentials_file: credentialsPath, fixtures: [fileURLToPath(new URL('../tests/fixtures/synthetic-bill.pdf', import.meta.url)), fileURLToPath(new URL('../tests/fixtures/synthetic-malformed.pdf', import.meta.url)),...(manualTelegram?[`${runtimeDir}\\synthetic-image.png`,`${runtimeDir}\\synthetic-image.jpg`]:manualPhase2F?[`${runtimeDir}\\synthetic-image.png`]:[])], migration, seed}, null, 2));
     keepManualRuntime = true;
     console.log(JSON.stringify({[manualTelegram ? 'manual_telegram_runtime' : manualConversation ? 'manual_conversation_runtime' : manualInbox ? 'manual_inbox_runtime' : 'manual_library_runtime']: 'READY', flutter_url: `http://127.0.0.1:${ports.WEB}`, credentials_file: credentialsPath, runtime_manifest: runtimePath, worker_pid: worker.pid,...(manualTelegram?{fake_telegram_url:`http://127.0.0.1:${ports.TELEGRAM}`,telegram_worker_pid:telegramWorker.pid}:{}), migration}, null, 2));
   }

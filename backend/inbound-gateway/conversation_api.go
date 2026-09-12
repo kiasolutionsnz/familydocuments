@@ -207,36 +207,12 @@ func (h *trustedConversationAPI) action(w http.ResponseWriter, r *http.Request) 
 		}
 		modelDerived = derived
 	}
-	addTrustedClarificationOptions(&input.Action)
-	proposal = modelProposal{Type: input.Action.Type, Parameters: input.Action.Parameters}
-	if !validateServerAction(proposal) {
-		jsonReply(w, http.StatusUnprocessableEntity, map[string]string{"error": "action_rejected"})
-		return
-	}
 	payload := map[string]any{"conversation": input.ConversationID, "action_id": input.Action.ID, "action_type": input.Action.Type, "action_version": input.Action.Version, "parameters": input.Action.Parameters, "request_key": input.RequestKey, "model_derived": modelDerived}
 	if input.Action.Type == "query_reminders" {
 		h.proxyTrustedRPC(w, identity, "submit_conversation_reminder_query", map[string]any{"conversation": input.ConversationID, "action_id": input.Action.ID, "action_version": input.Action.Version, "parameters": input.Action.Parameters, "request_key": input.RequestKey})
 		return
 	}
 	h.proxyTrustedRPC(w, identity, "submit_conversation_action", payload)
-}
-
-func addTrustedClarificationOptions(action *modelActionEnvelope) {
-	if action.Type != "request_clarification" {
-		return
-	}
-	if choices, ok := action.Parameters["choice_actions"].([]any); ok && len(choices) > 0 {
-		return
-	}
-	sum := sha256.Sum256([]byte(action.ID))
-	suffix := base64.RawURLEncoding.EncodeToString(sum[:9])
-	reminderID := "option-reminders-" + suffix
-	libraryID := "option-library-" + suffix
-	action.Parameters["choices"] = []any{"Open Reminders", "Open Library"}
-	action.Parameters["choice_actions"] = []any{
-		map[string]any{"id": reminderID, "type": "open_app_destination", "version": 1, "parameters": map[string]any{"destination": "reminders"}},
-		map[string]any{"id": libraryID, "type": "open_app_destination", "version": 1, "parameters": map[string]any{"destination": "library"}},
-	}
 }
 
 func (h *trustedConversationAPI) decision(w http.ResponseWriter, r *http.Request) {

@@ -147,6 +147,9 @@ class ConversationAction {
       'recurrence',
       'scope',
       'date',
+      'draft_title',
+      'draft_date',
+      'draft_time',
     ]) {
       final value = parameters[key];
       if (value != null && value is! String) {
@@ -207,6 +210,14 @@ class ConversationAction {
     final expectedDate = parameters['expected_due_date']?.toString();
     if (expectedDate != null && !_validDate(expectedDate)) {
       throw const ConversationActionValidationException('Invalid date.');
+    }
+    final draftDate = parameters['draft_date']?.toString();
+    if (draftDate != null && !_validDate(draftDate)) {
+      throw const ConversationActionValidationException('Invalid draft date.');
+    }
+    final draftTime = parameters['draft_time']?.toString();
+    if (draftTime != null && !_time.hasMatch(draftTime)) {
+      throw const ConversationActionValidationException('Invalid draft time.');
     }
     final time = parameters['due_time']?.toString();
     if (time != null && !_time.hasMatch(time)) {
@@ -404,6 +415,9 @@ const _allowedParameters = <ConversationActionType, Set<String>>{
     'link_title',
     'attachment_id',
     'tags',
+    'draft_title',
+    'draft_date',
+    'draft_time',
   },
   ConversationActionType.requestConfirmation: {
     'summary',
@@ -597,7 +611,10 @@ class ConversationMessage {
     if (action is! Map) return false;
     final parameters = action['parameters'];
     return parameters is Map &&
-        parameters['missing_parameter'] == 'document_category' &&
+        const {
+          'document_category',
+          'category_name',
+        }.contains(parameters['missing_parameter']) &&
         parameters['attachment_id'] != null;
   }
 

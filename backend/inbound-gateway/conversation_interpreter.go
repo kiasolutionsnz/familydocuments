@@ -7,14 +7,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata" // The scratch gateway image has no system timezone database.
 )
 
 const maxConversationInterpretMessage = 500
@@ -24,6 +27,8 @@ var safeDate = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 var safeTime = regexp.MustCompile(`^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$`)
 var conversationURL = regexp.MustCompile(`https://[^\s<>"']+`)
 var explicitDocumentCategory = regexp.MustCompile(`(?i)\b(?:in|to|as)\s+([a-z][a-z0-9 &-]{1,39})[.!]?$`)
+var reminderClock = regexp.MustCompile(`(?i)\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b`)
+var reminderDay = regexp.MustCompile(`(?i)\btomorrow\b`)
 
 var actionParameters = map[string]map[string]bool{
 	"search_family_content":    {"query": true},
@@ -38,7 +43,7 @@ var actionParameters = map[string]map[string]bool{
 	"mark_inbox_reviewed":      {"inbox_id": true, "expected_updated_at": true},
 	"dismiss_inbox_item":       {"inbox_id": true, "expected_updated_at": true},
 	"open_app_destination":     {"destination": true, "result_index": true},
-	"request_clarification":    {"question": true, "missing_parameter": true, "proposed_action": true, "choices": true, "choice_actions": true, "attachment_id": true, "tags": true, "link_url": true, "link_title": true},
+	"request_clarification":    {"question": true, "missing_parameter": true, "proposed_action": true, "choices": true, "choice_actions": true, "attachment_id": true, "tags": true, "link_url": true, "link_title": true, "draft_title": true, "draft_date": true, "draft_time": true},
 	"unsupported_request":      {"reason": true},
 }
 
@@ -207,6 +212,9 @@ func deterministicConversationProposal(input interpreterInput) (modelProposal, b
 		}
 		return modelProposal{Type: "request_clarification", Parameters: map[string]any{"question": "Would you like me to save this link?", "missing_parameter": "link_action", "link_url": parsed.String(), "link_title": parsed.Hostname(), "choices": []any{"Save link", "Cancel"}}}, true
 	}
+	if proposal, ok := deterministicReminderDraft(message, time.Now()); ok {
+		return proposal, true
+	}
 	if strings.Contains(lower, "reminder") || strings.Contains(lower, "reminders") {
 		scope := "upcoming"
 		if strings.Contains(lower, "today") {
@@ -221,6 +229,89 @@ func deterministicConversationProposal(input interpreterInput) (modelProposal, b
 		}
 	}
 	return modelProposal{}, false
+}
+
+func deterministicReminderDraft(message string, now time.Time) (modelProposal, bool) {
+	trimmed := strings.TrimSpace(message)
+	lower := strings.ToLower(trimmed)
+	if lower == "set reminder" || lower == "create reminder" || lower == "add reminder" {
+		return modelProposal{Type: "request_clarification", Parameters: map[string]any{"question": "What should I remind you about, and when?", "missing_parameter": "reminder"}}, true
+	}
+	var body string
+	for _, prefix := range []string{"remind me about ", "add reminder about ", "create reminder about "} {
+		if strings.HasPrefix(lower, prefix) {
+			body = strings.TrimSpace(trimmed[len(prefix):])
+			break
+		}
+	}
+	if body == "" {
+		return modelProposal{}, false
+	}
+	location, err := time.LoadLocation("Pacific/Auckland")
+	if err != nil {
+		return modelProposal{Type: "request_clarification", Parameters: map[string]any{"question": "What date should I use?", "missing_parameter": "reminder_date"}}, true
+	}
+	localNow := now.In(location)
+	date := ""
+	if reminderDay.MatchString(body) {
+		date = localNow.AddDate(0, 0, 1).Format("2006-01-02")
+	}
+	clock := ""
+	if match := reminderClock.FindStringSubmatch(body); match != nil {
+		hour, _ := strconv.Atoi(match[1])
+		minute := 0
+		if match[2] != "" {
+			minute, _ = strconv.Atoi(match[2])
+		}
+		if hour < 1 || hour > 12 || minute > 59 {
+			return modelProposal{Type: "request_clarification", Parameters: map[string]any{"question": "What time should I use?", "missing_parameter": "reminder_time"}}, true
+		}
+		if strings.EqualFold(match[3], "pm") && hour != 12 {
+			hour += 12
+		} else if strings.EqualFold(match[3], "am") && hour == 12 {
+			hour = 0
+		}
+		clock = fmt.Sprintf("%02d:%02d:00", hour, minute)
+		if date != "" && hour == 2 && aucklandClockChangeDate(date) {
+			return modelProposal{Type: "request_clarification", Parameters: map[string]any{"question": "That time changes with daylight saving. What other time should I use?", "missing_parameter": "reminder_time"}}, true
+		}
+	}
+	title := strings.TrimSpace(reminderClock.ReplaceAllString(reminderDay.ReplaceAllString(body, ""), ""))
+	title = strings.TrimSpace(strings.Trim(title, " .,!"))
+	if date == "" {
+		return modelProposal{Type: "request_clarification", Parameters: map[string]any{"question": "What date should I use?", "missing_parameter": "reminder_date", "draft_title": title}}, true
+	}
+	if title == "" {
+		parameters := map[string]any{"question": "What should I remind you about?", "missing_parameter": "reminder_title", "draft_date": date}
+		if clock != "" {
+			parameters["draft_time"] = clock
+		}
+		return modelProposal{Type: "request_clarification", Parameters: parameters}, true
+	}
+	parameters := map[string]any{"title": strings.ToUpper(title[:1]) + title[1:], "due_date": date}
+	if clock != "" {
+		parameters["due_time"] = clock
+	}
+	return modelProposal{Type: "create_reminder", Parameters: parameters}, true
+}
+
+func aucklandClockChangeDate(value string) bool {
+	date, err := time.Parse("2006-01-02", value)
+	if err != nil || (date.Month() != time.April && date.Month() != time.September) {
+		return false
+	}
+	if date.Month() == time.April {
+		for day := 1; day <= 7; day++ {
+			if time.Date(date.Year(), time.April, day, 0, 0, 0, 0, time.UTC).Weekday() == time.Sunday {
+				return date.Day() == day
+			}
+		}
+	}
+	last := time.Date(date.Year(), time.October, 0, 0, 0, 0, 0, time.UTC)
+	for last.Weekday() != time.Sunday {
+		last = last.AddDate(0, 0, -1)
+	}
+	return date.Day() == last.Day()
 }
 
 func (h *conversationInterpreter) consumeRateLimit(identity accessIdentity) (bool, string) {
@@ -320,6 +411,24 @@ func validateModelProposalDepth(proposal modelProposal, context interpreterConte
 	}
 	if value, ok := proposal.Parameters["due_date"].(string); ok && !validConversationDate(value) {
 		return false
+	}
+	if value, present := proposal.Parameters["draft_date"]; present {
+		date, ok := value.(string)
+		if !ok || !validConversationDate(date) {
+			return false
+		}
+	}
+	if value, present := proposal.Parameters["draft_time"]; present {
+		clock, ok := value.(string)
+		if !ok || !safeTime.MatchString(clock) {
+			return false
+		}
+	}
+	if value, present := proposal.Parameters["draft_title"]; present {
+		title, ok := value.(string)
+		if !ok || len(title) > 160 {
+			return false
+		}
 	}
 	if value, ok := proposal.Parameters["expected_due_date"].(string); ok && !validConversationDate(value) {
 		return false

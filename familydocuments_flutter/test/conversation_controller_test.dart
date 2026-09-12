@@ -34,6 +34,53 @@ class FakeRepository extends MemoryConversationRepository {
   }) async => availableCategories;
 
   @override
+  Future<ConversationAuthoritativeOutcome> submitAction(
+    String conversationId,
+    ConversationAction action,
+    String requestKey,
+  ) async {
+    if (action.type == ConversationActionType.requestClarification &&
+        action.parameters['missing_parameter'] == 'document_category' &&
+        action.parameters['attachment_id'] != null) {
+      final attachment = action.parameters['attachment_id'].toString();
+      final options = await categoryOptions(
+        conversationId: conversationId,
+        attachmentId: attachment,
+        fileName: '',
+      );
+      final categories = options.categories.take(2).toList();
+      final choices = [...categories.map((item) => item.name), 'Read document'];
+      final choiceActions = [
+        for (var index = 0; index < categories.length; index++)
+          ConversationAction(
+            id: 'option-category-$index-${action.id}',
+            type: ConversationActionType.saveDocument,
+            parameters: {
+              'attachment_id': attachment,
+              'category_name': categories[index].name,
+              'tags': const <String>[],
+            },
+          ).toJson(),
+        ConversationAction(
+          id: 'option-read-${action.id}',
+          type: ConversationActionType.requestDocumentOcr,
+          parameters: {'attachment_id': attachment, 'mode': 'document'},
+        ).toJson(),
+      ];
+      action = ConversationAction(
+        id: action.id,
+        type: action.type,
+        parameters: {
+          ...action.parameters,
+          'choices': choices,
+          'choice_actions': choiceActions,
+        },
+      );
+    }
+    return super.submitAction(conversationId, action, requestKey);
+  }
+
+  @override
   Future<ConversationAction> interpret({
     required String message,
     required List<ConversationReference> references,
@@ -852,9 +899,24 @@ void main() {
       );
       await subject.submit('What options?');
 
-      expect(subject.messages.last.kind, ConversationMessageKind.clarification);
       expect(
-        subject.messages.last.clarificationOptions.single.label,
+        subject.messages
+            .where(
+              (message) =>
+                  message.kind == ConversationMessageKind.clarification,
+            )
+            .length,
+        1,
+      );
+      expect(
+        subject.messages
+            .firstWhere(
+              (message) =>
+                  message.kind == ConversationMessageKind.clarification,
+            )
+            .clarificationOptions
+            .single
+            .label,
         'Show reminders',
       );
       expect(subject.pendingClarificationId, isNotNull);
@@ -1155,6 +1217,80 @@ void main() {
       expect(options.categories.single.name, 'Finance');
       expect(options.canSave, isFalse);
       expect(options.canCreate, isFalse);
+    },
+  );
+
+  test(
+    'repeated save reuses one pending clarification and attachment',
+    () async {
+      final repository = FakeRepository();
+      final subject = controller(repository, RecordingExecutor());
+      await subject.submit(
+        'Save this document',
+        hasAttachment: true,
+        attachmentLabel: 'synthetic-bill.pdf',
+        attachmentMimeType: 'application/pdf',
+        attachmentBytes: const [37, 80, 68, 70],
+      );
+      final pendingId = subject.pendingClarificationId;
+      final count = repository.messages.length;
+      await subject.submit('Save this document');
+      expect(subject.pendingClarificationId, pendingId);
+      expect(repository.messages.length, count);
+    },
+  );
+
+  test(
+    'Set reminder drafts title-first and date-first without duplicates',
+    () async {
+      final repository = FakeRepository();
+      final executor = RecordingExecutor();
+      final subject = controller(repository, executor);
+      await subject.submit('Set reminder');
+      expect(
+        subject.messages.last.content,
+        'What should I remind you about, and when?',
+      );
+      repository.modelAction = ConversationAction(
+        id: 'reminder-title-first-1234',
+        type: ConversationActionType.createReminder,
+        parameters: const {
+          'title': 'Doctor appointment',
+          'due_date': '2027-01-20',
+          'due_time': '11:00:00',
+        },
+      );
+      await subject.submit('Doctor appointment tomorrow at 11 am');
+      expect(
+        executor.actions.single.type,
+        ConversationActionType.createReminder,
+      );
+      expect(subject.pendingClarificationId, isNull);
+
+      final reverseRepository = FakeRepository();
+      final reverseExecutor = RecordingExecutor();
+      final reverse = controller(reverseRepository, reverseExecutor);
+      await reverse.submit('Set reminder');
+      reverseRepository.modelAction = ConversationAction(
+        id: 'reminder-date-first-1234',
+        type: ConversationActionType.requestClarification,
+        parameters: const {
+          'question': 'What should I remind you about?',
+          'missing_parameter': 'reminder_title',
+          'draft_date': '2027-01-20',
+          'draft_time': '11:00:00',
+        },
+      );
+      await reverse.submit('Tomorrow at 11 am');
+      final restored = controller(reverseRepository, reverseExecutor);
+      await restored.restore();
+      expect(restored.pendingClarificationId, isNotNull);
+      await restored.submit('Doctor appointment');
+      expect(
+        reverseExecutor.actions.single.type,
+        ConversationActionType.createReminder,
+      );
+      expect(reverseExecutor.actions.single.parameters['due_time'], '11:00:00');
     },
   );
 }

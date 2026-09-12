@@ -687,7 +687,7 @@ void main() {
   });
 
   testWidgets(
-    'suggested destination can be changed without losing attachment',
+    'category clarification accepts a typed choice without losing attachment',
     (t) async {
       final auth = authenticatedUser();
       final home = FakeHomeService(auth, categories: const ['Home', 'Rentals']);
@@ -704,10 +704,11 @@ void main() {
       await t.tap(find.byTooltip('Send').last);
       await t.pumpAndSettle();
       expect(
-        find.textContaining('looks like it belongs in Rentals'),
+        find.textContaining('Which category should I save this document in?'),
         findsOneWidget,
       );
-      await t.tap(find.text('Save in Rentals'));
+      await t.enterText(find.byType(TextField).last, 'Rentals');
+      await t.tap(find.byTooltip('Send').last);
       await t.pumpAndSettle();
       expect(home.savedCategory, 'Rentals');
       expect(home.savedBytes, orderedEquals(syntheticPdfBytes));

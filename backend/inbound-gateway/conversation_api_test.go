@@ -218,12 +218,12 @@ func TestClarificationDecisionSendsOnlyOpaqueIdentifiers(t *testing.T) {
 	}
 }
 
-func TestTrustedGatewayAddsVisibleOptionsToEmptyClarification(t *testing.T) {
-	action := modelActionEnvelope{ID: "clarification-action-0001", Type: "request_clarification", Version: 1, Parameters: map[string]any{"question": "What would you like me to do?", "missing_parameter": "intent"}}
-	addTrustedClarificationOptions(&action)
-	choices, choicesOK := action.Parameters["choices"].([]any)
-	actions, actionsOK := action.Parameters["choice_actions"].([]any)
-	if !choicesOK || !actionsOK || len(choices) != 2 || choices[0] != "Open Reminders" || len(actions) != 2 || !validateServerAction(modelProposal{Type: action.Type, Parameters: action.Parameters}) {
-		t.Fatalf("trusted clarification options were not valid: %#v", action.Parameters)
+func TestTrustedGatewayDoesNotInventUnrelatedClarificationOptions(t *testing.T) {
+	parameters := map[string]any{"question": "What should I remind you about, and when?", "missing_parameter": "reminder"}
+	if !validateServerAction(modelProposal{Type: "request_clarification", Parameters: parameters}) {
+		t.Fatal("bounded reminder draft should be valid")
+	}
+	if _, ok := parameters["choices"]; ok {
+		t.Fatal("reminder draft must not suggest unrelated destinations")
 	}
 }

@@ -147,6 +147,25 @@ class ConversationController extends ChangeNotifier {
           bytes: attachmentBytes,
         );
       }
+      if (RegExp(
+            r'^save this(?: document)?[.!]?$',
+            caseSensitive: false,
+          ).hasMatch(message) &&
+          _pendingClarificationId != null &&
+          _pendingClarification?.type ==
+              ConversationActionType.requestClarification &&
+          _pendingClarification?.parameters['attachment_id'] != null &&
+          (!hasAttachment ||
+              attachmentId ==
+                  _pendingClarification?.parameters['attachment_id'])) {
+        final snapshot = await _repository.restore(_conversationId);
+        _messages
+          ..clear()
+          ..addAll(_collapse(snapshot.messages));
+        _restorePendingClarification();
+        notifyListeners();
+        return;
+      }
       await _append(
         ConversationMessage(
           id: _newId('user'),
@@ -168,11 +187,12 @@ class ConversationController extends ChangeNotifier {
       ConversationAction action;
       if (_pendingClarification != null && _pendingClarificationId != null) {
         if (_asksForOptions(message)) {
-          final outcome = await _repository.decideClarification(
-            _pendingClarificationId!,
-            decision: 'redisplay',
-          );
-          await _applyOutcome(outcome);
+          final snapshot = await _repository.restore(_conversationId);
+          _messages
+            ..clear()
+            ..addAll(_collapse(snapshot.messages));
+          _restorePendingClarification();
+          notifyListeners();
           return;
         }
         if (_isCancel(message)) {
@@ -191,6 +211,21 @@ class ConversationController extends ChangeNotifier {
             optionId: optionId,
           );
           await _applyOutcome(outcome);
+          return;
+        }
+        final missing = _pendingClarification?.parameters['missing_parameter'];
+        if (const {
+              'reminder',
+              'reminder_title',
+              'reminder_date',
+            }.contains(missing) &&
+            !RegExp(
+              r'^(?:find|search|save|open|show)\b',
+              caseSensitive: false,
+            ).hasMatch(message)) {
+          action = await _resolveReminderDraft(message);
+          await _supersedeClarification();
+          await _route(action);
           return;
         }
         if (deterministic != null) {
@@ -421,6 +456,19 @@ class ConversationController extends ChangeNotifier {
         ),
       };
     }
+    if (RegExp(
+      r'^(?:set|create|add) reminder[.!]?$',
+      caseSensitive: false,
+    ).hasMatch(message.trim())) {
+      return ConversationAction(
+        id: _newId('action'),
+        type: ConversationActionType.requestClarification,
+        parameters: const {
+          'question': 'What should I remind you about, and when?',
+          'missing_parameter': 'reminder',
+        },
+      );
+    }
     final reminderQuery = _reminderQuery(message);
     if (reminderQuery != null) {
       return ConversationAction(
@@ -643,40 +691,14 @@ class ConversationController extends ChangeNotifier {
     String attachmentId,
     String? attachmentLabel,
   ) {
-    final category = metadataCategoryHint(attachmentLabel ?? '');
-    final choiceActions = <ConversationAction>[
-      if (category != null)
-        ConversationAction(
-          id: _newId('action'),
-          type: ConversationActionType.saveDocument,
-          parameters: {
-            'attachment_id': attachmentId,
-            'category_name': category,
-            'tags': <String>[],
-          },
-        ),
-      ConversationAction(
-        id: _newId('action'),
-        type: ConversationActionType.requestDocumentOcr,
-        parameters: {'attachment_id': attachmentId, 'mode': 'document'},
-      ),
-    ];
     return ConversationAction(
       id: _newId('action'),
       type: ConversationActionType.requestClarification,
       parameters: {
-        'question': category == null
-            ? 'Which category should I use, or should I read the document first?'
-            : 'This looks like it belongs in $category. Save it there or read it first?',
-        'missing_parameter': category == null
-            ? 'document_category'
-            : 'attachment_action',
+        'question': 'Which category should I save this document in?',
+        'missing_parameter': 'document_category',
         'attachment_id': attachmentId,
         'tags': <String>[],
-        'choices': [if (category != null) 'Save in $category', 'Read document'],
-        'choice_actions': choiceActions
-            .map((action) => action.toJson())
-            .toList(),
       },
     );
   }
@@ -747,7 +769,7 @@ class ConversationController extends ChangeNotifier {
           },
         );
       }
-      if (missing == 'document_category' &&
+      if ((missing == 'document_category' || missing == 'category_name') &&
           pending.parameters['attachment_id'] != null) {
         final category = answer
             .trim()
@@ -837,6 +859,34 @@ class ConversationController extends ChangeNotifier {
         'question': 'Please choose one of the options shown.',
         'missing_parameter': 'selection',
       },
+    );
+  }
+
+  Future<ConversationAction> _resolveReminderDraft(String answer) async {
+    final draft = _pendingClarification!.parameters;
+    if (draft['missing_parameter'] == 'reminder_title') {
+      final title = answer.trim();
+      if (title.isEmpty || title.length > 160) {
+        throw const ConversationServiceException(
+          'What should I remind you about?',
+        );
+      }
+      return ConversationAction(
+        id: _newId('action'),
+        type: ConversationActionType.createReminder,
+        parameters: {
+          'title': title,
+          'due_date': draft['draft_date'],
+          if (draft['draft_time'] != null) 'due_time': draft['draft_time'],
+        },
+      );
+    }
+    final title = draft['draft_title']?.toString().trim();
+    return _repository.interpret(
+      message:
+          'Remind me about ${title != null && title.isNotEmpty ? '$title ' : ''}$answer',
+      references: _references,
+      hasAttachment: false,
     );
   }
 
@@ -950,7 +1000,6 @@ class ConversationController extends ChangeNotifier {
   }
 
   Future<void> _route(ConversationAction action) async {
-    action = await _prepareCategoryClarification(action);
     action.validate();
     final outcome = await _repository.submitAction(
       _conversationId!,
@@ -960,65 +1009,14 @@ class ConversationController extends ChangeNotifier {
     await _applyOutcome(outcome);
   }
 
-  Future<ConversationAction> _prepareCategoryClarification(
-    ConversationAction action,
-  ) async {
-    if (action.type != ConversationActionType.requestClarification ||
-        action.parameters['missing_parameter'] != 'document_category') {
-      return action;
-    }
-    final attachmentId = action.parameters['attachment_id']?.toString();
-    if (attachmentId == null || _conversationId == null) return action;
-    ConversationCategoryOptions options;
-    try {
-      options = await _repository.categoryOptions(
-        conversationId: _conversationId!,
-        attachmentId: attachmentId,
-        fileName: action.parameters['attachment_label']?.toString() ?? '',
-      );
-    } on ConversationServiceException {
-      return action;
-    }
-    final categoryActions = options.categories
-        .take(2)
-        .map(
-          (category) => ConversationAction(
-            id: _newId('action'),
-            type: ConversationActionType.saveDocument,
-            parameters: {
-              'attachment_id': attachmentId,
-              'category_name': category.name,
-              'tags': action.parameters['tags'] ?? const <String>[],
-            },
-          ),
-        );
-    final readAction = ConversationAction(
-      id: _newId('action'),
-      type: ConversationActionType.requestDocumentOcr,
-      parameters: {'attachment_id': attachmentId, 'mode': 'document'},
-    );
-    return ConversationAction(
-      id: action.id,
-      type: action.type,
-      parameters: {
-        ...action.parameters,
-        'choices': [
-          ...options.categories.take(2).map((category) => category.name),
-          'Read document',
-        ],
-        'choice_actions': [
-          ...categoryActions.map((item) => item.toJson()),
-          readAction.toJson(),
-        ],
-      },
-    );
-  }
-
   Future<ConversationCategoryOptions> categoryOptionsForClarification() async {
     final pending = _pendingClarification;
     final attachmentId = pending?.parameters['attachment_id']?.toString();
     if (pending == null ||
-        pending.parameters['missing_parameter'] != 'document_category' ||
+        !const {
+          'document_category',
+          'category_name',
+        }.contains(pending.parameters['missing_parameter']) ||
         attachmentId == null ||
         _conversationId == null) {
       throw const ConversationServiceException(
@@ -1138,6 +1136,7 @@ class ConversationController extends ChangeNotifier {
     for (final message in _messages.reversed) {
       if (message.role != ConversationRole.assistant) continue;
       if (message.kind != ConversationMessageKind.clarification) return;
+      if (message.data['resolved'] == true) return;
       final rawAction = message.data['action'];
       if (rawAction is! Map) continue;
       final parameters = rawAction['parameters'];
