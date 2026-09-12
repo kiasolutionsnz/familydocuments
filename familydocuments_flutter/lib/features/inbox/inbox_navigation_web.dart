@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:js_interop';
 
+import '../../core/navigation/history_location.dart';
+
 import 'inbox_navigation.dart';
 import 'models/inbox_models.dart';
 
@@ -15,7 +17,7 @@ class _WebInboxNavigation implements InboxNavigation {
   late final JSFunction listener;
   @override
   InboxLocation get current {
-    final value = (window.history.state?.dartify() ?? '').toString();
+    final value = historyLocation(window.history.state?.dartify());
     return InboxLocation.parse(value.startsWith('inbox') ? value : 'inbox');
   }
 
@@ -23,13 +25,25 @@ class _WebInboxNavigation implements InboxNavigation {
   Stream<InboxLocation> get changes => controller.stream;
   @override
   void open(InboxLocation location) {
-    window.history.pushState(location.value.toJS, ''.toJS);
+    window.history.pushState(
+      historyWithLocation(
+        window.history.state?.dartify(),
+        location.value,
+      ).jsify(),
+      ''.toJS,
+    );
     controller.add(location);
   }
 
   @override
   void replace(InboxLocation location) {
-    window.history.replaceState(location.value.toJS, ''.toJS);
+    window.history.replaceState(
+      historyWithLocation(
+        window.history.state?.dartify(),
+        location.value,
+      ).jsify(),
+      ''.toJS,
+    );
     controller.add(location);
   }
 

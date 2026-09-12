@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:js_interop';
 
 import 'destination_state.dart';
+import 'history_location.dart';
 
 DestinationState createPlatformDestinationState() => _WebDestinationState();
 
@@ -18,7 +19,7 @@ class _WebDestinationState implements DestinationState {
 
   @override
   PrimaryDestination get current =>
-      destinationFromPath((_window.history.state?.dartify() ?? '').toString());
+      destinationFromPath(historyLocation(_window.history.state?.dartify()));
 
   @override
   Stream<PrimaryDestination> get changes => _changes.stream;
@@ -26,13 +27,25 @@ class _WebDestinationState implements DestinationState {
   @override
   void select(PrimaryDestination destination) {
     if (current == destination) return;
-    _window.history.pushState(destination.name.toJS, ''.toJS);
+    _window.history.pushState(
+      historyWithLocation(
+        _window.history.state?.dartify(),
+        destination.name,
+      ).jsify(),
+      ''.toJS,
+    );
     _changes.add(destination);
   }
 
   @override
   void reset() {
-    _window.history.replaceState(PrimaryDestination.home.name.toJS, ''.toJS);
+    _window.history.replaceState(
+      historyWithLocation(
+        _window.history.state?.dartify(),
+        PrimaryDestination.home.name,
+      ).jsify(),
+      ''.toJS,
+    );
     _changes.add(PrimaryDestination.home);
   }
 

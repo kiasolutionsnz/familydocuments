@@ -17,6 +17,9 @@ when the same category is selected in a later action. Authoritative messages use
 wall-clock insertion time so cancellation/restoration order is deterministic
 within one transaction. The scratch gateway embeds timezone data for Auckland
 reminder drafts instead of depending on absent operating-system zone files.
+Browser navigation stores the application location alongside, rather than over,
+Flutter's history state. This preserves the engine serial counter on startup,
+refresh and navigation between Home, Library and Inbox.
 
 Unfinished Telegram worker, linking helpers, integration UI and source-badge
 changes remain only in the original working tree. Do not copy that tree or its
