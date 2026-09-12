@@ -69,6 +69,14 @@ confirmation flow. Opening locally stored source files continues to use
 `document_source`; externally connected files retain the existing connected
 storage behavior.
 
+Phase 2F opens originals through `POST /rest/rpc/document_preview_source`
+with an authenticated document ID. The RPC rechecks active-Family membership
+and document permission, returns local original bytes only to an authorised
+caller, and distinguishes a missing file from revoked access. Google Drive
+sources continue through the existing authorised `/drive/open` gateway path.
+Opening does not enqueue OCR. The Flutter PDF/image viewer never sends bytes
+to an online preview service.
+
 Flutter reuses the authenticated HTTP client, app-wide OCR job state and the
 existing primary-destination history. Library detail history is stored only in
 same-tab browser history state (not in the URL), so private record identifiers
@@ -100,6 +108,13 @@ adult member and contributor roles; viewers remain read-only. There is no
 stored chat-message source in the current schema, so this phase displays real
 email sources only until a chat integration persists messages in an authorised
 Family-scoped source.
+
+Phase 2F defaults Inbox to Needs review and keeps Reviewed separate. Action
+results in `inbox_message_detail` identify the saved attachment and document,
+so a completed item can be opened after refresh. Saving different attachments
+remains independent; retrying the same attachment, link or reminder cannot
+create a second result. Only an explicit review/dismiss action removes a
+message from the active queue.
 
 Migration 044 is forward-compatible: existing messages default to Unreviewed
 and existing ingestion continues unchanged. Recovery is to correct and replay

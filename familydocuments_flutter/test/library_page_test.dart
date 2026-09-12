@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:typed_data';
+import 'dart:convert';
 
 import 'package:familydocuments_flutter/core/auth/auth_service.dart';
 import 'package:familydocuments_flutter/core/home/home_service.dart';
@@ -319,9 +319,11 @@ class _Service extends LibraryService {
 
   @override
   Future<LibrarySource> source(String documentId) async => LibrarySource(
-    fileName: '$documentId.pdf',
-    mimeType: 'application/pdf',
-    bytes: Uint8List.fromList([1, 2, 3]),
+    fileName: '$documentId.png',
+    mimeType: 'image/png',
+    bytes: base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/Z9sAAAAASUVORK5CYII=',
+    ),
   );
 }
 
@@ -503,7 +505,12 @@ void main() {
       expect(find.text('Important date'), findsOneWidget);
       await tester.tap(find.text('Open document'));
       await tester.pumpAndSettle();
+      expect(find.text('d1.png'), findsOneWidget);
+      await tester.tap(find.text('Download'));
+      await tester.pumpAndSettle();
       expect(downloads, 1);
+      await tester.tap(find.byTooltip('Close document'));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('edit-document')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('edit-category')));

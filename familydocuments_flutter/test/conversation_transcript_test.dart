@@ -21,6 +21,60 @@ ConversationMessage message(
 );
 
 void main() {
+  testWidgets('grounded search and saved result open their document IDs', (
+    tester,
+  ) async {
+    final opened = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ConversationTranscript(
+            messages: [
+              message(
+                'search',
+                ConversationRole.assistant,
+                ConversationMessageKind.result,
+                'I found these documents.',
+                data: const {
+                  'results': [
+                    {
+                      'id': 'document-one',
+                      'title': 'Passport',
+                      'match_type': 'metadata',
+                    },
+                    {
+                      'id': 'document-two',
+                      'title': 'Invoice',
+                      'match_type': 'ocr',
+                    },
+                  ],
+                },
+              ),
+              message(
+                'saved',
+                ConversationRole.assistant,
+                ConversationMessageKind.result,
+                'Saved.',
+                data: const {'document_id': 'document-three'},
+              ),
+            ],
+            loading: false,
+            confirmation: null,
+            onConfirm: () {},
+            onCancelConfirmation: () {},
+            onSuggestion: (_) {},
+            onOpenDocument: (id) async => opened.add(id),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (final id in ['document-one', 'document-two', 'document-three']) {
+      await tester.tap(find.byKey(ValueKey('open-document-$id')));
+      await tester.pump();
+    }
+    expect(opened, ['document-one', 'document-two', 'document-three']);
+  });
   testWidgets(
     'renders conversation states, attachment, classification and suggestions',
     (tester) async {

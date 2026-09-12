@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
 import '../../core/home/home_service.dart';
 import '../../core/security/public_https_url.dart';
 import 'data/library_service.dart';
+import 'document_viewer.dart';
 import 'library_navigation.dart';
 import 'models/library_models.dart';
 import 'safe_open.dart';
@@ -590,12 +590,11 @@ class LibraryPageState extends State<LibraryPage> {
           spacing: 10,
           runSpacing: 10,
           children: [
-            if (document.sourceAvailable)
-              FilledButton.icon(
-                onPressed: () => _openSource(document),
-                icon: const Icon(Icons.open_in_new),
-                label: const Text('Open document'),
-              ),
+            FilledButton.icon(
+              onPressed: () => _openSource(document),
+              icon: const Icon(Icons.visibility_outlined),
+              label: const Text('Open document'),
+            ),
             if (document.canEdit)
               OutlinedButton.icon(
                 key: const ValueKey('edit-document'),
@@ -610,30 +609,14 @@ class LibraryPageState extends State<LibraryPage> {
   }
 
   Future<void> _openSource(LibraryDocument document) async {
-    try {
-      final source = await widget.service.source(document.id);
-      final downloader =
-          widget.sourceDownloader ??
-          (name, mime, bytes) =>
-              downloadDocument(name, mime, Uint8List.fromList(bytes));
-      final opened = await downloader(
-        source.fileName,
-        source.mimeType,
-        source.bytes,
-      );
-      if (!opened && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Opening files is not available on this device yet.'),
-          ),
-        );
-      }
-    } on LibraryServiceException catch (failure) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(failure.message)));
-      }
-    }
+    await showDocumentViewer(
+      context,
+      documentId: document.id,
+      loadSource: widget.service.source,
+      download: widget.sourceDownloader == null
+          ? null
+          : (name, mime, bytes) => widget.sourceDownloader!(name, mime, bytes),
+    );
   }
 
   Future<void> _editDocument(LibraryDocument document) async {

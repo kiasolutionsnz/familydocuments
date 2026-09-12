@@ -99,9 +99,11 @@ class InboxMessage {
     required this.attachments,
     required this.links,
     required this.actions,
+    this.completedActions = const [],
   });
   final String id, sender, subject, source, bodyText, reviewState;
   final List<String> recipients, links, actions;
+  final List<InboxCompletedAction> completedActions;
   final DateTime receivedAt, updatedAt;
   final bool canEdit;
   final List<InboxAttachment> attachments;
@@ -133,6 +135,31 @@ class InboxMessage {
         .map((x) => x['type']?.toString() ?? '')
         .where((x) => x.isNotEmpty)
         .toList(),
+    completedActions: _maps(value['actions'])
+        .map(InboxCompletedAction.fromJson)
+        .toList(),
+  );
+}
+
+class InboxCompletedAction {
+  const InboxCompletedAction({
+    required this.type,
+    this.attachmentId,
+    required this.result,
+  });
+  final String type;
+  final String? attachmentId;
+  final Map<String, dynamic> result;
+  String? get documentId => result['document_id']?.toString();
+  String? get url => result['url']?.toString();
+  String? get title => result['title']?.toString();
+
+  factory InboxCompletedAction.fromJson(Map value) => InboxCompletedAction(
+    type: value['type']?.toString() ?? '',
+    attachmentId: value['attachment_id']?.toString(),
+    result: value['result'] is Map
+        ? Map<String, dynamic>.from(value['result'] as Map)
+        : const {},
   );
 }
 

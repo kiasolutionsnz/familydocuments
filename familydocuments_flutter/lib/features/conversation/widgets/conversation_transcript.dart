@@ -16,6 +16,7 @@ class ConversationTranscript extends StatelessWidget {
     this.onCancelClarification,
     this.onMoreCategories,
     this.scrollController,
+    this.onOpenDocument,
   });
 
   final List<ConversationMessage> messages;
@@ -29,6 +30,7 @@ class ConversationTranscript extends StatelessWidget {
   final VoidCallback? onCancelClarification;
   final VoidCallback? onMoreCategories;
   final ScrollController? scrollController;
+  final Future<void> Function(String)? onOpenDocument;
 
   @override
   Widget build(BuildContext context) => Semantics(
@@ -57,6 +59,7 @@ class ConversationTranscript extends StatelessWidget {
           onClarificationOption: onClarificationOption,
           onCancelClarification: onCancelClarification,
           onMoreCategories: onMoreCategories,
+          onOpenDocument: onOpenDocument,
         );
       },
     ),
@@ -74,6 +77,7 @@ class _MessageBubble extends StatelessWidget {
     required this.onClarificationOption,
     required this.onCancelClarification,
     required this.onMoreCategories,
+    required this.onOpenDocument,
   });
 
   final ConversationMessage message;
@@ -85,6 +89,7 @@ class _MessageBubble extends StatelessWidget {
   final ValueChanged<ConversationClarificationOption>? onClarificationOption;
   final VoidCallback? onCancelClarification;
   final VoidCallback? onMoreCategories;
+  final Future<void> Function(String)? onOpenDocument;
 
   @override
   Widget build(BuildContext context) {
@@ -177,6 +182,19 @@ class _MessageBubble extends StatelessWidget {
                             ),
                             if (result['category'] != null)
                               Text(result['category'].toString()),
+                            if (onOpenDocument != null &&
+                                result['type'] != 'reminder' &&
+                                result['type'] != 'link' &&
+                                result['id'] is String &&
+                                (result['match_type'] == 'ocr' ||
+                                    result['match_type'] == 'metadata'))
+                              TextButton.icon(
+                                key: ValueKey('open-document-${result['id']}'),
+                                onPressed: () =>
+                                    onOpenDocument!(result['id'] as String),
+                                icon: const Icon(Icons.visibility_outlined),
+                                label: const Text('Open document'),
+                              ),
                             if (result['type'] == 'reminder') ...[
                               Text(
                                 [
@@ -203,6 +221,15 @@ class _MessageBubble extends StatelessWidget {
                       ),
                     ),
               ],
+              if (onOpenDocument != null &&
+                  message.data['document_id'] is String)
+                TextButton.icon(
+                  key: ValueKey('open-document-${message.data['document_id']}'),
+                  onPressed: () =>
+                      onOpenDocument!(message.data['document_id'] as String),
+                  icon: const Icon(Icons.visibility_outlined),
+                  label: const Text('Open document'),
+                ),
               if (message.data['category'] != null ||
                   message.data['tags'] is List) ...[
                 const SizedBox(height: 10),

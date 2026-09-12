@@ -33,12 +33,14 @@ InboxItem _item(
 );
 
 class _Service extends InboxService {
-  _Service({this.canEdit = true}) : super(_Auth());
+  _Service({this.canEdit = true, this.twoAttachments = false}) : super(_Auth());
   final bool canEdit;
+  final bool twoAttachments;
   String lastQuery = '';
   InboxFilter lastFilter = InboxFilter.all;
   String? reviewState;
   int saveCalls = 0;
+  final List<InboxCompletedAction> completed = [];
 
   final all = [
     _item('new', 'Travel insurance invoice', attachments: 1, links: 1),
@@ -111,7 +113,7 @@ class _Service extends InboxService {
     updatedAt: _now,
     canEdit: canEdit,
     attachments: id == 'new'
-        ? const [
+        ? [
             InboxAttachment(
               id: 'attachment-1',
               fileName: 'invoice.pdf',
@@ -119,10 +121,19 @@ class _Service extends InboxService {
               sizeBytes: 200,
               status: 'clean',
             ),
+            if (twoAttachments)
+              const InboxAttachment(
+                id: 'attachment-2',
+                fileName: 'terms.pdf',
+                mimeType: 'application/pdf',
+                sizeBytes: 100,
+                status: 'clean',
+              ),
           ]
         : const [],
     links: id == 'new' ? const ['https://example.test/policy'] : const [],
-    actions: const [],
+    actions: completed.map((action) => action.type).toList(),
+    completedActions: completed,
   );
 
   @override
@@ -140,6 +151,13 @@ class _Service extends InboxService {
     required String requestId,
   }) async {
     saveCalls++;
+    completed.add(
+      InboxCompletedAction(
+        type: requestOcr ? 'ocr_requested' : 'document_saved',
+        attachmentId: attachmentId,
+        result: const {'document_id': 'document-1', 'title': 'invoice.pdf'},
+      ),
+    );
     return InboxActionResult(
       documentId: 'document-1',
       jobId: requestOcr ? 'job-1' : null,
@@ -173,6 +191,7 @@ Future<void> _pump(
   Future<bool> Function(String)? opener,
   InboxNavigation? navigation,
   ValueChanged<InboxMessage>? onDiscuss,
+  Future<void> Function(String)? onOpenDocument,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -184,6 +203,7 @@ Future<void> _pump(
           linkOpener: opener,
           navigation: navigation,
           onDiscuss: onDiscuss,
+          onOpenDocument: onOpenDocument,
         ),
       ),
     ),
@@ -192,6 +212,29 @@ Future<void> _pump(
 }
 
 void main() {
+  testWidgets(
+    'saving one of two attachments leaves the other reviewable and opens saved result',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(800, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final service = _Service(twoAttachments: true);
+      String? opened;
+      await _pump(tester, service, onOpenDocument: (id) async => opened = id);
+      await tester.tap(find.text('Travel insurance invoice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save attachment'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+      expect(service.saveCalls, 1);
+      expect(find.text('terms.pdf'), findsOneWidget);
+      expect(find.text('Save attachment'), findsOneWidget);
+      await tester.tap(find.text('Open document').first);
+      await tester.pumpAndSettle();
+      expect(opened, 'document-1');
+      expect(service.reviewState, isNull);
+    },
+  );
   testWidgets('message can establish safe conversational Inbox context', (
     tester,
   ) async {
@@ -199,18 +242,24 @@ void main() {
     await _pump(tester, _Service(), onDiscuss: (value) => discussed = value);
     await tester.tap(find.text('Travel insurance invoice'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Continue in Home'));
     expect(discussed?.subject, 'Travel insurance invoice');
   });
 
-  testWidgets('shows newest Inbox items grouped as New and Earlier', (
+  testWidgets('defaults to Needs review and keeps Reviewed separate', (
     tester,
   ) async {
     await _pump(tester, _Service());
     expect(find.text('Inbox'), findsOneWidget);
     expect(find.text('New'), findsOneWidget);
-    expect(find.text('Earlier'), findsOneWidget);
+    expect(find.text('Earlier'), findsNothing);
     expect(find.text('Travel insurance invoice'), findsOneWidget);
+    expect(find.text('Family chat note'), findsNothing);
+    await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Reviewed'));
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Reviewed'));
+    await tester.pumpAndSettle();
     expect(find.text('Family chat note'), findsOneWidget);
   });
 
@@ -240,7 +289,7 @@ void main() {
       'With links',
       'Telegram',
       'Reviewed',
-      'Unreviewed',
+      'Needs review',
     ]) {
       await tester.ensureVisible(find.text(label));
       await tester.tap(find.text(label));
@@ -296,6 +345,8 @@ void main() {
     await _pump(tester, service);
     await tester.tap(find.text('Travel insurance invoice'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Mark reviewed'));
     await tester.pumpAndSettle();
     expect(service.reviewState, 'reviewed');
@@ -321,7 +372,8 @@ void main() {
     await _pump(tester, service);
     await tester.tap(find.text('Travel insurance invoice'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Save').first);
+    await tester.ensureVisible(find.text('Save attachment'));
+    await tester.tap(find.text('Save attachment'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();

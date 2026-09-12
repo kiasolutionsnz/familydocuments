@@ -19,6 +19,7 @@ import 'features/inbox/data/inbox_service.dart';
 import 'features/inbox/inbox_page.dart';
 import 'features/inbox/models/inbox_models.dart';
 import 'features/library/data/library_service.dart';
+import 'features/library/document_viewer.dart';
 import 'features/library/library_page.dart';
 import 'features/library/library_navigation.dart';
 import 'features/library/models/library_models.dart';
@@ -1644,6 +1645,7 @@ class _AppState extends State<FamilyDocumentsApp> {
   }
 
   Future<void> signOut() async {
+    navigatorKey.currentState?.popUntil((route) => route.isFirst);
     _stopAnalysisPolling();
     analysisJobs.clear();
     notifiedAnalysisJobs.clear();
@@ -1659,6 +1661,11 @@ class _AppState extends State<FamilyDocumentsApp> {
     setState(() => checking = true);
     await auth.signOut();
     if (mounted) setState(() => checking = false);
+  }
+
+  Future<void> selectFamily(String familyId) async {
+    navigatorKey.currentState?.popUntil((route) => route.isFirst);
+    await conversationController.selectFamily(familyId);
   }
 
   @override
@@ -1689,7 +1696,7 @@ class _AppState extends State<FamilyDocumentsApp> {
         ? FamilySelectionPage(
             families: conversationController.families,
             busy: conversationController.loading,
-            onSelect: conversationController.selectFamily,
+            onSelect: selectFamily,
             onSignOut: signOut,
           )
         : Shell(
@@ -2044,6 +2051,11 @@ class Shell extends StatelessWidget {
     final activeCount = analysisJobs.where((job) => !job.terminal).length;
     final content = switch (tab) {
       0 => Home(
+        onOpenDocument: (id) => showDocumentViewer(
+          c,
+          documentId: id,
+          loadSource: libraryService.source,
+        ),
         conversationMessages: conversationMessages,
         conversationLoading: conversationLoading,
         conversationConfirmation: conversationConfirmation,
@@ -2085,6 +2097,11 @@ class Shell extends StatelessWidget {
       ),
       1 => TimelinePage(
         service: timelineService,
+        onOpenDocument: (id) => showDocumentViewer(
+          c,
+          documentId: id,
+          loadSource: libraryService.source,
+        ),
         processingJobs: analysisJobs,
         onRefreshProcessing: onRefreshAnalysis,
         onRetryJob: onRetryAnalysisJob,
@@ -2101,6 +2118,11 @@ class Shell extends StatelessWidget {
       ),
       3 => InboxPage(
         service: inboxService,
+        onOpenDocument: (id) => showDocumentViewer(
+          c,
+          documentId: id,
+          loadSource: libraryService.source,
+        ),
         onDataChanged: onLibraryMetadataChanged,
         onOcrRequested: onRefreshAnalysis,
         onDiscuss: onDiscussInbox,
@@ -2300,6 +2322,7 @@ class _DesktopSidebar extends StatelessWidget {
 class Home extends StatelessWidget {
   const Home({
     super.key,
+    this.onOpenDocument,
     required this.conversationMessages,
     required this.conversationLoading,
     required this.conversationConfirmation,
@@ -2340,6 +2363,7 @@ class Home extends StatelessWidget {
     required this.onDismissAnalysis,
   });
   final List<ConversationMessage> conversationMessages;
+  final Future<void> Function(String)? onOpenDocument;
   final bool conversationLoading;
   final ConversationConfirmation? conversationConfirmation;
   final String? activeClarificationId;
@@ -2383,6 +2407,7 @@ class Home extends StatelessWidget {
     builder: (context, constraints) {
       if (conversationMessages.isNotEmpty) {
         return _ActiveConversation(
+          onOpenDocument: onOpenDocument,
           messages: conversationMessages,
           loading: conversationLoading,
           confirmation: conversationConfirmation,
@@ -2562,11 +2587,15 @@ class Home extends StatelessWidget {
                     ),
                   ),
                 if (searchResponse != null)
-                  _SearchResult(result: searchResponse!),
+                  _SearchResult(
+                    result: searchResponse!,
+                    onOpenDocument: onOpenDocument,
+                  ),
                 if (organisedDocument != null)
                   _AnalysisResult(
                     result: organisedDocument!,
                     fileName: uploadedName,
+                    onOpenDocument: onOpenDocument,
                   ),
                 if (error != null)
                   Container(
@@ -2730,6 +2759,7 @@ class Home extends StatelessWidget {
 
 class _ActiveConversation extends StatefulWidget {
   const _ActiveConversation({
+    this.onOpenDocument,
     required this.messages,
     required this.loading,
     required this.confirmation,
@@ -2749,6 +2779,7 @@ class _ActiveConversation extends StatefulWidget {
   });
 
   final List<ConversationMessage> messages;
+  final Future<void> Function(String)? onOpenDocument;
   final bool loading;
   final ConversationConfirmation? confirmation;
   final String? activeClarificationId;
@@ -2815,6 +2846,7 @@ class _ActiveConversationState extends State<_ActiveConversation> {
             ),
             Expanded(
               child: ConversationTranscript(
+                onOpenDocument: widget.onOpenDocument,
                 messages: widget.messages,
                 loading: widget.loading,
                 confirmation: widget.confirmation,
@@ -3095,8 +3127,9 @@ class _ConversationComposer extends StatelessWidget {
 }
 
 class _SearchResult extends StatelessWidget {
-  const _SearchResult({required this.result});
+  const _SearchResult({required this.result, this.onOpenDocument});
   final SearchResponse result;
+  final Future<void> Function(String)? onOpenDocument;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -3129,7 +3162,12 @@ class _SearchResult extends StatelessWidget {
                 document.date,
               ].whereType<String>().join(' · '),
             ),
-            trailing: const Text('Open'),
+            trailing: document.id == null || onOpenDocument == null
+                ? null
+                : TextButton(
+                    onPressed: () => onOpenDocument!(document.id!),
+                    child: const Text('Open document'),
+                  ),
           ),
         ),
       ],
@@ -3138,9 +3176,14 @@ class _SearchResult extends StatelessWidget {
 }
 
 class _AnalysisResult extends StatelessWidget {
-  const _AnalysisResult({required this.result, this.fileName});
+  const _AnalysisResult({
+    required this.result,
+    this.fileName,
+    this.onOpenDocument,
+  });
   final OrganisedDocument result;
   final String? fileName;
+  final Future<void> Function(String)? onOpenDocument;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -3195,6 +3238,14 @@ class _AnalysisResult extends StatelessWidget {
                 .map((value) => Chip(label: Text(value)))
                 .toList(),
           ),
+        if (result.id != null && onOpenDocument != null) ...[
+          const SizedBox(height: 12),
+          TextButton.icon(
+            onPressed: () => onOpenDocument!(result.id!),
+            icon: const Icon(Icons.visibility_outlined),
+            label: const Text('Open document'),
+          ),
+        ],
       ],
     ),
   );

@@ -104,6 +104,7 @@ Widget timelineHarness(
   Future<void> Function(String)? save,
   Future<void> Function(String)? choose,
   Future<void> Function(String)? dismiss,
+  Future<void> Function(String)? openDocument,
 }) => MaterialApp(
   home: Scaffold(
     body: TimelinePage(
@@ -114,12 +115,30 @@ Widget timelineHarness(
       onSaveWithoutReading: save ?? (_) async {},
       onChooseCategory: choose ?? (_) async {},
       onDismissJob: dismiss ?? (_) async {},
+      onOpenDocument: openDocument,
     ),
   ),
 );
 
 void main() {
   final now = DateTime.now();
+  testWidgets('document detail opens the selected original document', (
+    tester,
+  ) async {
+    String? selected;
+    final service = FakeTimelineService(
+      items: [item('invoice', TimelineItemKind.document, now)],
+    );
+    await tester.pumpWidget(
+      timelineHarness(service, openDocument: (id) async => selected = id),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('invoice title'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open document'));
+    await tester.pumpAndSettle();
+    expect(selected, 'document-invoice');
+  });
 
   testWidgets('mixed real items are newest first and grouped by date', (
     t,

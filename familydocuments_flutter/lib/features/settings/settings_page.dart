@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../core/auth/auth_service.dart';
-import 'telegram/telegram_integration_page.dart';
 import 'telegram/telegram_integration_service.dart';
 
 class SettingsPage extends StatelessWidget {
@@ -24,16 +23,8 @@ class SettingsPage extends StatelessWidget {
               key: const ValueKey('telegram-integration'),
               leading: const Icon(Icons.send_outlined),
               title: const Text('Telegram'),
-              subtitle: const Text('Connect the FamilyDocuments bot'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => TelegramIntegrationPage(
-                    repository:
-                        telegramRepository ?? TelegramIntegrationService(auth),
-                  ),
-                ),
-              ),
+              subtitle: const Text('Temporarily unavailable'),
+              enabled: false,
             ),
             const Divider(),
             const ListTile(

@@ -11,3 +11,8 @@ Future<bool> openExternalLink(String url) => isPublicHttpsUrl(url)
     : Future<bool>.value(false);
 Future<bool> downloadDocument(String name, String mimeType, Uint8List bytes) =>
     platform.downloadDocument(name, mimeType, bytes);
+Future<bool> openDocumentExternally(
+  String name,
+  String mimeType,
+  Uint8List bytes,
+) => platform.openDocumentExternally(name, mimeType, bytes);

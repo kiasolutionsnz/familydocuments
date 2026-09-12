@@ -18,6 +18,7 @@ class TimelinePage extends StatefulWidget {
     required this.onSaveWithoutReading,
     required this.onChooseCategory,
     required this.onDismissJob,
+    this.onOpenDocument,
   });
 
   final TimelineService service;
@@ -27,6 +28,7 @@ class TimelinePage extends StatefulWidget {
   final Future<void> Function(String) onSaveWithoutReading;
   final Future<void> Function(String) onChooseCategory;
   final Future<void> Function(String) onDismissJob;
+  final Future<void> Function(String)? onOpenDocument;
 
   @override
   State<TimelinePage> createState() => TimelinePageState();
@@ -380,6 +382,10 @@ class TimelinePageState extends State<TimelinePage> {
         builder: (context, constraints) {
           final detail = _TimelineDetail(
             item: item,
+            onOpenDocument:
+                item.documentId == null || widget.onOpenDocument == null
+                ? null
+                : () => widget.onOpenDocument!(item.documentId!),
             onRetry: item.jobId == null
                 ? null
                 : () => widget.onRetryJob(item.jobId!),
@@ -549,12 +555,14 @@ class _TimelineDetail extends StatelessWidget {
     this.onSaveWithoutReading,
     this.onChooseCategory,
     this.onDismiss,
+    this.onOpenDocument,
   });
   final TimelineItem item;
   final Future<void> Function()? onRetry;
   final Future<void> Function()? onSaveWithoutReading;
   final Future<void> Function()? onChooseCategory;
   final Future<void> Function()? onDismiss;
+  final Future<void> Function()? onOpenDocument;
 
   @override
   Widget build(BuildContext context) => Semantics(
@@ -621,6 +629,14 @@ class _TimelineDetail extends StatelessWidget {
             spacing: 6,
             children: item.tags.map((tag) => Chip(label: Text(tag))).toList(),
           ),
+      ],
+      if (onOpenDocument != null) ...[
+        const SizedBox(height: 14),
+        FilledButton.icon(
+          onPressed: () => onOpenDocument!(),
+          icon: const Icon(Icons.visibility_outlined),
+          label: const Text('Open document'),
+        ),
       ],
       if ((item.url ?? '').isNotEmpty) ...[
         const SizedBox(height: 14),

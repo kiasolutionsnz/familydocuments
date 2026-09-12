@@ -6,3 +6,8 @@ Future<bool> downloadDocument(
   String mimeType,
   Uint8List bytes,
 ) async => false;
+Future<bool> openDocumentExternally(
+  String name,
+  String mimeType,
+  Uint8List bytes,
+) async => false;

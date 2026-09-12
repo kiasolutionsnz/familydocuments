@@ -19,6 +19,7 @@ class InboxPage extends StatefulWidget {
     this.linkOpener,
     this.navigation,
     this.onDiscuss,
+    this.onOpenDocument,
   });
   final InboxService service;
   final VoidCallback onDataChanged;
@@ -26,6 +27,7 @@ class InboxPage extends StatefulWidget {
   final InboxLinkOpener? linkOpener;
   final InboxNavigation? navigation;
   final ValueChanged<InboxMessage>? onDiscuss;
+  final Future<void> Function(String)? onOpenDocument;
 
   @override
   State<InboxPage> createState() => InboxPageState();
@@ -36,7 +38,7 @@ class InboxPageState extends State<InboxPage> {
   Timer? debounce;
   InboxData? data;
   InboxMessage? message;
-  InboxFilter filter = InboxFilter.all;
+  InboxFilter filter = InboxFilter.unreviewed;
   bool loading = false, loadingMore = false;
   String? error;
   final Map<String, String> requestIds = {};
@@ -141,6 +143,7 @@ class InboxPageState extends State<InboxPage> {
       await widget.service.setReviewState(current, state);
       if (!mounted) return;
       message = null;
+      navigation.open(const InboxLocation());
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -203,7 +206,7 @@ class InboxPageState extends State<InboxPage> {
             const Expanded(
               child: _InboxHeading(
                 title: 'Inbox',
-                subtitle: 'Messages waiting for your attention.',
+                subtitle: 'Messages and attachments waiting for your review.',
               ),
             ),
             IconButton(
@@ -230,7 +233,7 @@ class InboxPageState extends State<InboxPage> {
             children: InboxFilter.values.map((value) {
               final labels = {
                 InboxFilter.all: 'All',
-                InboxFilter.unreviewed: 'Unreviewed',
+                InboxFilter.unreviewed: 'Needs review',
                 InboxFilter.attachments: 'With attachments',
                 InboxFilter.links: 'With links',
                 InboxFilter.telegram: 'Telegram',
@@ -300,7 +303,10 @@ class InboxPageState extends State<InboxPage> {
                 ),
               if (item.linkCount > 0)
                 Text('${item.linkCount} link${item.linkCount == 1 ? '' : 's'}'),
-              if (item.actions.isNotEmpty) const Text('Action completed'),
+              if (item.actions.isNotEmpty)
+                Text(
+                  '${item.actions.length} completed action${item.actions.length == 1 ? '' : 's'}',
+                ),
             ],
           ),
         ],
@@ -324,7 +330,7 @@ class InboxPageState extends State<InboxPage> {
       const SizedBox(height: 12),
       Text('To: ${value.recipients.join(', ')}'),
       Text(
-        '${value.source} · ${value.reviewState == 'unreviewed' ? 'Unreviewed' : 'Reviewed'}',
+        '${value.source} · ${value.reviewState == 'unreviewed' ? 'Needs review' : 'Reviewed'}',
       ),
       const Divider(height: 32),
       SelectableText(
@@ -332,79 +338,187 @@ class InboxPageState extends State<InboxPage> {
       ),
       if (value.attachments.isNotEmpty) ...[
         const _GroupTitle('Attachments'),
-        ...value.attachments.map(
-          (attachment) => ListTile(
+        ...value.attachments.map((attachment) {
+          final saved = value.completedActions
+              .where(
+                (action) =>
+                    action.attachmentId == attachment.id &&
+                    action.documentId != null,
+              )
+              .firstOrNull;
+          return ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.attach_file),
             title: Text(attachment.fileName),
             subtitle: Text(
-              attachment.canSave ? 'Ready to save' : 'Not available yet',
+              saved != null
+                  ? 'Saved as a document'
+                  : attachment.canSave
+                  ? 'Ready to save'
+                  : 'Not available yet',
             ),
-            trailing: value.canEdit && attachment.canSave
+            trailing: saved != null && widget.onOpenDocument != null
                 ? TextButton(
-                    onPressed: () => _saveAttachment(value, attachment),
-                    child: const Text('Save'),
+                    onPressed: () => widget.onOpenDocument!(saved.documentId!),
+                    child: const Text('Open document'),
+                  )
+                : null,
+          );
+        }),
+      ],
+      if (value.links.isNotEmpty) ...[
+        const _GroupTitle('Links'),
+        ...value.links.map((link) {
+          final saved = value.completedActions.any(
+            (action) => action.type == 'link_saved' && action.url == link,
+          );
+          return ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(Uri.tryParse(link)?.host ?? link),
+            subtitle: Text(
+              saved ? 'Saved link' : link,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: IconButton(
+              tooltip: 'Open link',
+              onPressed: () => _openLink(link),
+              icon: const Icon(Icons.open_in_new),
+            ),
+          );
+        }),
+      ],
+      if (value.completedActions.isNotEmpty) ...[
+        const _GroupTitle('Completed actions'),
+        ...value.completedActions.map(
+          (action) => ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.check_circle_outline),
+            title: Text(switch (action.type) {
+              'document_saved' ||
+              'ocr_requested' => action.title ?? 'Document saved',
+              'link_saved' => action.title ?? 'Link saved',
+              'reminder_created' => action.title ?? 'Reminder created',
+              _ => 'Action completed',
+            }),
+            subtitle: Text(switch (action.type) {
+              'document_saved' || 'ocr_requested' => 'Document saved',
+              'link_saved' => 'Link saved',
+              'reminder_created' => 'Reminder created',
+              _ => 'Completed',
+            }),
+            trailing: action.documentId != null && widget.onOpenDocument != null
+                ? TextButton(
+                    onPressed: () => widget.onOpenDocument!(action.documentId!),
+                    child: const Text('Open document'),
                   )
                 : null,
           ),
         ),
       ],
-      if (value.links.isNotEmpty) ...[
-        const _GroupTitle('Links'),
-        ...value.links.map(
-          (link) => ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text(Uri.tryParse(link)?.host ?? link),
-            subtitle: Text(link, maxLines: 1, overflow: TextOverflow.ellipsis),
-            trailing: Wrap(
-              children: [
-                IconButton(
-                  tooltip: 'Open link',
-                  onPressed: () => _openLink(link),
-                  icon: const Icon(Icons.open_in_new),
-                ),
-                if (value.canEdit)
-                  TextButton(
-                    onPressed: () => _saveLink(value, link),
-                    child: const Text('Save'),
-                  ),
-              ],
+      if (error != null) _InlineError(error!, () => _open(value.id)),
+      if (value.canEdit && value.reviewState == 'unreviewed') ...[
+        if (value.source == 'Telegram' && value.attachments.isNotEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 12),
+            child: Text(
+              'Telegram attachment actions are temporarily unavailable.',
             ),
           ),
-        ),
-      ],
-      if (value.actions.isNotEmpty)
-        Text('Completed: ${value.actions.join(', ')}'),
-      if (error != null) _InlineError(error!, () => _open(value.id)),
-      if (value.canEdit) ...[
         const SizedBox(height: 20),
         Wrap(
           spacing: 10,
           runSpacing: 10,
           children: [
-            if (widget.onDiscuss != null)
-              OutlinedButton.icon(
-                onPressed: () => widget.onDiscuss!(value),
-                icon: const Icon(Icons.chat_bubble_outline),
-                label: const Text('Continue in Home'),
-              ),
             FilledButton.icon(
-              onPressed: () => _review('reviewed'),
-              icon: const Icon(Icons.done),
-              label: const Text('Mark reviewed'),
+              onPressed: () {
+                final attachment =
+                    (value.source == 'Telegram'
+                            ? const <InboxAttachment>[]
+                            : value.attachments)
+                        .where(
+                          (item) =>
+                              item.canSave &&
+                              !value.completedActions.any(
+                                (action) =>
+                                    action.attachmentId == item.id &&
+                                    action.documentId != null,
+                              ),
+                        )
+                        .firstOrNull;
+                if (attachment != null) {
+                  _saveAttachment(value, attachment);
+                  return;
+                }
+                final link = value.links
+                    .where(
+                      (item) => !value.completedActions.any(
+                        (action) =>
+                            action.type == 'link_saved' && action.url == item,
+                      ),
+                    )
+                    .firstOrNull;
+                if (link != null) {
+                  _saveLink(value, link);
+                  return;
+                }
+                _review('reviewed');
+              },
+              icon: const Icon(Icons.check),
+              label: Text(
+                value.source != 'Telegram' &&
+                        value.attachments.any(
+                          (item) =>
+                              item.canSave &&
+                              !value.completedActions.any(
+                                (action) =>
+                                    action.attachmentId == item.id &&
+                                    action.documentId != null,
+                              ),
+                        )
+                    ? 'Save attachment'
+                    : value.links.any(
+                        (item) => !value.completedActions.any(
+                          (action) =>
+                              action.type == 'link_saved' && action.url == item,
+                        ),
+                      )
+                    ? 'Save link'
+                    : 'Mark reviewed',
+              ),
             ),
-            OutlinedButton.icon(
-              onPressed: () => _reminder(value),
-              icon: const Icon(Icons.notifications_outlined),
-              label: const Text('Add reminder'),
-            ),
-            TextButton(
-              onPressed: () => _confirmDismiss(value),
-              child: const Text('Dismiss'),
+            PopupMenuButton<String>(
+              tooltip: 'More Inbox actions',
+              onSelected: (action) {
+                if (action == 'reminder') _reminder(value);
+                if (action == 'review') _review('reviewed');
+                if (action == 'dismiss') _confirmDismiss(value);
+                if (action == 'discuss') widget.onDiscuss?.call(value);
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                  value: 'reminder',
+                  child: Text('Create reminder'),
+                ),
+                const PopupMenuItem(
+                  value: 'review',
+                  child: Text('Mark reviewed'),
+                ),
+                const PopupMenuItem(value: 'dismiss', child: Text('Dismiss')),
+                if (widget.onDiscuss != null)
+                  const PopupMenuItem(
+                    value: 'discuss',
+                    child: Text('Continue in Home'),
+                  ),
+              ],
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Text('More'),
+              ),
             ),
           ],
         ),
-      ] else
+      ] else if (!value.canEdit)
         const Padding(
           padding: EdgeInsets.only(top: 20),
           child: Text(
@@ -544,7 +658,7 @@ class InboxPageState extends State<InboxPage> {
         requestOcr: ocr,
         requestId: _requestId(key),
       );
-      requestIds.remove(key);
+      // Keep this request key for retries during this session.
       widget.onDataChanged();
       if (ocr) await widget.onOcrRequested();
       if (mounted) {
@@ -636,7 +750,7 @@ class InboxPageState extends State<InboxPage> {
           recurrence: recurrence,
           requestId: _requestId(key),
         );
-        requestIds.remove(key);
+        // Keep the same idempotency key if the response must be retried.
         widget.onDataChanged();
         if (mounted) {
           ScaffoldMessenger.of(context)
@@ -741,7 +855,7 @@ class InboxPageState extends State<InboxPage> {
           categoryId: category!,
           requestId: _requestId(key),
         );
-        requestIds.remove(key);
+        // Keep the same idempotency key if the response must be retried.
         widget.onDataChanged();
         if (mounted) {
           ScaffoldMessenger.of(context)

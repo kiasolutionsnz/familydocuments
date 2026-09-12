@@ -11,9 +11,11 @@ class LibraryServiceException implements Exception {
     this.message, {
     this.accessRevoked = false,
     this.conflict = false,
+    this.providerDisconnected = false,
+    this.temporary = false,
   });
   final String message;
-  final bool accessRevoked, conflict;
+  final bool accessRevoked, conflict, providerDisconnected, temporary;
 }
 
 class LibrarySource {
@@ -145,31 +147,87 @@ class LibraryService {
   }
 
   Future<LibrarySource> source(String documentId) async {
-    final response = await _post('/rest/rpc/document_source', {
+    final response = await _post('/rest/rpc/document_preview_source', {
       'document': documentId,
     });
-    if (response.statusCode == 401 ||
-        response.statusCode == 403 ||
-        response.statusCode == 404) {
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw const LibraryServiceException(
+        'You no longer have access to this item.',
+        accessRevoked: true,
+      );
+    }
+    if (response.statusCode == 404) {
       throw const LibraryServiceException(
         'You no longer have access to this item.',
         accessRevoked: true,
       );
     }
     if (response.statusCode != 200) {
-      throw const LibraryServiceException('The original file is unavailable.');
-    }
-    final value = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
-    final encoded = value['content_base64']?.toString();
-    if (encoded == null) {
       throw const LibraryServiceException(
-        'Open this file from its connected storage account.',
+        'The file could not be loaded. Try again.',
+        temporary: true,
       );
+    }
+    try {
+      final value = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+      if (value['status'] == 'provider_disconnected') {
+        throw const LibraryServiceException(
+          'The storage connection needs to be reconnected.',
+          providerDisconnected: true,
+        );
+      }
+      if (value['status'] == 'file_unavailable') {
+        throw const LibraryServiceException(
+          'The original file is unavailable.',
+        );
+      }
+      if (value['provider'] == 'google_drive') {
+        final drive = await _post('/drive/open', {'document': documentId});
+        if (drive.statusCode == 401 || drive.statusCode == 403) {
+          throw const LibraryServiceException(
+            'You no longer have access to this item.',
+            accessRevoked: true,
+          );
+        }
+        if (drive.statusCode == 409) {
+          throw const LibraryServiceException(
+            'The storage connection needs to be reconnected.',
+            providerDisconnected: true,
+          );
+        }
+        if (drive.statusCode == 404) {
+          throw const LibraryServiceException(
+            'The original file is unavailable.',
+          );
+        }
+        if (drive.statusCode != 200) {
+          throw const LibraryServiceException(
+            'The file could not be loaded. Try again.',
+            temporary: true,
+          );
+        }
+        return _decodeSource(jsonDecode(drive.body) as Map);
+      }
+      return _decodeSource(value);
+    } on LibraryServiceException {
+      rethrow;
+    } catch (_) {
+      throw const LibraryServiceException(
+        'The file could not be loaded. Try again.',
+        temporary: true,
+      );
+    }
+  }
+
+  LibrarySource _decodeSource(Map value) {
+    final encoded = value['content_base64'];
+    if (encoded is! String || encoded.isEmpty) {
+      throw const LibraryServiceException('The original file is unavailable.');
     }
     return LibrarySource(
       fileName: value['file_name']?.toString() ?? 'document',
       mimeType: value['mime_type']?.toString() ?? 'application/octet-stream',
-      bytes: base64Decode(encoded),
+      bytes: base64Decode(encoded.replaceAll(RegExp(r'\s'), '')),
     );
   }
 }
