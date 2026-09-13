@@ -131,6 +131,7 @@ func (h *trustedConversationAPI) register(mux *http.ServeMux) {
 	mux.HandleFunc("/conversation/clarification", h.clarification)
 	mux.HandleFunc("/conversation/attachment", h.attachment)
 	mux.HandleFunc("/conversation/categories", h.categories)
+	mux.HandleFunc("/conversation/feedback", h.feedback)
 }
 
 func (h *trustedConversationAPI) prepare(w http.ResponseWriter, r *http.Request, limit int64) (accessIdentity, bool) {
@@ -319,7 +320,11 @@ func (h *trustedConversationAPI) proxyTrustedRPC(w http.ResponseWriter, identity
 		return
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	responseLimit := int64(64 * 1024)
+	if name == "feedback_request" {
+		responseLimit = 256 * 1024
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, responseLimit))
 	if err != nil {
 		jsonReply(w, http.StatusBadGateway, map[string]string{"error": "service_unavailable"})
 		return

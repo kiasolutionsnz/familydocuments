@@ -16,6 +16,7 @@ enum ConversationActionType {
   searchFamilyContent('search_family_content'),
   queryReminders('query_reminders'),
   saveDocument('save_document'),
+  recordRentalExpense('record_rental_expense'),
   requestDocumentOcr('request_document_ocr'),
   updateDocumentCategory('update_document_category'),
   updateDocumentTags('update_document_tags'),
@@ -97,6 +98,31 @@ class ConversationAction {
     }
     final allowed = _allowedParameters[type]!;
     _expectKeys(parameters, allowed);
+    if (type == ConversationActionType.recordRentalExpense) {
+      for (final key in allowed.difference({'create_property'})) {
+        final value = parameters[key];
+        if (value != null && value is! String) {
+          throw ConversationActionValidationException('$key must be text.');
+        }
+      }
+      if ((parameters['attachment_id'] != null &&
+              parameters['document_id'] != null) ||
+          (parameters['property_id'] != null &&
+              parameters['create_property'] == true)) {
+        throw const ConversationActionValidationException('Choose one target.');
+      }
+      final amount = parameters['amount'];
+      final currency = parameters['currency'];
+      if ((amount != null &&
+              !RegExp(r'^[0-9]{1,10}(\.[0-9]{1,2})?$')
+                  .hasMatch(amount as String)) ||
+          (currency != null &&
+              !RegExp(r'^[A-Z]{3}$').hasMatch(currency as String))) {
+        throw const ConversationActionValidationException(
+          'Enter a valid amount and currency.',
+        );
+      }
+    }
     for (final key in _requiredParameters[type] ?? const <String>{}) {
       final value = parameters[key];
       if (value == null || (value is String && value.trim().isEmpty)) {
@@ -156,7 +182,11 @@ class ConversationAction {
         throw ConversationActionValidationException('$key must be text.');
       }
     }
-    for (final key in const ['create_category', 'ambiguous']) {
+    for (final key in const [
+      'create_category',
+      'ambiguous',
+      'create_property',
+    ]) {
       final value = parameters[key];
       if (value != null && value is! bool) {
         throw ConversationActionValidationException(
@@ -357,7 +387,19 @@ class ConversationAction {
 }
 
 const _allowedParameters = <ConversationActionType, Set<String>>{
-  ConversationActionType.searchFamilyContent: {'query'},
+  ConversationActionType.recordRentalExpense: {
+    'attachment_id',
+    'document_id',
+    'property_id',
+    'property_name',
+    'create_property',
+    'address',
+    'amount',
+    'currency',
+    'expected_updated_at',
+    'property_version',
+  },
+  ConversationActionType.searchFamilyContent: {'query', 'document_id'},
   ConversationActionType.queryReminders: {'scope', 'date'},
   ConversationActionType.saveDocument: {
     'attachment_id',

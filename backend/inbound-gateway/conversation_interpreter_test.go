@@ -14,6 +14,23 @@ import (
 
 const testConversationUser = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
+func TestRentalActionStrictSchema(t *testing.T) {
+	base := map[string]any{"property_name": "Synthetic rental", "create_property": true, "address": "12 Test Street", "amount": "125.00", "currency": "NZD"}
+	if !validateServerAction(modelProposal{Type: "record_rental_expense", Parameters: base}) {
+		t.Fatal("valid draft rejected")
+	}
+	for key, value := range map[string]any{"household_id": "forged", "amount": "-1", "currency": "dollars", "property_id": "invalid", "create_property": "yes"} {
+		p := map[string]any{}
+		for k, v := range base {
+			p[k] = v
+		}
+		p[key] = value
+		if validateServerAction(modelProposal{Type: "record_rental_expense", Parameters: p}) {
+			t.Fatalf("accepted invalid %s", key)
+		}
+	}
+}
+
 func conversationTestToken(secret string, expiry time.Time) string {
 	header := b64url([]byte(`{"alg":"HS256","typ":"JWT"}`))
 	payload, _ := json.Marshal(map[string]any{
@@ -312,5 +329,17 @@ func TestReminderDraftInterpretationIsDeterministic(t *testing.T) {
 	dateFirst, ok := deterministicReminderDraft("Remind me about Tomorrow at 11 am", now)
 	if !ok || dateFirst.Type != "request_clarification" || dateFirst.Parameters["missing_parameter"] != "reminder_title" || dateFirst.Parameters["draft_date"] != "2026-09-13" || dateFirst.Parameters["draft_time"] != "11:00:00" {
 		t.Fatalf("unexpected date-first draft: %#v", dateFirst)
+	}
+}
+
+func TestReminderTodayAndMissingDatePreserveExplicitFields(t *testing.T) {
+	now := time.Date(2026, time.September, 12, 18, 0, 0, 0, time.UTC)
+	draft, ok := deterministicReminderDraft("Add reminder for 5pm for vet visit", now)
+	if !ok || draft.Type != "request_clarification" || draft.Parameters["draft_title"] != "vet visit" || draft.Parameters["draft_time"] != "17:00:00" {
+		t.Fatalf("lost draft fields: %#v", draft)
+	}
+	complete, ok := deterministicReminderDraft("Remind me about vet visit today at 5 pm", now)
+	if !ok || complete.Type != "create_reminder" || complete.Parameters["due_date"] != "2026-09-13" || complete.Parameters["due_time"] != "17:00:00" || complete.Parameters["title"] != "Vet visit" {
+		t.Fatalf("incorrect Auckland today: %#v", complete)
 	}
 }

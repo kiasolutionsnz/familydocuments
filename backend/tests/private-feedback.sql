@@ -1,0 +1,54 @@
+begin;
+do $$
+declare u uuid:='57000000-0000-4000-8000-000000000001';v uuid:='57000000-0000-4000-8000-000000000002';h uuid:='57000000-0000-4000-8000-000000000011';t jsonb;r jsonb;claim jsonb;ident text;role_name text;cid uuid;
+begin
+ insert into fp.households(id,name,owner_user_id) values(h,'Feedback synthetic Family',u);
+ insert into fp.members(household_id,user_id,email,role) values(h,u,'feedback-owner@example.test','owner'),(h,v,'feedback-member@example.test','adult_member');
+ foreach role_name in array array['owner','adult_member','viewer'] loop
+  update fp.members set role=role_name where household_id=h and user_id=u;
+  -- Feedback needs identity only, regardless of Family write permission.
+  perform set_config('request.jwt.claims',jsonb_build_object('sub',u,'role','authenticated')::text,true);
+  t:=fp.feedback_request('create','feedback-'||role_name,'Feedback: make documents easier to open.');
+  if t->>'status'<>'Needs clarification' then raise exception 'unclear feedback executable';end if;
+ end loop;
+ ident:=t->>'id';
+ r:=fp.feedback_request('create','feedback-viewer','Feedback: make documents easier to open.');
+ if r->>'id'<>ident then raise exception 'duplicate ticket';end if;
+ if fp.feedback_has_work() then raise exception 'unclear tickets eligible';end if;
+ r:=fp.feedback_request('reply','reply-000001','Tap the card.',ident);
+ if r->>'id'<>ident or r->>'status'<>'New' then raise exception 'reply not associated';end if;
+ r:=fp.feedback_request('reply','reply-000001','Tap the card.',ident);
+ if jsonb_array_length(r->'replies')<>1 then raise exception 'duplicate reply';end if;
+ perform set_config('request.jwt.claims',jsonb_build_object('sub',v,'role','authenticated')::text,true);
+ if jsonb_array_length(fp.feedback_request('list')->'tickets')<>0 then raise exception 'reporter leak';end if;
+ begin perform fp.feedback_request('detail',ticket=>ident);raise exception 'cross reporter access';exception when sqlstate 'PT404' then null;end;
+ perform set_config('request.jwt.claims','{}',true);
+ begin perform fp.feedback_request('create','signed-out-001','Feedback: fail');raise exception 'signedout allowed';exception when insufficient_privilege then null;end;
+ perform set_config('request.jwt.claims',jsonb_build_object('sub',u,'role','authenticated')::text,true);
+ begin perform fp.feedback_request('create','ordinary-001','Read this bill');raise exception 'ordinary chat accepted';exception when invalid_parameter_value then null;end;
+ claim:=fp.feedback_claim('fake-runner');
+ if claim is null or fp.feedback_claim('other-runner') is not null then raise exception 'claim duplicated';end if;
+ begin perform fp.feedback_worker_result(ident::bigint,(claim->>'lease_token')::uuid,'Released','pretend');raise exception 'released fabricated';exception when invalid_parameter_value then null;end;
+ begin perform fp.feedback_worker_result(ident::bigint,(claim->>'lease_token')::uuid,'Ready for release','pretend');raise exception 'missing validation allowed';exception when invalid_parameter_value then null;end;
+ perform fp.feedback_worker_result(ident::bigint,(claim->>'lease_token')::uuid,'Needs clarification','Need scope','Which screens should change?');
+ if fp.feedback_has_work() then raise exception 'question did not block';end if;
+ r:=fp.feedback_request('detail',ticket=>ident);
+ if r->>'question'<>'Which screens should change?' then raise exception 'worker question invisible';end if;
+ if has_table_privilege('feedback_runner','fp.documents','select') then raise exception 'runner document authority';end if;
+ if has_function_privilege('authenticated','fp.feedback_claim(text,integer)','execute') then raise exception 'reporter execution authority';end if;
+ perform set_config('request.jwt.claims',jsonb_build_object('sub',u,'role','authenticated','family_id',h)::text,true);
+ cid:=(fp.start_conversation('feedback-conversation-001')->>'id')::uuid;
+ t:=fp.feedback_request('create','feedback-conversation-card','Feedback: make documents easier to open.',conversation=>cid);
+ ident:=t->>'id';
+ if not exists(select 1 from fp.conversation_messages where conversation_id=cid and message_data#>>'{feedback_ticket,id}'=ident) then raise exception 'refresh card missing';end if;
+ perform fp.feedback_request('reply','feedback-card-reply','Tap the card.',ident);
+ if (select count(*) from fp.conversation_messages where conversation_id=cid and message_data#>>'{feedback_ticket,id}'=ident)<>1 then raise exception 'card duplicated';end if;
+ claim:=fp.feedback_claim('card-runner');
+ perform fp.feedback_worker_result(ident::bigint,(claim->>'lease_token')::uuid,'Needs clarification','Need one detail','PDF only or images too?');
+ if not exists(select 1 from fp.conversation_messages where conversation_id=cid and content like '%PDF only or images too?%') then raise exception 'question not restored in chat';end if;
+ t:=fp.feedback_request('create','feedback-secret-redaction','Feedback: password=fake-secret token=fake-token');
+ if t::text like '%fake-secret%' or t::text like '%fake-token%' then raise exception 'credential pattern retained';end if;
+ perform fp.feedback_request('withdraw',ticket=>t->>'id');
+ if (fp.feedback_request('detail',ticket=>t->>'id')->>'status')<>'Withdrawn' then raise exception 'withdraw failed';end if;
+end $$;
+rollback;

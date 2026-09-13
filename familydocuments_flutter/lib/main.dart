@@ -24,6 +24,8 @@ import 'features/library/library_page.dart';
 import 'features/library/library_navigation.dart';
 import 'features/library/models/library_models.dart';
 import 'features/settings/settings_page.dart';
+import 'features/feedback/feedback_service.dart';
+import 'features/feedback/feedback_page.dart';
 import 'features/timeline/data/timeline_service.dart';
 import 'features/timeline/timeline_page.dart';
 
@@ -113,6 +115,7 @@ class _AppState extends State<FamilyDocumentsApp> {
     }
     conversationController = ConversationController(
       repository: conversationRepository,
+      feedback: injectedHarness ? null : FeedbackService(auth),
       onOutcome: injectedHarness ? null : _handleConversationOutcome,
     )..addListener(_conversationChanged);
     ownsDestinationState = widget.destinationState == null;
@@ -225,6 +228,10 @@ class _AppState extends State<FamilyDocumentsApp> {
     ConversationAction action,
   ) async {
     switch (action.type) {
+      case ConversationActionType.recordRentalExpense:
+        throw const ConversationServiceException(
+          'Rental expenses require the authenticated conversation service.',
+        );
       case ConversationActionType.searchFamilyContent:
         final result = await homeService.search(
           action.parameters['query'].toString(),
@@ -802,7 +809,11 @@ class _AppState extends State<FamilyDocumentsApp> {
     }[destination];
     if (destinationIndex != null) _selectTab(destinationIndex);
 
-    if (outcome.actionType == 'save_document' && outcome.state == 'succeeded') {
+    if (const {
+          'save_document',
+          'record_rental_expense',
+        }.contains(outcome.actionType) &&
+        outcome.state == 'succeeded') {
       clearAttachment();
     }
     final jobId = outcome.result['job_id']?.toString();
@@ -1723,6 +1734,7 @@ class _AppState extends State<FamilyDocumentsApp> {
             activeClarificationId:
                 conversationController.pendingClarificationId,
             onNewConversation: _newConversation,
+            onFeedbackChanged: conversationController.refreshFeedback,
             onConfirmConversation: conversationController.confirm,
             onCancelConversationConfirmation:
                 conversationController.cancelConfirmation,
@@ -1770,6 +1782,9 @@ class _AppState extends State<FamilyDocumentsApp> {
     if (value < 0 || value >= PrimaryDestination.values.length) return;
     setState(() => tab = value);
     destinationState.select(PrimaryDestination.values[value]);
+    if (value == 0) {
+      unawaited(conversationController.refreshFeedback());
+    }
   }
 
   void _invalidateDocumentResults() {
@@ -1922,6 +1937,7 @@ class Shell extends StatelessWidget {
     required this.conversationConfirmation,
     required this.activeClarificationId,
     required this.onNewConversation,
+    this.onFeedbackChanged,
     required this.onConfirmConversation,
     required this.onCancelConversationConfirmation,
     required this.onConversationSuggestion,
@@ -1979,6 +1995,7 @@ class Shell extends StatelessWidget {
   final ConversationConfirmation? conversationConfirmation;
   final String? activeClarificationId;
   final Future<void> Function() onNewConversation;
+  final Future<void> Function()? onFeedbackChanged;
   final Future<void> Function() onConfirmConversation;
   final Future<void> Function() onCancelConversationConfirmation;
   final Future<void> Function(ConversationSuggestion) onConversationSuggestion;
@@ -2035,14 +2052,24 @@ class Shell extends StatelessWidget {
       foregroundColor: const Color(0xff245cc5),
       child: Text(_initials(email)),
     ),
-    onSelected: (value) {
+    onSelected: (value) async {
       if (value == 'signout') onSignOut();
+      if (value == 'feedback') {
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => FeedbackPage(repository: FeedbackService(auth)),
+          ),
+        );
+        await onFeedbackChanged?.call();
+        return;
+      }
       if (value == 'settings') {
         Navigator.of(context)
             .push(MaterialPageRoute(builder: (_) => SettingsPage(auth: auth)));
       }
     },
     itemBuilder: (_) => const [
+      PopupMenuItem(value: 'feedback', child: Text('My feedback')),
       PopupMenuItem(value: 'settings', child: Text('Settings')),
       PopupMenuItem(value: 'signout', child: Text('Sign out')),
     ],

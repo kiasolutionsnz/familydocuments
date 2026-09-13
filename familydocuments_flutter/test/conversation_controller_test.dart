@@ -293,6 +293,114 @@ ConversationController controller(
 );
 
 void main() {
+  test('free-text follow-up recovers from an unresolved intent', () async {
+    final repository = FakeRepository()..modelFails = true;
+    final executor = RecordingExecutor();
+    final subject = controller(repository, executor);
+    await subject.submit('please help with my stuff');
+    repository.modelFails = false;
+    repository.modelAction = ConversationAction(
+      id: 'recovered-search-action',
+      type: ConversationActionType.searchFamilyContent,
+      parameters: {'query': 'passport'},
+    );
+    await subject.submit('my passport please');
+    expect(
+      executor.actions.last.type,
+      ConversationActionType.searchFamilyContent,
+    );
+    expect(
+      subject.messages.any(
+        (m) => m.content == 'Please choose one of the options shown.',
+      ),
+      false,
+    );
+    subject.dispose();
+  });
+
+  test(
+    'ambiguous document question asks for selection without executing',
+    () async {
+      final repository = FakeRepository();
+      for (final id in [documentOne, documentTwo]) {
+        repository.messages.add(
+          ConversationMessage(
+            id: id,
+            role: ConversationRole.assistant,
+            kind: ConversationMessageKind.result,
+            content: 'Finished reading.',
+            createdAt: DateTime.utc(2026, 9, 13),
+            data: {
+              'document_id': id,
+              'title': id == documentOne ? 'First invoice' : 'Second invoice',
+            },
+          ),
+        );
+      }
+      final executor = RecordingExecutor();
+      final subject = controller(repository, executor);
+      await subject.restore();
+      await subject.submit('how much was the invocie?');
+      expect(executor.actions, isEmpty);
+      expect(subject.messages.last.content, contains('more than one'));
+      expect(repository.interpretCalls, 0);
+    },
+  );
+  test(
+    'invoice amount follow-up uses restored document, not model guessing',
+    () async {
+      final repository = FakeRepository();
+      repository.messages.add(
+        ConversationMessage(
+          id: 'finished-document',
+          role: ConversationRole.assistant,
+          kind: ConversationMessageKind.result,
+          content: 'Finished reading your document.',
+          createdAt: DateTime.utc(2026, 9, 13),
+          data: const {
+            'document_id': documentOne,
+            'title': 'Synthetic invoice',
+          },
+        ),
+      );
+      final executor = RecordingExecutor();
+      final subject = controller(repository, executor);
+      await subject.restore();
+      await subject.submit('how much was the invoice?');
+      expect(
+        executor.actions.single.type,
+        ConversationActionType.searchFamilyContent,
+      );
+      expect(executor.actions.single.parameters['document_id'], documentOne);
+      expect(repository.interpretCalls, 0);
+    },
+  );
+  for (final answer in ['today', 'tomorrow', 'today at 6 pm']) {
+    test('reminder retains title and time after refresh: $answer', () async {
+      final repository = FakeRepository();
+      final executor = RecordingExecutor();
+      DateTime now() => DateTime.utc(2026, 9, 13, 0);
+      final subject = controller(repository, executor, now: now);
+      await subject.submit('Add reminder for 5pm for vet visit');
+      expect(subject.messages.last.content, 'What date should I use?');
+      expect(executor.actions, isEmpty);
+      final restored = controller(repository, executor, now: now);
+      await restored.restore();
+      await restored.submit(answer);
+      expect(executor.actions, hasLength(1));
+      expect(executor.actions.single.parameters['title'], 'Vet visit');
+      expect(
+        executor.actions.single.parameters['due_time'],
+        answer.contains('6') ? '18:00:00' : '17:00:00',
+      );
+      expect(
+        executor.actions.single.parameters['due_date'],
+        answer == 'tomorrow' ? '2026-09-14' : '2026-09-13',
+      );
+      expect(repository.interpretCalls, 0);
+      expect(restored.pendingClarificationId, isNull);
+    });
+  }
   test('greeting is scoped and bypasses model and mutation executor', () async {
     final repository = FakeRepository();
     final executor = RecordingExecutor();

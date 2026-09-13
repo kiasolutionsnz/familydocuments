@@ -2,6 +2,22 @@ import 'package:familydocuments_flutter/core/home/reminder_parser.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'past time asks for a new date and retains explicit reminder fields',
+    () {
+      try {
+        parseReminderCommand(
+          'Add reminder for today 5pm for vet visit',
+          now: DateTime.utc(2026, 9, 13, 6),
+        );
+        fail('past reminder accepted');
+      } on ReminderClarification catch (draft) {
+        expect(draft.message, contains('already passed'));
+        expect(draft.draftTitle, 'Vet visit');
+        expect(draft.draftTime, '17:00:00');
+      }
+    },
+  );
   test('parses a standalone reminder into explicit Auckland date and time', () {
     final result = parseReminderCommand(
       'Remind me about my doctor appointment tomorrow at 2 pm',

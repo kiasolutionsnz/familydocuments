@@ -6,6 +6,7 @@ import '../../core/home/home_intent.dart';
 import '../../core/home/reminder_parser.dart';
 import 'data/conversation_service.dart';
 import 'models/conversation_models.dart';
+import '../feedback/feedback_service.dart';
 
 typedef ConversationOutcomeHandler = Future<void> Function(
   ConversationAuthoritativeOutcome outcome,
@@ -15,6 +16,7 @@ class ConversationController extends ChangeNotifier {
   ConversationController({
     required this._repository,
     this.onOutcome,
+    this.feedback,
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
 
@@ -22,6 +24,7 @@ class ConversationController extends ChangeNotifier {
   static const maxReferences = 12;
 
   final ConversationRepository _repository;
+  final FeedbackRepository? feedback;
   final ConversationOutcomeHandler? onOutcome;
   final DateTime Function() _now;
   final List<ConversationMessage> _messages = [];
@@ -97,6 +100,39 @@ class ConversationController extends ChangeNotifier {
     }
   }
 
+  Future<void> refreshFeedback() async {
+    if (feedback == null || _loading) {
+      return;
+    }
+    final conversation = _conversationId;
+    final cards = _messages
+        .where((m) => m.data['feedback_ticket'] is Map)
+        .toList();
+    for (final card in cards) {
+      try {
+        final ticket = await feedback!.request(
+          'detail',
+          ticket: (card.data['feedback_ticket'] as Map)['id'] as String,
+        );
+        if (_conversationId != conversation || !_messages.contains(card)) {
+          return;
+        }
+        final index = _messages.indexOf(card);
+        _messages[index] = ConversationMessage(
+          id: card.id,
+          role: card.role,
+          kind: card.kind,
+          content: ticket.summary,
+          createdAt: card.createdAt,
+          data: {'feedback_ticket': ticket.data},
+        );
+      } catch (_) {
+        /* Existing card remains visible; My feedback offers Retry. */
+      }
+    }
+    notifyListeners();
+  }
+
   Future<void> newConversation() async {
     _setLoading(true);
     try {
@@ -138,6 +174,55 @@ class ConversationController extends ChangeNotifier {
     if (_loading || (message.isEmpty && !hasAttachment)) return;
     _setLoading(true);
     try {
+      final ticketReply = RegExp(
+        r'^FD-([0-9]+)\s*:\s*(.+)$',
+        caseSensitive: false,
+        dotAll: true,
+      ).firstMatch(message);
+      final lastTicket = _messages.isEmpty
+          ? null
+          : _messages.last.data['feedback_ticket'];
+      final immediateReply =
+          lastTicket is Map && lastTicket['status'] == 'Needs clarification';
+      if (feedback != null &&
+          (isExplicitFeedback(message) ||
+              ticketReply != null ||
+              immediateReply)) {
+        // Feedback never stages attachments or calls model/action execution.
+        if (_conversationId == null) {
+          try {
+            await _ensureConversation();
+          } catch (_) {
+            /* Feedback also works without a Family. */
+          }
+        }
+        final explicit = isExplicitFeedback(message);
+        final result = await feedback!.request(
+          explicit ? 'create' : 'reply',
+          message: ticketReply?.group(2) ?? message,
+          ticket: explicit
+              ? null
+              : (ticketReply?.group(1) ?? (lastTicket as Map)['id'] as String),
+          conversation: _conversationId,
+        );
+        _messages.removeWhere(
+          (m) =>
+              m.data['feedback_ticket'] is Map &&
+              (m.data['feedback_ticket'] as Map)['id'] == result.id,
+        );
+        _messages.add(
+          ConversationMessage(
+            id: 'feedback-${result.id}',
+            role: ConversationRole.assistant,
+            kind: ConversationMessageKind.result,
+            content: '${explicit ? 'Created ' : 'Updated '}${result.summary}',
+            createdAt: _now(),
+            data: {'feedback_ticket': result.data},
+          ),
+        );
+        notifyListeners();
+        return;
+      }
       await _ensureConversation();
       if (hasAttachment && attachmentBytes != null) {
         attachmentId = await _repository.stageAttachment(
@@ -214,6 +299,16 @@ class ConversationController extends ChangeNotifier {
           return;
         }
         final missing = _pendingClarification?.parameters['missing_parameter'];
+        if (_pendingClarification?.type ==
+            ConversationActionType.recordRentalExpense) {
+          action = _resolveRentalDraft(
+            message,
+            attachmentId: hasAttachment ? attachmentId : null,
+          );
+          await _supersedeClarification();
+          await _route(action);
+          return;
+        }
         if (const {
               'reminder',
               'reminder_title',
@@ -232,7 +327,7 @@ class ConversationController extends ChangeNotifier {
           await _supersedeClarification();
           action = deterministic;
         } else {
-          action = _resolveClarification(message);
+          action = await _resolveClarification(message);
           await _supersedeClarification();
         }
       } else {
@@ -404,6 +499,47 @@ class ConversationController extends ChangeNotifier {
   }) {
     final lower = message.toLowerCase();
     final intent = parseHomeIntent(message, hasAttachment: hasAttachment);
+    if (RegExp(r'\brental\b', caseSensitive: false).hasMatch(message) &&
+        RegExp(
+          r'\b(?:expense|expenses)\b',
+          caseSensitive: false,
+        ).hasMatch(message) &&
+        !RegExp(
+          r'\b(?:read|scan|ocr|extract)\b',
+          caseSensitive: false,
+        ).hasMatch(message)) {
+      final name = RegExp(
+        r'\bfor\s+(.+?)[.!]?$',
+        caseSensitive: false,
+      ).firstMatch(message)?.group(1)?.trim();
+      final pendingAttachment = _pendingClarification
+          ?.parameters['attachment_id']
+          ?.toString();
+      if (hasAttachment || pendingAttachment != null) {
+        return ConversationAction(
+          id: _newId('action'),
+          type: ConversationActionType.recordRentalExpense,
+          parameters: {
+            'attachment_id':
+                attachmentId ?? pendingAttachment ?? 'current-attachment',
+            'property_name': ?name,
+          },
+        );
+      }
+      if (!_references.any((reference) => reference.type == 'document')) {
+        return ConversationAction(
+          id: _newId('action'),
+          type: ConversationActionType.recordRentalExpense,
+          parameters: {'property_name': ?name},
+        );
+      }
+      return _referenceAction(
+        type: ConversationActionType.recordRentalExpense,
+        referenceType: 'document',
+        parameterName: 'document_id',
+        extra: {'property_name': ?name},
+      );
+    }
     if (intent.type == HomeIntentType.greeting) {
       return ConversationAction(
         id: _newId('action'),
@@ -496,6 +632,21 @@ class ConversationController extends ChangeNotifier {
       );
     }
     if (RegExp(
+          r'^(?:how much|when (?:is|was)|what (?:is|was|are|were))\b',
+          caseSensitive: false,
+        ).hasMatch(message.trim()) &&
+        RegExp(
+          r'\b(invoice|invocie|invioce|bill|document|amount|total|due|payment|it|this|that)\b',
+          caseSensitive: false,
+        ).hasMatch(message)) {
+      return _referenceAction(
+        type: ConversationActionType.searchFamilyContent,
+        referenceType: 'document',
+        parameterName: 'document_id',
+        extra: {'query': message},
+      );
+    }
+    if (RegExp(
       r'^remind me (?:a|one) week before$',
       caseSensitive: false,
     ).hasMatch(message)) {
@@ -537,12 +688,31 @@ class ConversationController extends ChangeNotifier {
           },
         );
       } on ReminderClarification catch (clarification) {
+        // Keep explicit fields even when the date is missing. The temporary
+        // date is used only to parse fields and is never submitted or stored.
+        ParsedReminder? partial;
+        if (clarification.message == 'What date should I use?') {
+          try {
+            partial = parseReminderCommand(
+              '$message tomorrow',
+              now: _now().toUtc(),
+            );
+          } on ReminderClarification {
+            // Ask for the unresolved fields without inventing a value.
+          }
+        }
         return ConversationAction(
           id: _newId('action'),
           type: ConversationActionType.requestClarification,
           parameters: {
             'question': clarification.message,
             'missing_parameter': 'reminder_date',
+            if (partial != null) 'draft_title': partial.title,
+            if (partial?.dueTime != null) 'draft_time': partial!.dueTime,
+            if (clarification.draftTitle != null)
+              'draft_title': clarification.draftTitle,
+            if (clarification.draftTime != null)
+              'draft_time': clarification.draftTime,
           },
         );
       }
@@ -718,7 +888,11 @@ class ConversationController extends ChangeNotifier {
         type: ConversationActionType.requestClarification,
         parameters: {
           'question': candidates.isEmpty
-              ? 'Which $referenceType do you mean?'
+              ? 'No $referenceType is selected yet. ${referenceType == 'document'
+                    ? 'Attach a document or tell me what to find first.'
+                    : referenceType == 'reminder'
+                    ? 'Create a reminder first, or ask me to find your reminders.'
+                    : 'Open the relevant item first, then tell me what to change.'}'
               : 'I found more than one possible $referenceType. Which one do you mean?',
           'missing_parameter': parameterName,
           'choices': candidates.take(3).map((item) => item.label).toList(),
@@ -745,7 +919,7 @@ class ConversationController extends ChangeNotifier {
     );
   }
 
-  ConversationAction _resolveClarification(String answer) {
+  Future<ConversationAction> _resolveClarification(String answer) async {
     final pending = _pendingClarification!;
     _pendingClarification = null;
     if (pending.type == ConversationActionType.saveLink) {
@@ -852,13 +1026,59 @@ class ConversationController extends ChangeNotifier {
         );
       }
     }
+    final attachment = pending.parameters['attachment_id']?.toString();
+    return _modelOrClarification(
+      answer,
+      attachment != null,
+      attachmentId: attachment,
+    );
+  }
+
+  ConversationAction _resolveRentalDraft(
+    String answer, {
+    String? attachmentId,
+  }) {
+    final p = Map<String, dynamic>.from(_pendingClarification!.parameters);
+    final clarification = _messages.reversed
+        .where((m) => m.kind == ConversationMessageKind.clarification)
+        .firstOrNull;
+    final raw = clarification?.data['action'];
+    final parameters = raw is Map ? raw['parameters'] : null;
+    final missing = parameters is Map ? parameters['missing_parameter'] : null;
+    final text = answer.trim();
+    if (attachmentId != null) p['attachment_id'] = attachmentId;
+    switch (missing) {
+      case 'rental_property':
+        if (RegExp(
+          r'^create(?: (?:a |new )?rental)?$',
+          caseSensitive: false,
+        ).hasMatch(text)) {
+          p['create_property'] = true;
+        } else {
+          p.remove('property_id');
+          p.remove('property_version');
+          p['property_name'] = text.replaceFirst(
+            RegExp(r'^(?:use|for)\s+', caseSensitive: false),
+            '',
+          );
+        }
+      case 'rental_name':
+        p['property_name'] = text;
+      case 'rental_address':
+        p['address'] = text;
+      case 'rental_amount':
+        final amount = RegExp(
+          r'^(?:([A-Za-z]{3})\s*)?\$?\s*([0-9]{1,10}(?:\.[0-9]{1,2})?)$',
+        ).firstMatch(text);
+        if (amount != null) {
+          p['amount'] = amount.group(2)!;
+          p['currency'] = amount.group(1)?.toUpperCase() ?? 'NZD';
+        }
+    }
     return ConversationAction(
       id: _newId('action'),
-      type: ConversationActionType.requestClarification,
-      parameters: {
-        'question': 'Please choose one of the options shown.',
-        'missing_parameter': 'selection',
-      },
+      type: ConversationActionType.recordRentalExpense,
+      parameters: p,
     );
   }
 
@@ -882,9 +1102,48 @@ class ConversationController extends ChangeNotifier {
       );
     }
     final title = draft['draft_title']?.toString().trim();
+    final clock = draft['draft_time']?.toString();
+    final hasNewTime = RegExp(
+      r'\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b',
+      caseSensitive: false,
+    ).hasMatch(answer);
+    String retainedTime = '';
+    if (clock != null && !hasNewTime) {
+      final parts = clock.split(':');
+      final hour = int.parse(parts[0]);
+      retainedTime =
+          ' at ${hour % 12 == 0 ? 12 : hour % 12}:${parts[1]} ${hour < 12 ? 'am' : 'pm'}';
+    }
+    final command =
+        'Remind me about ${title != null && title.isNotEmpty ? '$title ' : ''}$answer$retainedTime';
+    try {
+      final parsed = parseReminderCommand(command, now: _now().toUtc());
+      return ConversationAction(
+        id: _newId('action'),
+        type: ConversationActionType.createReminder,
+        parameters: {
+          'title': parsed.title,
+          'due_date': parsed.dueDate,
+          if (parsed.dueTime != null) 'due_time': parsed.dueTime,
+        },
+      );
+    } on ReminderClarification catch (clarification) {
+      if (clarification.draftTitle != null) {
+        return ConversationAction(
+          id: _newId('action'),
+          type: ConversationActionType.requestClarification,
+          parameters: {
+            'question': clarification.message,
+            'missing_parameter': 'reminder_date',
+            'draft_title': clarification.draftTitle,
+            'draft_time': clarification.draftTime,
+          },
+        );
+      }
+      // The existing authenticated interpreter handles other date wording.
+    }
     return _repository.interpret(
-      message:
-          'Remind me about ${title != null && title.isNotEmpty ? '$title ' : ''}$answer',
+      message: command,
       references: _references,
       hasAttachment: false,
     );
@@ -988,11 +1247,14 @@ class ConversationController extends ChangeNotifier {
         attachmentId: attachmentId,
       );
     } on ConversationServiceException {
+      if (hasAttachment && attachmentId != null) {
+        return _attachmentClarification(attachmentId, null);
+      }
       return ConversationAction(
         id: _newId('action'),
         type: ConversationActionType.requestClarification,
         parameters: {
-          'question': 'What would you like me to organise or find?',
+          'question': 'Tell me what you want to save, find or change. For example: Find my passport, or Add a reminder tomorrow at 2 pm.',
           'missing_parameter': 'intent',
         },
       );
@@ -1119,6 +1381,16 @@ class ConversationController extends ChangeNotifier {
   void _rebuildReferences() {
     _references.clear();
     for (final message in _messages) {
+      final documentId = message.data['document_id']?.toString();
+      if (message.role == ConversationRole.assistant && documentId != null) {
+        _addReferences([
+          ConversationReference(
+            type: 'document',
+            id: documentId,
+            label: message.data['title']?.toString() ?? 'Saved document',
+          ),
+        ]);
+      }
       final raw = message.data['references'];
       if (raw is! List) continue;
       _addReferences(

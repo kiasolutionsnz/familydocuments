@@ -255,3 +255,37 @@ used categories. Flutter shows bounded category choices and loads the full list
 only when the user selects More categories. Saving a selected category uses the
 existing trusted action executor and never starts OCR; explicit Read document
 continues to enqueue the existing durable OCR workflow.
+
+## Guided rental expense conversations (migration 056)
+
+`record_rental_expense` is a strict version-1 action submitted through the existing
+authenticated conversation endpoint. The backend resolves visible rentals in the
+explicit active Family and returns a persisted clarification with bounded real
+choices, an explicit Create rental option, and a typed draft. Flutter collects
+missing name/address/document/amount fields; it does not author mutation receipts.
+Creation is never implicit. Every completed expense proposal requires the existing
+single-use backend confirmation. Its summary names the property, address when
+creating, amount, currency, and the Other expense classification.
+
+Property creation, metadata-only document saving and the existing rental-record
+service execute in one database transaction. Failed document saving rolls back
+the property creation too. Actor/Family idempotency, document permissions, rental
+visibility and property/document version checks are revalidated at execution.
+No OCR, reminder or tax/payment action is implied. Expense amount must be supplied
+explicitly; this flow does not infer it from OCR. Explicit OCR remains a separate
+durable action, followed by an explicit rental-expense request on the saved document.
+
+Unresolved general clarification accepts a new free-text interpretation instead
+of trapping the user in an empty selection menu. If interpretation is unavailable,
+a retained attachment returns to the existing real category/reading choices.
+This is not unrestricted multi-action planning: unsupported operations still need
+an allowlisted backend action. Telegram and the full Reminders destination are unchanged.
+# Private feedback intake
+
+`POST /conversation/feedback` uses the verified account token and service-only
+`fp.feedback_request` (migration 057). Operations: create, reply, list, detail,
+withdraw. Reporter/Family authority and implementation states cannot be supplied
+by the client. This explicit-user route is not a model action and does not process
+attachments. The avatar's My feedback view is reporter-private, including between
+members of the same Family. See `FEEDBACK_BACKLOG.md` for the disabled-by-default
+leased coding adapter, central scope policy and deployment boundary.

@@ -28,10 +28,11 @@ var safeTime = regexp.MustCompile(`^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$`)
 var conversationURL = regexp.MustCompile(`https://[^\s<>"']+`)
 var explicitDocumentCategory = regexp.MustCompile(`(?i)\b(?:in|to|as)\s+([a-z][a-z0-9 &-]{1,39})[.!]?$`)
 var reminderClock = regexp.MustCompile(`(?i)\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b`)
-var reminderDay = regexp.MustCompile(`(?i)\btomorrow\b`)
+var reminderDay = regexp.MustCompile(`(?i)\b(today|tomorrow)\b`)
 
 var actionParameters = map[string]map[string]bool{
-	"search_family_content":    {"query": true},
+	"record_rental_expense":    {"attachment_id": true, "document_id": true, "property_id": true, "property_name": true, "create_property": true, "address": true, "amount": true, "currency": true, "expected_updated_at": true, "property_version": true},
+	"search_family_content":    {"query": true, "document_id": true},
 	"query_reminders":          {"scope": true, "date": true},
 	"save_document":            {"attachment_id": true, "category_name": true, "tags": true, "create_category": true},
 	"request_document_ocr":     {"attachment_id": true, "document_id": true, "mode": true},
@@ -238,7 +239,7 @@ func deterministicReminderDraft(message string, now time.Time) (modelProposal, b
 		return modelProposal{Type: "request_clarification", Parameters: map[string]any{"question": "What should I remind you about, and when?", "missing_parameter": "reminder"}}, true
 	}
 	var body string
-	for _, prefix := range []string{"remind me about ", "add reminder about ", "create reminder about "} {
+	for _, prefix := range []string{"remind me about ", "add reminder about ", "create reminder about ", "add reminder for ", "create reminder for ", "set reminder for ", "remind me to ", "remind me ", "add reminder ", "create reminder ", "set reminder "} {
 		if strings.HasPrefix(lower, prefix) {
 			body = strings.TrimSpace(trimmed[len(prefix):])
 			break
@@ -253,8 +254,11 @@ func deterministicReminderDraft(message string, now time.Time) (modelProposal, b
 	}
 	localNow := now.In(location)
 	date := ""
-	if reminderDay.MatchString(body) {
-		date = localNow.AddDate(0, 0, 1).Format("2006-01-02")
+	if day := reminderDay.FindString(body); day != "" {
+		date = localNow.Format("2006-01-02")
+		if strings.EqualFold(day, "tomorrow") {
+			date = localNow.AddDate(0, 0, 1).Format("2006-01-02")
+		}
 	}
 	clock := ""
 	if match := reminderClock.FindStringSubmatch(body); match != nil {
@@ -278,8 +282,19 @@ func deterministicReminderDraft(message string, now time.Time) (modelProposal, b
 	}
 	title := strings.TrimSpace(reminderClock.ReplaceAllString(reminderDay.ReplaceAllString(body, ""), ""))
 	title = strings.TrimSpace(strings.Trim(title, " .,!"))
+	title = regexp.MustCompile(`(?i)^(?:for|about|to)\s+`).ReplaceAllString(title, "")
+	if date != "" && clock != "" {
+		due, parseErr := time.ParseInLocation("2006-01-02 15:04:05", date+" "+clock, location)
+		if parseErr == nil && !due.After(localNow) {
+			return modelProposal{Type: "request_clarification", Parameters: map[string]any{"question": "That time has already passed. Should I use tomorrow, or another date?", "missing_parameter": "reminder_date", "draft_title": title, "draft_time": clock}}, true
+		}
+	}
 	if date == "" {
-		return modelProposal{Type: "request_clarification", Parameters: map[string]any{"question": "What date should I use?", "missing_parameter": "reminder_date", "draft_title": title}}, true
+		parameters := map[string]any{"question": "What date should I use?", "missing_parameter": "reminder_date", "draft_title": title}
+		if clock != "" {
+			parameters["draft_time"] = clock
+		}
+		return modelProposal{Type: "request_clarification", Parameters: parameters}, true
 	}
 	if title == "" {
 		parameters := map[string]any{"question": "What should I remind you about?", "missing_parameter": "reminder_title", "draft_date": date}
@@ -385,6 +400,24 @@ func validateModelProposalDepth(proposal modelProposal, context interpreterConte
 	}
 	if proposal.Type == "request_document_ocr" && proposal.Parameters["attachment_id"] == nil && proposal.Parameters["document_id"] == nil {
 		return false
+	}
+	if proposal.Type == "record_rental_expense" {
+		p := proposal.Parameters
+		if p["attachment_id"] != nil && p["document_id"] != nil {
+			return false
+		}
+		if id, ok := p["property_id"].(string); ok && !uuidPattern.MatchString(id) {
+			return false
+		}
+		if p["property_id"] != nil && p["create_property"] == true {
+			return false
+		}
+		if amount, ok := p["amount"].(string); ok && !regexp.MustCompile(`^[0-9]{1,10}(\.[0-9]{1,2})?$`).MatchString(amount) {
+			return false
+		}
+		if currency, ok := p["currency"].(string); ok && !regexp.MustCompile(`^[A-Z]{3}$`).MatchString(currency) {
+			return false
+		}
 	}
 	if attachment, present := proposal.Parameters["attachment_id"]; present {
 		if !context.HasAttachment || conversationString(attachment) != context.AttachmentID || !uuidPattern.MatchString(context.AttachmentID) {
@@ -504,7 +537,7 @@ func publicConversationHost(host string) bool {
 
 func validConversationParameterType(key string, value any) bool {
 	switch key {
-	case "create_category", "ambiguous":
+	case "create_category", "ambiguous", "create_property":
 		_, ok := value.(bool)
 		return ok
 	case "tags", "choices":
@@ -606,7 +639,7 @@ func (h *conversationInterpreter) propose(input interpreterInput) (modelProposal
 }
 
 func sortedActionNames() []string {
-	return []string{"create_reminder", "dismiss_inbox_item", "mark_inbox_reviewed", "open_app_destination", "query_reminders", "request_clarification", "request_document_ocr", "save_document", "save_link", "search_family_content", "unsupported_request", "update_document_category", "update_document_tags", "update_reminder"}
+	return []string{"create_reminder", "dismiss_inbox_item", "mark_inbox_reviewed", "open_app_destination", "query_reminders", "record_rental_expense", "request_clarification", "request_document_ocr", "save_document", "save_link", "search_family_content", "unsupported_request", "update_document_category", "update_document_tags", "update_reminder"}
 }
 
 func (h *conversationInterpreter) reply(w http.ResponseWriter, proposal modelProposal, message, subject, familyID, interpretationStatus string) {

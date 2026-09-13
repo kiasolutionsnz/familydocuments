@@ -147,6 +147,7 @@ class MemoryConversationRepository implements ConversationRepository {
     String requestKey,
   ) async {
     final needsConfirmation =
+        action.type == ConversationActionType.recordRentalExpense ||
         action.type == ConversationActionType.saveLink ||
         action.type == ConversationActionType.dismissInboxItem ||
         action.type == ConversationActionType.updateReminder ||

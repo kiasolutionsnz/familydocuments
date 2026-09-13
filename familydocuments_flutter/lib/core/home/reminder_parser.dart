@@ -10,8 +10,9 @@ class ParsedReminder {
 }
 
 class ReminderClarification implements Exception {
-  const ReminderClarification(this.message);
+  const ReminderClarification(this.message, {this.draftTitle, this.draftTime});
   final String message;
+  final String? draftTitle, draftTime;
 }
 
 ParsedReminder parseReminderCommand(String command, {DateTime? now}) {
@@ -30,6 +31,9 @@ ParsedReminder parseReminderCommand(String command, {DateTime? now}) {
   if (lower.contains('tomorrow')) {
     due = today.add(const Duration(days: 1));
     datePhrase = 'tomorrow';
+  } else if (RegExp(r'\btoday\b').hasMatch(lower)) {
+    due = today;
+    datePhrase = 'today';
   } else {
     final match = RegExp(
       r'\bon\s+(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+(20\d\d))?',
@@ -81,19 +85,19 @@ ParsedReminder parseReminderCommand(String command, {DateTime? now}) {
   var title = text
       .replaceFirst(
         RegExp(
-          r'^(remind me\s+(?:about|to|for)?|add reminder\s*(?:about|to|for)?)\s*',
+          r'^(remind me\s+(?:about|to|for)?|(?:add|create|set) reminder\s*(?:about|to|for)?)\s*',
           caseSensitive: false,
         ),
         '',
       )
-      .replaceAll(RegExp(r'\btomorrow\b', caseSensitive: false), '')
+      .replaceAll(RegExp(r'\b(?:today|tomorrow)\b', caseSensitive: false), '')
       .replaceAll(
         RegExp(r'\s+on\s+\d{1,2}\s+[a-z]+(?:\s+20\d\d)?', caseSensitive: false),
         '',
       )
       .replaceAll(
         RegExp(
-          r'\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b',
+          r'\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b',
           caseSensitive: false,
         ),
         '',
@@ -106,6 +110,25 @@ ParsedReminder parseReminderCommand(String command, {DateTime? now}) {
     throw const ReminderClarification('What should I remind you about?');
   }
   title = '${title[0].toUpperCase()}${title.substring(1)}';
+  if (dueTime != null) {
+    final utcNow = (now ?? DateTime.now()).toUtc();
+    final localNow = utcNow.add(Duration(hours: _aucklandOffset(utcNow)));
+    final parts = dueTime.split(':');
+    final wallDue = DateTime.utc(
+      due.year,
+      due.month,
+      due.day,
+      int.parse(parts[0]),
+      int.parse(parts[1]),
+    );
+    if (!wallDue.isAfter(localNow)) {
+      throw ReminderClarification(
+        'That time has already passed. Should I use tomorrow, or another date?',
+        draftTitle: title,
+        draftTime: dueTime,
+      );
+    }
+  }
   return ParsedReminder(
     title: title,
     dueDate:
@@ -129,12 +152,16 @@ bool _isAucklandClockChangeDate(DateTime date) {
 }
 
 DateTime _aucklandDate(DateTime utc) {
+  final local = utc.add(Duration(hours: _aucklandOffset(utc)));
+  return DateTime(local.year, local.month, local.day);
+}
+
+int _aucklandOffset(DateTime utc) {
   final year = utc.year;
   final dstStart = _lastSundayUtc(year, 9).subtract(const Duration(hours: 10));
   final dstEnd = _firstSundayUtc(year, 4).subtract(const Duration(hours: 10));
   final isDst = utc.isBefore(dstEnd) || !utc.isBefore(dstStart);
-  final local = utc.add(Duration(hours: isDst ? 13 : 12));
-  return DateTime(local.year, local.month, local.day);
+  return isDst ? 13 : 12;
 }
 
 DateTime _lastSundayUtc(int year, int month) {
