@@ -116,6 +116,7 @@ type trustedConversationAPI struct {
 	client      *http.Client
 	verifier    accessTokenVerifier
 	proposalKey []byte
+	drive *driveGateway
 }
 
 func newTrustedConversationAPI(origin, api string, verifier accessTokenVerifier, proposalKey []byte, client *http.Client) *trustedConversationAPI {
@@ -254,17 +255,13 @@ func (h *trustedConversationAPI) attachment(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	var input struct {
-		ConversationID string `json:"conversation_id"`
-		FileName       string `json:"file_name"`
-		MimeType       string `json:"mime_type"`
-		ContentBase64  string `json:"content_base64"`
-	}
+	var input conversationDriveAttachment
 	if decodeRequestStrict(r.Body, &input) != nil || !uuidPattern.MatchString(input.ConversationID) || len(input.FileName) < 1 || len(input.FileName) > 255 {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 		return
 	}
-	h.proxyTrustedRPC(w, identity, "stage_conversation_attachment", map[string]any{"conversation": input.ConversationID, "file_name": input.FileName, "source_mime_type": input.MimeType, "content_base64": input.ContentBase64})
+	if h.drive==nil {jsonReply(w,http.StatusServiceUnavailable,map[string]string{"error":"drive_not_configured"});return}
+	h.drive.uploadConversationOriginal(w,r,identity,input)
 }
 
 func (h *trustedConversationAPI) categories(w http.ResponseWriter, r *http.Request) {

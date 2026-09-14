@@ -50,3 +50,28 @@ test('long processing renews its lease and completes with the fencing token', as
   assert.deepEqual(renewals[0], ['job-1', 'lease-1']);
   assert.equal(completed[0][1], 'lease-1');
 });
+
+test('Drive original is fetched once after claim and verified before OCR', async () => {
+  const fetched=[];const completed=[];
+  const driveJob={...job,source_kind:'google_drive',content_base64:null};
+  const result=await processJobs({claim:async()=>[driveJob],source:async current=>{fetched.push(current.job_id);return content.toString('base64')},
+    ocr:async current=>{assert.equal(current.content_base64,content.toString('base64'));return {text:'Synthetic invoice'}},
+    classify:async()=>({category:'Finance'}),complete:async(...args)=>completed.push(args),fail:async()=>assert.fail('unexpected failure')});
+  assert.equal(result.succeeded,1);assert.deepEqual(fetched,['job-1']);assert.equal(completed.length,1);
+});
+
+test('changed Drive original never reaches OCR', async () => {
+  const failures=[];const driveJob={...job,source_kind:'google_drive',content_base64:null};
+  const result=await processJobs({claim:async()=>[driveJob],source:async()=>Buffer.from('changed original').toString('base64'),
+    ocr:async()=>assert.fail('OCR must not receive a changed original'),classify:async()=>({}),complete:async()=>assert.fail('must not complete'),
+    fail:async(...args)=>failures.push(args)});
+  assert.equal(result.failed,1);assert.equal(failures[0][2],'source_unavailable');
+});
+
+test('temporary Drive fetch failure retries instead of losing the job', async () => {
+  const failures=[];const driveJob={...job,source_kind:'google_drive',content_base64:null};
+  const result=await processJobs({claim:async()=>[driveJob],source:async()=>{throw Object.assign(new Error('Drive temporarily unavailable'),{code:'processing_unavailable'})},
+    ocr:async()=>assert.fail('OCR must wait for the original'),classify:async()=>({}),complete:async()=>assert.fail('must not complete'),
+    fail:async(...args)=>failures.push(args)});
+  assert.equal(result.retrying,1);assert.deepEqual(failures,[['job-1','lease-1','processing_unavailable',true]]);
+});

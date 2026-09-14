@@ -182,6 +182,37 @@ void main() {
     );
   });
 
+  test(
+    'Drive-only attachment explains missing connection without falling back',
+    () async {
+      final service = ConversationService(
+        FakeAuth(),
+        client: FakeClient((request, body) async {
+          expect(request.url.path, endsWith('/conversation/attachment'));
+          return http.Response(
+            jsonEncode({'error': 'drive_not_available'}),
+            403,
+          );
+        }),
+      );
+      await expectLater(
+        service.stageAttachment(
+          conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          fileName: 'synthetic.pdf',
+          mimeType: 'application/pdf',
+          bytes: '%PDF-1.4'.codeUnits,
+        ),
+        throwsA(
+          isA<ConversationServiceException>().having(
+            (error) => error.message,
+            'message',
+            'Connect Google Drive in Settings before attaching a document.',
+          ),
+        ),
+      );
+    },
+  );
+
   test('rejected reminder has a specific safe retry message', () async {
     final service = ConversationService(
       FakeAuth(),

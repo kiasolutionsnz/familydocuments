@@ -874,6 +874,15 @@ class ConversationService implements ConversationRepository {
       'permission_denied' => 'You don’t have permission to do that.',
       'service_unavailable' =>
         'FamilyDocuments is temporarily unavailable. Try again.',
+      'drive_not_configured' || 'drive_not_available' =>
+        'Connect Google Drive in Settings before attaching a document.',
+      'drive_reconnect_required' => 'Google Drive needs to be reconnected in Settings before you can attach a document.',
+      'drive_unavailable' ||
+      'drive_upload_unconfirmed' ||
+      'drive_file_unavailable' => 'Google Drive is temporarily unavailable. Your document was not saved here; please retry.',
+      'drive_upload_pending' =>
+        'The upload could not be confirmed yet. Retry with the same file.',
+      'drive_upload_not_authorised' => 'This document could not be saved in the active Family. Check your access and try again.',
       'invalid_request' || 'action_rejected' => fallback,
       _ =>
         response.statusCode == 401

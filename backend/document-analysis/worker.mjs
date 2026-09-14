@@ -5,6 +5,7 @@ import {processJobs} from './worker-core.mjs';
 
 const apiUrl = process.env.FP_API_URL || 'http://127.0.0.1:55322';
 const ocrUrl = process.env.FP_OCR_URL || 'http://127.0.0.1:55323';
+const gatewayUrl = process.env.FP_GATEWAY_URL || 'http://127.0.0.1:3300';
 const ollamaUrl = process.env.FP_OLLAMA_URL || 'http://127.0.0.1:11434';
 const model = process.env.FP_OLLAMA_MODEL || 'qwen3:4b';
 const isolatedProcessingDelayMs = process.env.FD_TEST_CONTEXT === 'isolated'
@@ -71,15 +72,24 @@ async function classifyDocument(job, extracted) {
 
 export async function runCycle() {
   const secret = await readSecret();
-  const token = signedJwt(secret);
-  const ocrToken = signedJwt(secret, 'authenticated', '00000000-0000-4000-8000-000000000001');
+  const serviceToken = () => signedJwt(secret);
   return processJobs({
-    claim: batchSize => rpc('claim_document_analysis_jobs', {batch_size: batchSize}, token),
-    renew: (job, workerLeaseToken) => rpc('renew_document_analysis_job_lease', {job, worker_lease_token: workerLeaseToken}, token),
-    ocr: job => readDocument(job, ocrToken),
+    claim: batchSize => rpc('claim_document_analysis_jobs', {batch_size: batchSize}, serviceToken()),
+    source: async job => {
+      const response = await fetch(`${gatewayUrl}/drive/analysis-source`, {method:'POST',headers:{authorization:`Bearer ${serviceToken()}`,'content-type':'application/json'},
+        body:JSON.stringify({job_id:job.job_id,lease_token:job.lease_token}),signal:AbortSignal.timeout(45000)});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok || typeof data.content_base64!=='string') {
+        const permanent = [403, 409, 422].includes(response.status);
+        throw Object.assign(new Error('Drive source unavailable'),{code:permanent?'source_unavailable':'processing_unavailable'});
+      }
+      return data.content_base64;
+    },
+    renew: (job, workerLeaseToken) => rpc('renew_document_analysis_job_lease', {job, worker_lease_token: workerLeaseToken}, serviceToken()),
+    ocr: job => readDocument(job, signedJwt(secret, 'authenticated', '00000000-0000-4000-8000-000000000001')),
     classify: classifyDocument,
-    complete: (job, workerLeaseToken, result) => rpc('complete_document_analysis_job', {job, worker_lease_token: workerLeaseToken, job_result: result}, token),
-    fail: (job, workerLeaseToken, errorCode, retryable) => rpc('fail_document_analysis_job', {job, worker_lease_token: workerLeaseToken, error_code: errorCode, retryable}, token),
+    complete: (job, workerLeaseToken, result) => rpc('complete_document_analysis_job', {job, worker_lease_token: workerLeaseToken, job_result: result}, serviceToken()),
+    fail: (job, workerLeaseToken, errorCode, retryable) => rpc('fail_document_analysis_job', {job, worker_lease_token: workerLeaseToken, error_code: errorCode, retryable}, serviceToken()),
   });
 }
 

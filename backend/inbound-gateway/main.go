@@ -205,7 +205,8 @@ func main() {
 		conversationModel = optionalEnv("DOCUMENT_CLASSIFIER_MODEL")
 	}
 	mux.HandleFunc("/conversation/interpret", newConversationInterpreter(allowedOrigin, optionalEnv("OLLAMA_BASE_URL"), conversationModel, api, accessVerifier, []byte(jwtSecret), nil))
-	newTrustedConversationAPI(allowedOrigin, api, accessVerifier, []byte(jwtSecret), nil).register(mux)
+	conversationAPI := newTrustedConversationAPI(allowedOrigin, api, accessVerifier, []byte(jwtSecret), nil)
+	conversationAPI.register(mux)
 	telegramBotIdentity := optionalEnv("TELEGRAM_BOT_IDENTITY")
 	telegramBotUsername := optionalEnv("TELEGRAM_BOT_USERNAME")
 	telegramWebhookSecret := optionalEnv("TELEGRAM_WEBHOOK_SECRET")
@@ -226,6 +227,7 @@ func main() {
 	if driveGateway != nil {
 		driveGateway.register(mux)
 	}
+	conversationAPI.drive = driveGateway
 	mux.HandleFunc("POST /v1/inbound-email", func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		body, err := io.ReadAll(r.Body)

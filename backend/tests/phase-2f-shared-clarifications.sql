@@ -13,6 +13,7 @@ declare
   presented jsonb;
   extra_category uuid;
   foreign_category uuid;
+  drive_reservation jsonb;
 begin
   insert into fp.households(id,name,owner_user_id) values
     (family_id,'Clarification Family',owner_id),
@@ -36,10 +37,18 @@ begin
     'sub',owner_id,'email','clarification-owner@example.test',
     'role','authenticated','family_id',family_id)::text,true);
   test_conversation := (fp.start_conversation('shared-clarification-test')->>'id')::uuid;
-  insert into fp.conversation_attachments(conversation_id,household_id,user_id,
-    file_name,mime_type,content,sha256,expires_at)
-    values(test_conversation,family_id,owner_id,'synthetic-bill.pdf','application/pdf',
-      'synthetic',repeat('c',64),now()+interval '1 hour') returning id into attachment_id;
+  insert into fp.google_drive_credentials(household_id,encrypted_refresh_token,token_nonce,scopes,connected_by)
+    values(family_id,repeat('x',48),repeat('x',16),'https://www.googleapis.com/auth/drive.file',owner_id);
+  insert into fp.storage_connections(household_id,provider,provider_folder_id,folder_name,status,configured_by)
+    values(family_id,'google_drive','clarification-folder-001','Family files','active',owner_id);
+  perform set_config('request.jwt.claims','{"role":"service_role"}',true);
+  drive_reservation:=fp.reserve_conversation_drive_upload(test_conversation,owner_id,family_id,
+    'clarification-file-001','synthetic-bill.pdf','application/pdf',9,repeat('c',64));
+  attachment_id:=(fp.finish_conversation_drive_upload((drive_reservation->>'id')::uuid,owner_id,family_id,test_conversation,
+    'clarification-file-001','2026-09-14T00:00:00Z','1',repeat('d',32))->>'id')::uuid;
+  perform set_config('request.jwt.claims',jsonb_build_object(
+    'sub',owner_id,'email','clarification-owner@example.test',
+    'role','authenticated','family_id',family_id)::text,true);
   result := fp.submit_conversation_action(test_conversation,'clarification-action-0001',
     'request_clarification',1,jsonb_build_object('question',
       'Which category should I save this document in?',

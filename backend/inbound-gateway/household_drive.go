@@ -26,7 +26,7 @@ const driveScope = "https://www.googleapis.com/auth/drive.file"
 type driveGateway struct {
 	api, origin, clientID, clientSecret string
 	key                                 []byte
-	serviceToken                        string
+	jwtSecret                           string
 	http                                *http.Client
 }
 type driveAuth struct {
@@ -66,8 +66,9 @@ func newDriveGateway(api, origin, jwtSecret string) (*driveGateway, error) {
 	if err != nil || len(key) != 32 {
 		return nil, errors.New("GOOGLE_DRIVE_TOKEN_KEY must be a base64-encoded 32-byte key")
 	}
-	return &driveGateway{strings.TrimRight(api, "/"), origin, id, secret, key, "Bearer " + jwt(jwtSecret), &http.Client{Timeout: 30 * time.Second}}, nil
+	return &driveGateway{api: strings.TrimRight(api, "/"), origin: origin, clientID: id, clientSecret: secret, key: key, jwtSecret: jwtSecret, http: &http.Client{Timeout: 30 * time.Second}}, nil
 }
+func (g *driveGateway) serviceAuthorization() string { return "Bearer " + jwt(g.jwtSecret) }
 func (g *driveGateway) rpc(name, authorization string, input, output any) error {
 	payload, _ := json.Marshal(input)
 	req, _ := http.NewRequest("POST", g.api+"/rpc/"+name, bytes.NewReader(payload))
@@ -85,7 +86,7 @@ func (g *driveGateway) rpc(name, authorization string, input, output any) error 
 			Message string `json:"message"`
 		}
 		_ = json.Unmarshal(raw, &problem)
-		log.Printf("drive RPC %s failed: status=%d code=%q message=%q", name, resp.StatusCode, problem.Code, problem.Message)
+		log.Printf("drive RPC %s failed: status=%d", name, resp.StatusCode)
 		return fmt.Errorf("rpc %s returned %d", name, resp.StatusCode)
 	}
 	if output != nil && len(bytes.TrimSpace(raw)) > 0 {
@@ -150,7 +151,7 @@ func (g *driveGateway) access(household string) (string, string, error) {
 		Ciphertext string `json:"ciphertext"`
 		Nonce      string `json:"nonce"`
 	}
-	if err := g.rpc("google_drive_credential", g.serviceToken, map[string]any{"target_household": household}, &stored); err != nil {
+	if err := g.rpc("google_drive_credential", g.serviceAuthorization(), map[string]any{"target_household": household}, &stored); err != nil {
 		return "", "", err
 	}
 	refresh, err := g.decrypt(stored.Ciphertext, stored.Nonce)
@@ -200,6 +201,9 @@ func (g *driveGateway) auth(r *http.Request, name string, input any) (driveAuth,
 	}
 	var result driveAuth
 	err := g.rpc(name, authorization, input, &result)
+	if err == nil && r.Header.Get("X-Family-Context") != "" && r.Header.Get("X-Family-Context") != result.HouseholdID {
+		return driveAuth{}, errors.New("active family changed")
+	}
 	return result, err
 }
 func (g *driveGateway) deleteReceipt(userID, fileID string, expires int64) string {
@@ -237,7 +241,7 @@ func (g *driveGateway) cors(next http.HandlerFunc) http.HandlerFunc {
 		if origin == g.origin {
 			w.Header().Set("Access-Control-Allow-Origin", g.origin)
 			w.Header().Add("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "authorization,content-type,x-requested-with")
+			w.Header().Set("Access-Control-Allow-Headers", "authorization,content-type,x-requested-with,x-family-context")
 			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
 		}
 		if r.Method == "OPTIONS" {
@@ -249,7 +253,11 @@ func (g *driveGateway) cors(next http.HandlerFunc) http.HandlerFunc {
 }
 func decodeJSON(w http.ResponseWriter, r *http.Request, limit int64, out any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
-	return json.NewDecoder(r.Body).Decode(out)
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+	return decodeStrictJSON(raw, out)
 }
 func (g *driveGateway) register(m *http.ServeMux) {
 	m.HandleFunc("OPTIONS /drive/", g.cors(func(http.ResponseWriter, *http.Request) {}))
@@ -261,6 +269,7 @@ func (g *driveGateway) register(m *http.ServeMux) {
 	m.HandleFunc("DELETE /drive/files/{id}", g.cors(g.remove))
 	m.HandleFunc("POST /drive/open", g.cors(g.open))
 	m.HandleFunc("POST /drive/disconnect", g.cors(g.disconnect))
+	m.HandleFunc("POST /drive/analysis-source", g.analysisSource)
 }
 func (g *driveGateway) connect(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("X-Requested-With") != "XmlHttpRequest" {
@@ -284,9 +293,15 @@ func (g *driveGateway) connect(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 502, map[string]string{"error": "google_authorization_failed"})
 		return
 	}
+	// The Google popup/exchange can outlive a membership or active-Family change.
+	current, err := g.auth(r, "authorize_google_drive_admin", map[string]any{})
+	if err != nil || current.UserID != a.UserID || current.HouseholdID != a.HouseholdID {
+		jsonReply(w, 403, map[string]string{"error": "family_access_changed"})
+		return
+	}
 	ciphertext, nonce, err := g.encrypt(token.RefreshToken)
 	if err == nil {
-		err = g.rpc("store_google_drive_credential", g.serviceToken, map[string]any{"target_household": a.HouseholdID, "ciphertext": ciphertext, "nonce": nonce, "version": 1, "account": "", "granted_scopes": token.Scope, "actor": a.UserID}, nil)
+		err = g.rpc("store_google_drive_credential", g.serviceAuthorization(), map[string]any{"target_household": a.HouseholdID, "ciphertext": ciphertext, "nonce": nonce, "version": 1, "account": "", "granted_scopes": token.Scope, "actor": a.UserID}, nil)
 	}
 	if err != nil {
 		log.Printf("Google Drive credential storage failed: ciphertext_bytes=%d nonce_bytes=%d scopes_bytes=%d error=%v", len(ciphertext), len(nonce), len(token.Scope), err)
@@ -494,7 +509,7 @@ func (g *driveGateway) disconnect(w http.ResponseWriter, r *http.Request) {
 			resp.Body.Close()
 		}
 	}
-	if g.rpc("revoke_google_drive_credential", g.serviceToken, map[string]any{"target_household": a.HouseholdID, "actor": a.UserID}, nil) != nil {
+	if g.rpc("revoke_google_drive_credential", g.serviceAuthorization(), map[string]any{"target_household": a.HouseholdID, "actor": a.UserID}, nil) != nil {
 		jsonReply(w, 500, map[string]string{"error": "disconnect_failed"})
 		return
 	}

@@ -19,7 +19,7 @@ export function safeFailure(error) {
   return {code: 'processing_unavailable', retryable: true};
 }
 
-export async function processJobs({claim, renew, ocr, classify, complete, fail, batchSize = 3, leaseHeartbeatMs = 60000}) {
+export async function processJobs({claim, renew, source, ocr, classify, complete, fail, batchSize = 3, leaseHeartbeatMs = 60000}) {
   const jobs = await claim(batchSize);
   const result = {claimed: jobs.length, succeeded: 0, retrying: 0, failed: 0, reportFailures: 0, failureStages: {}, failureCodes: {}};
   for (const job of jobs) {
@@ -31,6 +31,10 @@ export async function processJobs({claim, renew, ocr, classify, complete, fail, 
       }).catch(error => { renewalFailure ||= error; });
     }, leaseHeartbeatMs) : null;
     try {
+      if (job.source_kind === 'google_drive') {
+        if (!source) throw Object.assign(new Error('source unavailable'), {code:'source_unavailable'});
+        job.content_base64 = await source(job);
+      }
       const bytes = Buffer.from(String(job.content_base64 || ''), 'base64');
       const digest = createHash('sha256').update(bytes).digest('hex');
       if (!bytes.length || digest !== job.sha256) throw Object.assign(new Error('source integrity'), {code: 'source_integrity'});

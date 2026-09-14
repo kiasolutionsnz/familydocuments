@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/auth/auth_service.dart';
+import 'drive/drive_page.dart';
 import 'telegram/telegram_integration_service.dart';
 
 class SettingsPage extends StatelessWidget {
@@ -19,6 +20,14 @@ class SettingsPage extends StatelessWidget {
           children: [
             Text('Integrations', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(Icons.cloud_outlined),
+              title: const Text('Google Drive'),
+              subtitle: const Text('Your Family’s document storage'),
+              onTap: () => Navigator.of(
+                context,
+              ).push(MaterialPageRoute(builder: (_) => DrivePage(auth: auth))),
+            ),
             ListTile(
               key: const ValueKey('telegram-integration'),
               leading: const Icon(Icons.send_outlined),

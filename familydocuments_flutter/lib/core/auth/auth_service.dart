@@ -36,6 +36,78 @@ class AuthService {
   Session? _session;
   Future<Session>? _refreshing;
   Session? get session => _session;
+
+  Future<List<Map<String, dynamic>>> totpFactors() async {
+    final value = await _mfa('user');
+    return (value['factors'] as List? ?? [])
+        .whereType<Map>()
+        .where((f) => f['factor_type'] == 'totp' && f['status'] == 'verified')
+        .map((f) => Map<String, dynamic>.from(f))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> enrollTotp() => _mfa(
+    'factors',
+    body: {'factor_type': 'totp', 'friendly_name': 'FamilyDocuments'},
+  );
+
+  Future<void> verifyTotp(String factorId, String code) async {
+    if (!RegExp(r'^[0-9a-fA-F-]{36}$').hasMatch(factorId) ||
+        !RegExp(r'^\d{6}$').hasMatch(code)) {
+      throw AuthException('Enter the six-digit code from your authenticator.');
+    }
+    final actor = _session?.userId;
+    final challenge = await _mfa('factors/$factorId/challenge', body: {});
+    final verified = await _mfa(
+      'factors/$factorId/verify',
+      body: {'challenge_id': challenge['id'], 'code': code},
+    );
+    if (actor == null ||
+        _session?.userId != actor ||
+        verified['access_token'] is! String ||
+        verified['refresh_token'] is! String) {
+      throw AuthException('Sign in again to verify your identity.');
+    }
+    final next = Session(
+      accessToken: verified['access_token'] as String,
+      refreshToken: verified['refresh_token'] as String,
+      email: _session!.email,
+      userId: actor,
+    );
+    await _store.writeRefreshToken(next.refreshToken);
+    _session = next;
+  }
+
+  Future<Map<String, dynamic>> _mfa(
+    String path, {
+    Map<String, dynamic>? body,
+  }) async {
+    try {
+      final headers = {
+        'authorization': 'Bearer ${await validAccessToken()}',
+        'content-type': 'application/json',
+      };
+      final uri = Uri.parse('$baseUrl/$path');
+      final response =
+          await (body == null
+                  ? _client.get(uri, headers: headers)
+                  : _client.post(uri, headers: headers, body: jsonEncode(body)))
+              .timeout(const Duration(seconds: 20));
+      if (response.statusCode != 200) {
+        throw AuthException(
+          'Identity verification was not completed. Check your code and try again.',
+        );
+      }
+      return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+    } on AuthException {
+      rethrow;
+    } catch (_) {
+      throw AuthException(
+        'We could not verify your identity. Please try again.',
+      );
+    }
+  }
+
   Future<Session> signIn(String email, String password) async {
     final s = await _token({'email': email, 'password': password}, 'password');
     await _store.writeRefreshToken(s.refreshToken);

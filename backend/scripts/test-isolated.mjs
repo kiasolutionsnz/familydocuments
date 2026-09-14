@@ -281,7 +281,7 @@ try {
     }
     const flutterLogPath = `${runtimeDir}\\flutter.log`;
     const workerLog = await open(workerLogPath, 'a');
-    const worker = spawn(process.execPath, ['document-analysis/worker.mjs', '--watch'], {cwd: root, env: {...env, FP_API_URL: env.FD_API_URL, FP_OCR_URL: env.FD_OCR_URL, FP_OLLAMA_URL: 'http://127.0.0.1:11434', FP_OLLAMA_MODEL: 'qwen3:4b'}, windowsHide: true, detached: true, stdio: ['ignore', workerLog.fd, workerLog.fd]});
+    const worker = spawn(process.execPath, ['document-analysis/worker.mjs', '--watch'], {cwd: root, env: {...env, FP_API_URL: env.FD_API_URL, FP_GATEWAY_URL: env.FD_GATEWAY_URL, FP_OCR_URL: env.FD_OCR_URL, FP_OLLAMA_URL: 'http://127.0.0.1:11434', FP_OLLAMA_MODEL: 'qwen3:4b'}, windowsHide: true, detached: true, stdio: ['ignore', workerLog.fd, workerLog.fd]});
     processes.push(worker);
     worker.unref();
     await workerLog.close();
