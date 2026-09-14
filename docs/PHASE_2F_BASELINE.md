@@ -45,7 +45,16 @@ The existing web session-store `dart:html` information item is unchanged.
 
 From a clean committed checkout, use `node scripts/test-isolated.mjs
 --manual-phase2f` in `backend`, with the explicit candidate gateway image. This
-creates new uniquely labelled loopback services, synthetic accounts, two Inbox
+manual mode creates the standard synthetic owner login
+`familydocuments@family-passport.test`. Set `FD_MANUAL_OWNER_PASSWORD` in the
+launching process environment; reuse the same value for each fresh disposable
+runtime. The password must meet the existing 14-character
+Auth minimum. Keep these values outside source control. The runner writes them
+only to the restricted runtime credentials file, along with random read-only
+credentials. It refuses to create another random owner account when the
+standard login is not configured. This setting is for disposable test data only.
+
+The runner creates new uniquely labelled loopback services, synthetic accounts, two Inbox
 attachments, document/category data and an OCR worker. It starts no Telegram
 worker, fake Telegram server or recurring monitor. The existing local qwen3:4b
 service is used without configuration changes; PostgreSQL, Auth, REST, gateway,

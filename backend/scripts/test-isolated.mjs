@@ -13,6 +13,13 @@ const manualConversation = process.argv.includes('--manual-conversation');
 const manualTelegram = process.argv.includes('--manual-telegram');
 const manualPhase2F = process.argv.includes('--manual-phase2f');
 if ([manualLibrary, manualInbox, manualConversation, manualTelegram, manualPhase2F].filter(Boolean).length > 1) throw new Error('Choose one manual runtime');
+const standardOwner = manualPhase2F ? {
+  email: 'familydocuments@family-passport.test',
+  password: process.env.FD_MANUAL_OWNER_PASSWORD,
+} : null;
+if (standardOwner && (standardOwner.password?.length ?? 0) < 14) {
+  throw new Error('Phase 2F manual testing requires a password of at least 14 characters from a local environment variable');
+}
 const manualRuntime = manualLibrary || manualInbox || manualConversation || manualTelegram || manualPhase2F;
 const conversationFixtures = manualConversation || manualTelegram || manualPhase2F;
 const prefix = `${manualPhase2F ? 'fd-phase2f' : manualTelegram ? 'fd-telegram' : manualConversation ? 'fd-conversation' : manualInbox ? 'fd-inbox' : manualLibrary ? 'fd-library' : 'fd-test'}-${randomBytes(6).toString('hex')}`;
@@ -162,10 +169,10 @@ try {
     const ollama = await fetch('http://127.0.0.1:11434/api/tags', {signal: AbortSignal.timeout(5000)}).then(response => response.json());
     if (!ollama.models?.some(item => String(item.name).startsWith('qwen3:4b'))) throw new Error('Local qwen3:4b is unavailable');
 
-    async function createManualAccount(accountLabel) {
+    async function createManualAccount(accountLabel, fixedAccount = null) {
       const suffix = `${Date.now()}-${randomBytes(4).toString('hex')}`;
-      const email = `${accountLabel}-${suffix}@family-passport.test`;
-      const accountPassword = `Synthetic-${randomBytes(10).toString('base64url')}!9a`;
+      const email = fixedAccount?.email ?? `${accountLabel}-${suffix}@family-passport.test`;
+      const accountPassword = fixedAccount?.password ?? `Synthetic-${randomBytes(10).toString('base64url')}!9a`;
       const headers = {'content-type': 'application/json'};
       const signup = await fetch(`${env.FD_AUTH_URL}/signup`, {method: 'POST', headers, body: JSON.stringify({email, password: accountPassword})});
       if (!signup.ok) throw new Error(`Synthetic ${accountLabel} signup failed`);
@@ -194,7 +201,7 @@ try {
 
     const mode = manualPhase2F ? 'phase2f' : manualTelegram ? 'telegram' : manualConversation ? 'conversation' : manualInbox ? 'inbox' : 'library';
     const phase = manualPhase2F ? 'Phase 2F' : manualTelegram ? 'Phase 2E' : manualConversation ? 'Phase 2D' : manualInbox ? 'Phase 2C' : 'Phase 2B';
-    const owner = await createManualAccount(`${mode}-owner`);
+    const owner = await createManualAccount(`${mode}-owner`, standardOwner);
     const viewer = await createManualAccount(`${mode}-viewer`);
     const outsider = await createManualAccount(`${mode}-outsider`);
     const multiFamily = manualTelegram ? await createManualAccount(`${mode}-multi-family`) : null;
