@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../core/auth/auth_service.dart';
 import 'drive_oauth.dart';
@@ -295,7 +296,7 @@ class _IdentityDialog extends StatefulWidget {
 
 class _IdentityDialogState extends State<_IdentityDialog> {
   final code = TextEditingController();
-  String? factor, setupKey, error;
+  String? factor, setupKey, setupUri, error;
   bool busy = true;
   @override
   void initState() {
@@ -317,7 +318,12 @@ class _IdentityDialogState extends State<_IdentityDialog> {
       } else {
         final enrolled = await widget.auth.enrollTotp();
         factor = enrolled['id'] as String;
-        setupKey = (enrolled['totp'] as Map)['secret'] as String;
+        final totp = enrolled['totp'] as Map;
+        setupKey = totp['secret'] as String;
+        final uri = Uri.tryParse(totp['uri'] as String? ?? '');
+        if (uri?.scheme == 'otpauth' && uri?.host == 'totp') {
+          setupUri = uri.toString();
+        }
       }
     } on AuthException catch (e) {
       error = e.message;
@@ -338,14 +344,37 @@ class _IdentityDialogState extends State<_IdentityDialog> {
           children: [
             if (busy) const LinearProgressIndicator(),
             if (setupKey != null) ...[
-              const Text(
-                'Add this setup key to your authenticator app. Keep it private.',
+              if (setupUri != null)
+                const Text(
+                  'Scan this code with your authenticator app, then enter its six-digit code.',
+                )
+              else
+                const Text(
+                  'Add the setup key to your authenticator app, then enter its six-digit code.',
+                ),
+              if (setupUri != null)
+                Semantics(
+                  label: 'Authenticator setup QR code',
+                  image: true,
+                  excludeSemantics: true,
+                  child: QrImageView(
+                    data: setupUri!,
+                    size: 200,
+                    backgroundColor: Colors.white,
+                  ),
+                ),
+              ExpansionTile(
+                title: const Text('Use setup key instead'),
+                initiallyExpanded: setupUri == null,
+                children: [
+                  const Text('Keep this key private.'),
+                  SelectableText(setupKey!),
+                ],
               ),
-              SelectableText(setupKey!),
             ],
             TextField(
               controller: code,
-              autofocus: true,
+              autofocus: setupKey == null,
               keyboardType: TextInputType.number,
               maxLength: 6,
               decoration: const InputDecoration(

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:familydocuments_flutter/core/auth/auth_service.dart';
 import 'package:familydocuments_flutter/features/settings/drive/drive_page.dart';
 import 'package:familydocuments_flutter/features/settings/drive/drive_service.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 class FakeDrive extends DriveRepository {
   DriveConnectionState state = DriveConnectionState.notConnected;
@@ -61,11 +62,32 @@ class FakeDriveAuth extends AuthService {
   }
 }
 
-Future<void> mount(WidgetTester tester, FakeDrive drive) async {
+class FakeEnrollDriveAuth extends FakeDriveAuth {
+  FakeEnrollDriveAuth({this.includeUri = true});
+  final bool includeUri;
+
+  @override
+  Future<List<Map<String, dynamic>>> totpFactors() async => [];
+
+  @override
+  Future<Map<String, dynamic>> enrollTotp() async => {
+    'id': 'synthetic-factor',
+    'totp': {
+      'secret': 'SYNTHETICSETUPKEY',
+      if (includeUri) 'uri': 'otpauth://totp/FamilyDocuments:test?secret=SYNTHETICSETUPKEY&issuer=FamilyDocuments',
+    },
+  };
+}
+
+Future<void> mount(
+  WidgetTester tester,
+  FakeDrive drive, {
+  AuthService? auth,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
       home: DrivePage(
-        auth: FakeDriveAuth(),
+        auth: auth ?? FakeDriveAuth(),
         repository: drive,
         clientId: 'synthetic-client',
         prepareAuthorization: () async {},
@@ -87,6 +109,53 @@ Future<void> verify(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets(
+    'new authenticator setup shows a scannable QR and hides the key by default',
+    (tester) async {
+      await mount(tester, FakeDrive(), auth: FakeEnrollDriveAuth());
+      await tester.tap(find.text('Verify identity to manage Drive'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(QrImageView), findsOneWidget);
+      expect(find.text('SYNTHETICSETUPKEY'), findsNothing);
+      await tester.ensureVisible(find.text('Use setup key instead'));
+      await tester.pump();
+      await tester.tap(find.text('Use setup key instead'));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('SYNTHETICSETUPKEY'), findsOneWidget);
+    },
+  );
+
+  testWidgets('manual setup key remains available if Auth omits a QR URI', (
+    tester,
+  ) async {
+    await mount(
+      tester,
+      FakeDrive(),
+      auth: FakeEnrollDriveAuth(includeUri: false),
+    );
+    await tester.tap(find.text('Verify identity to manage Drive'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(QrImageView), findsNothing);
+    expect(find.text('SYNTHETICSETUPKEY'), findsOneWidget);
+  });
+
+  testWidgets('QR setup stays usable on a narrow phone screen', (tester) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await mount(tester, FakeDrive(), auth: FakeEnrollDriveAuth());
+    await tester.tap(find.text('Verify identity to manage Drive'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(QrImageView), findsOneWidget);
+    await tester.ensureVisible(find.byType(TextField));
+    expect(find.byType(TextField), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('not connected requires identity verification before Google', (
     tester,
   ) async {
