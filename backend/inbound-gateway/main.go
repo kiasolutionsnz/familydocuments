@@ -206,6 +206,8 @@ func main() {
 	}
 	mux.HandleFunc("/conversation/interpret", newConversationInterpreter(allowedOrigin, optionalEnv("OLLAMA_BASE_URL"), conversationModel, api, accessVerifier, []byte(jwtSecret), nil))
 	conversationAPI := newTrustedConversationAPI(allowedOrigin, api, accessVerifier, []byte(jwtSecret), nil)
+	conversationAPI.ollama = optionalEnv("OLLAMA_BASE_URL")
+	conversationAPI.model = conversationModel
 	conversationAPI.register(mux)
 	telegramBotIdentity := optionalEnv("TELEGRAM_BOT_IDENTITY")
 	telegramBotUsername := optionalEnv("TELEGRAM_BOT_USERNAME")

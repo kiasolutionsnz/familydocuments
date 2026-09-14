@@ -375,6 +375,43 @@ void main() {
       expect(repository.interpretCalls, 0);
     },
   );
+  for (final question in [
+    'What is this invoice?',
+    'value of this invoice?',
+    'Have you scanned this invoice?',
+    'Have you finished reading the invoice?',
+    'Why can\'t you tell me the value of this invoice?',
+  ]) {
+    test(
+      'invoice follow-up stays grounded in selected document: $question',
+      () async {
+        final repository = FakeRepository();
+        repository.messages.add(
+          ConversationMessage(
+            id: 'selected-invoice',
+            role: ConversationRole.assistant,
+            kind: ConversationMessageKind.result,
+            content: 'Invoice saved.',
+            createdAt: DateTime.utc(2026, 9, 13),
+            data: const {
+              'document_id': documentOne,
+              'title': 'Synthetic invoice',
+            },
+          ),
+        );
+        final executor = RecordingExecutor();
+        final subject = controller(repository, executor);
+        await subject.restore();
+        await subject.submit(question);
+        expect(
+          executor.actions.single.type,
+          ConversationActionType.searchFamilyContent,
+        );
+        expect(executor.actions.single.parameters['document_id'], documentOne);
+        expect(repository.interpretCalls, 0);
+      },
+    );
+  }
   for (final answer in ['today', 'tomorrow', 'today at 6 pm']) {
     test('reminder retains title and time after refresh: $answer', () async {
       final repository = FakeRepository();

@@ -227,3 +227,85 @@ func TestTrustedGatewayDoesNotInventUnrelatedClarificationOptions(t *testing.T) 
 		t.Fatal("reminder draft must not suggest unrelated destinations")
 	}
 }
+
+func TestGroundedDocumentAnswerUsesLocalModelAndRejectsInventedAmount(t *testing.T) {
+	grounded := "I found this total in the document: Invoice total NZD 125.00\nCheck the original before making a payment."
+	responseText := `{"answer":"The invoice total: Invoice total NZD 125.00. Check the original before making a payment."}`
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Fatal("token forwarded to local model")
+		}
+		jsonReply(w, http.StatusOK, map[string]any{"message": map[string]string{"content": responseText}})
+	}))
+	defer ollama.Close()
+	service := newTrustedConversationAPI("", "", accessTokenVerifier{}, nil, nil)
+	service.ollama, service.model = ollama.URL, "qwen3:4b"
+	if got := service.composeGroundedAnswer("What is its value?", grounded); !strings.Contains(got, "125.00") {
+		t.Fatalf("supported wording was lost: %q", got)
+	}
+	responseText = `{"answer":"The invoice total is NZD 999.00."}`
+	if got := service.composeGroundedAnswer("What is its value?", grounded); got != "" {
+		t.Fatalf("invented amount was accepted: %q", got)
+	}
+	responseText = `{"answer":"The invoice is fraudulent. Invoice total NZD 125.00."}`
+	if got := service.composeGroundedAnswer("What is its value?", grounded); got != "" {
+		t.Fatalf("unsupported claim was accepted: %q", got)
+	}
+}
+
+func TestDocumentAnswerPersistsOnlyTheTrustedRefinement(t *testing.T) {
+	const execution = "55555555-5555-4555-8555-555555555555"
+	const document = "11111111-1111-4111-8111-111111111111"
+	const original = "I have read this document. Ask me about a specific detail."
+	refined := 0
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/rpc/submit_conversation_action" {
+			jsonReply(w, http.StatusOK, map[string]any{"execution_id": execution, "state": "succeeded", "result": map[string]any{"message": original}})
+			return
+		}
+		if r.URL.Path == "/rpc/refine_conversation_document_answer" {
+			refined++
+			jsonReply(w, http.StatusOK, map[string]any{"execution_id": execution, "state": "succeeded", "result": map[string]any{"message": "I have read it; ask me about a detail.", "ai_refined": true}})
+			return
+		}
+		t.Fatalf("unexpected RPC: %s", r.URL.Path)
+	}))
+	defer api.Close()
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jsonReply(w, http.StatusOK, map[string]any{"message": map[string]string{"content": `{"answer":"I have read it; ask me about a detail."}`}})
+	}))
+	defer ollama.Close()
+	secret := "synthetic-conversation-secret"
+	service := newTrustedConversationAPI("", api.URL, accessTokenVerifier{secret: []byte(secret), issuer: "supabase", audience: "authenticated"}, []byte(secret), nil)
+	service.ollama, service.model = ollama.URL, "qwen3:4b"
+	request := `{"conversation_id":"22222222-2222-4222-8222-222222222222","request_key":"question-0001","action":{"id":"question-0001","type":"search_family_content","version":1,"parameters":{"query":"What is this invoice?","document_id":"` + document + `"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/conversation/action", strings.NewReader(request))
+	req.Header.Set("Authorization", "Bearer "+conversationTestToken(secret, time.Now().Add(time.Hour)))
+	response := httptest.NewRecorder()
+	service.action(response, req)
+	if response.Code != http.StatusOK || refined != 1 || !strings.Contains(response.Body.String(), `"ai_refined":true`) {
+		t.Fatalf("refinement was not persisted: status=%d calls=%d", response.Code, refined)
+	}
+}
+
+func TestDocumentAnswerDoesNotReturnStaleContentAfterRevocation(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/rpc/submit_conversation_action" {
+			jsonReply(w, http.StatusOK, map[string]any{"execution_id": "55555555-5555-4555-8555-555555555555", "state": "succeeded", "result": map[string]any{"message": "I finished reading this document."}})
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer api.Close()
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jsonReply(w, http.StatusOK, map[string]any{"message": map[string]string{"content": `{"answer":"I finished reading this document."}`}})
+	}))
+	defer ollama.Close()
+	service := newTrustedConversationAPI("", api.URL, accessTokenVerifier{}, nil, nil)
+	service.ollama, service.model = ollama.URL, "qwen3:4b"
+	response := httptest.NewRecorder()
+	service.documentAnswer(response, accessIdentity{UserID: testConversationUser, Expiry: time.Now().Add(time.Hour)}, map[string]any{"test": true}, map[string]any{"query": "Have you read this document?"})
+	if response.Code != http.StatusForbidden || strings.Contains(response.Body.String(), "finished reading") {
+		t.Fatal("revoked document content was returned after an authorization failure")
+	}
+}

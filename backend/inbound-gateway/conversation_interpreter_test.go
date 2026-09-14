@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -141,6 +142,55 @@ func TestConversationInterpreterReturnsValidAllowlistedProposal(t *testing.T) {
 	handler(response, req)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"type":"search_family_content"`) {
 		t.Fatalf("valid proposal was not returned: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestConversationInterpreterUsesBoundedModelForDocumentFollowup(t *testing.T) {
+	document := "11111111-1111-4111-8111-111111111111"
+	modelCalls := 0
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		modelCalls++
+		if r.Header.Get("Authorization") != "" {
+			t.Fatal("access token was forwarded to the model")
+		}
+		jsonReply(w, http.StatusOK, map[string]any{"message": map[string]string{"content": `{"type":"search_family_content","parameters":{"query":"Explain what this invoice represents","document_id":"` + document + `"}}`}})
+	}))
+	defer ollama.Close()
+	handler, token, closeAPI := conversationTestHandler(t, ollama.URL)
+	defer closeAPI()
+	body := `{"message":"Explain what this invoice represents","context":{"has_attachment":false,"references":[{"type":"document","id":"` + document + `","label":"Synthetic invoice"}]}}`
+	req := httptest.NewRequest(http.MethodPost, "/conversation/interpret", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	handler(response, req)
+	if response.Code != http.StatusOK || modelCalls != 1 || !strings.Contains(response.Body.String(), `"type":"search_family_content"`) || !strings.Contains(response.Body.String(), document) {
+		t.Fatalf("bounded document proposal missing: status=%d calls=%d", response.Code, modelCalls)
+	}
+}
+
+func TestConversationInterpreterFallsBackToSafeDocumentReadWhenModelFails(t *testing.T) {
+	document := "11111111-1111-4111-8111-111111111111"
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jsonReply(w, http.StatusOK, map[string]any{"message": map[string]string{"content": `{"type":"run_sql","parameters":{}}`}})
+	}))
+	defer ollama.Close()
+	handler, token, closeAPI := conversationTestHandler(t, ollama.URL)
+	defer closeAPI()
+	for _, message := range []string{"Why can't you tell me its value?", "Explain what this invoice represents"} {
+		body, _ := json.Marshal(map[string]any{"message": message, "context": map[string]any{"has_attachment": false, "references": []map[string]string{{"type": "document", "id": document, "label": "Synthetic invoice"}}}})
+		req := httptest.NewRequest(http.MethodPost, "/conversation/interpret", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		handler(response, req)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"type":"search_family_content"`) || !strings.Contains(response.Body.String(), document) {
+			t.Fatalf("read-only fallback failed for %q: status=%d", message, response.Code)
+		}
+	}
+	if _, ok := readOnlyDocumentFallback(interpreterInput{Message: "Change this invoice to Finance", Context: interpreterContext{References: []interpreterReference{{Type: "document", ID: document}}}}); ok {
+		t.Fatal("mutation-shaped request used the read-only fallback")
+	}
+	if _, ok := readOnlyDocumentFallback(interpreterInput{Message: "What is this invoice?", Context: interpreterContext{References: []interpreterReference{{Type: "document", ID: document}, {Type: "document", ID: "22222222-2222-4222-8222-222222222222"}}}}); ok {
+		t.Fatal("ambiguous document request selected a reference")
 	}
 }
 

@@ -632,11 +632,15 @@ class ConversationController extends ChangeNotifier {
       );
     }
     if (RegExp(
-          r'^(?:how much|when (?:is|was)|what (?:is|was|are|were))\b',
+          r'^(?:how much|when (?:is|was)|what (?:is|was|are|were)|'
+          r'(?:what(?:\x27s| is) the )?(?:value|total|amount)|'
+          r'have you (?:read|scanned|finished reading)|'
+          r'why (?:can\x27t|cannot|couldn\x27t|could not) you (?:tell|find|read)|'
+          r'(?:is|was) (?:this|that|the) (?:invoice|bill|document) (?:read|scanned))\b',
           caseSensitive: false,
         ).hasMatch(message.trim()) &&
         RegExp(
-          r'\b(invoice|invocie|invioce|bill|document|amount|total|due|payment|it|this|that)\b',
+          r'\b(invoice|invocie|invioce|bill|document|amount|value|total|due|payment|it|this|that)\b',
           caseSensitive: false,
         ).hasMatch(message)) {
       return _referenceAction(
