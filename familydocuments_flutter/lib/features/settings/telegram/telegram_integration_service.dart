@@ -22,6 +22,7 @@ class TelegramConnection {
   const TelegramConnection({
     required bool connected,
     required this.selectionRequired,
+    this.available = true,
     TelegramConnectionState? state,
     this.familyId,
     this.familyName,
@@ -35,7 +36,7 @@ class TelegramConnection {
                ? TelegramConnectionState.connected
                : TelegramConnectionState.notConnected);
   final TelegramConnectionState state;
-  final bool selectionRequired;
+  final bool selectionRequired, available;
   final String? familyId, familyName, displayName, username;
   final DateTime? connectedAt;
   final DateTime? linkExpiresAt;
@@ -59,6 +60,7 @@ class TelegramConnection {
       connected: state == TelegramConnectionState.connected,
       state: state,
       selectionRequired: value['selection_required'] == true,
+      available: value['available'] != false,
       familyId: value['family_id']?.toString(),
       familyName: value['family_name']?.toString(),
       displayName: value['display_name']?.toString(),

@@ -127,6 +127,15 @@ type conversationDriveAttachment struct {
 	ContentBase64  string `json:"content_base64"`
 }
 
+type inboxDriveAttachment struct {
+	MessageID    string   `json:"message_id"`
+	AttachmentID string   `json:"attachment_id"`
+	CategoryID   string   `json:"category_id"`
+	Tags         []string `json:"tags"`
+	RequestID    string   `json:"request_id"`
+	RequestOCR   bool     `json:"request_ocr"`
+}
+
 func validOriginalBytes(mimeType string, data []byte) bool {
 	if len(data) < 1 || len(data) > 5<<20 {
 		return false
@@ -237,4 +246,103 @@ func (g *driveGateway) uploadConversationOriginal(w http.ResponseWriter, r *http
 		return
 	}
 	jsonReply(w, 200, staged)
+}
+
+// uploadInboxAttachment is intentionally a server-to-Drive hand-off: the
+// browser receives no quarantined bytes, and the DB record is created only
+// after Google confirms the exact reserved file. The clean quarantine copy is
+// cleared by finish_inbox_drive_upload after that confirmation.
+func (g *driveGateway) uploadInboxAttachment(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		return
+	}
+	var in inboxDriveAttachment
+	if decodeJSON(w, r, 4096, &in) != nil || !uuidPattern.MatchString(in.MessageID) || !uuidPattern.MatchString(in.AttachmentID) || !uuidPattern.MatchString(in.CategoryID) || len(in.RequestID) < 8 || len(in.RequestID) > 100 || len(in.Tags) > 12 {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		return
+	}
+	a, err := g.auth(r, "authorize_google_drive_member", map[string]any{})
+	if err != nil {
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "drive_not_available"})
+		return
+	}
+	access, _, err := g.access(a.HouseholdID)
+	if err != nil {
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "drive_reconnect_required"})
+		return
+	}
+	var generated struct {
+		IDs []string `json:"ids"`
+	}
+	if _, err = g.google("GET", "https://www.googleapis.com/drive/v3/files/generateIds?count=1&space=drive", access, "", nil, &generated); err != nil || len(generated.IDs) != 1 {
+		jsonReply(w, http.StatusBadGateway, map[string]string{"error": "drive_unavailable"})
+		return
+	}
+	var reservation struct {
+		ID            string `json:"id"`
+		FileID        string `json:"file_id"`
+		FolderID      string `json:"folder_id"`
+		Status        string `json:"status"`
+		FileName      string `json:"file_name"`
+		MimeType      string `json:"mime_type"`
+		Size          int64  `json:"size_bytes"`
+		SHA256        string `json:"sha256"`
+		ContentBase64 string `json:"content_base64"`
+	}
+	err = g.rpc("reserve_inbox_drive_upload", g.serviceAuthorization(), map[string]any{
+		"message": in.MessageID, "attachment": in.AttachmentID, "category": in.CategoryID, "selected_tags": in.Tags, "request_id": in.RequestID, "request_ocr": in.RequestOCR,
+		"actor": a.UserID, "family": a.HouseholdID, "generated_file_id": generated.IDs[0],
+	}, &reservation)
+	if err != nil || reservation.ID == "" || reservation.FileID == "" || reservation.FolderID != a.FolderID || reservation.ContentBase64 == "" {
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "drive_upload_not_authorised"})
+		return
+	}
+	content, err := base64.StdEncoding.DecodeString(reservation.ContentBase64)
+	if err != nil || int64(len(content)) != reservation.Size || !validOriginalBytes(reservation.MimeType, content) {
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "attachment_unavailable"})
+		return
+	}
+	sha := sha256.Sum256(content)
+	if !strings.EqualFold(hex.EncodeToString(sha[:]), reservation.SHA256) {
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "attachment_integrity"})
+		return
+	}
+	var saved driveFile
+	fileURL := "https://www.googleapis.com/drive/v3/files/" + url.PathEscape(reservation.FileID) + "?fields=id,name,mimeType,size,modifiedTime,version,md5Checksum,parents,trashed"
+	if reservation.Status != "uploaded" {
+		meta, _ := json.Marshal(map[string]any{"id": reservation.FileID, "name": reservation.FileName, "mimeType": reservation.MimeType, "parents": []string{reservation.FolderID}})
+		boundary := "familydocuments-inbox-7MA4YWxk"
+		var body bytes.Buffer
+		fmt.Fprintf(&body, "--%s\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n%s\r\n--%s\r\nContent-Type: %s\r\n\r\n", boundary, meta, boundary, reservation.MimeType)
+		body.Write(content)
+		fmt.Fprintf(&body, "\r\n--%s--\r\n", boundary)
+		_, err = g.google("POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,size,modifiedTime,version,md5Checksum,parents,trashed", access, "multipart/related; boundary="+boundary, &body, &saved)
+		if err != nil {
+			_, err = g.google("GET", fileURL, access, "", nil, &saved)
+		}
+	} else {
+		_, err = g.google("GET", fileURL, access, "", nil, &saved)
+	}
+	if err != nil {
+		jsonReply(w, http.StatusBadGateway, map[string]string{"error": "drive_upload_unconfirmed"})
+		return
+	}
+	md5sum := md5.Sum(content)
+	if saved.ID != reservation.FileID || saved.Name != reservation.FileName || saved.MimeType != reservation.MimeType || saved.Size != fmt.Sprint(len(content)) || saved.Version == "" || saved.Trashed || !contains(saved.Parents, reservation.FolderID) || !strings.EqualFold(saved.MD5Checksum, hex.EncodeToString(md5sum[:])) {
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "drive_upload_mismatch"})
+		return
+	}
+	modified, err := time.Parse(time.RFC3339, saved.ModifiedTime)
+	if err != nil {
+		jsonReply(w, http.StatusBadGateway, map[string]string{"error": "drive_metadata_incomplete"})
+		return
+	}
+	var result any
+	err = g.rpc("finish_inbox_drive_upload", g.serviceAuthorization(), map[string]any{"reservation": reservation.ID, "actor": a.UserID, "family": a.HouseholdID, "google_file_id": saved.ID, "google_modified_time": modified.UTC().Format(time.RFC3339), "google_version": saved.Version, "google_checksum": saved.MD5Checksum, "request_ocr": in.RequestOCR}, &result)
+	if err != nil {
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "drive_upload_pending"})
+		return
+	}
+	jsonReply(w, http.StatusOK, result)
 }

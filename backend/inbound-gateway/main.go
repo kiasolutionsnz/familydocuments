@@ -217,8 +217,10 @@ func main() {
 	if err := validateTelegramConfiguration(telegramBotIdentity, telegramBotUsername, telegramWebhookSecret, telegramDeepLinkBase, telegramIsolated); err != nil {
 		log.Fatalf("Telegram configuration invalid: %v", err)
 	}
+	telegramAPI := newTelegramAPI(allowedOrigin, api, telegramBotIdentity, telegramBotUsername, telegramWebhookSecret, telegramDeepLinkBase, accessVerifier, nil)
+	telegramAPI.registerStatus(mux)
 	if telegramBotIdentity != "" {
-		newTelegramAPI(allowedOrigin, api, telegramBotIdentity, telegramBotUsername, telegramWebhookSecret, telegramDeepLinkBase, accessVerifier, nil).register(mux)
+		telegramAPI.registerTransport(mux)
 		log.Print(telegramConfigurationSummary(telegramBotIdentity, telegramBotUsername))
 	}
 	mux.HandleFunc("/help/chat", newHelpChatHandler(allowedOrigin, optionalEnv("OLLAMA_BASE_URL"), optionalEnv("HELP_CHAT_MODEL"), nil))

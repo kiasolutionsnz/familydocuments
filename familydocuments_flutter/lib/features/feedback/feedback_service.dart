@@ -96,6 +96,14 @@ class FeedbackService implements FeedbackRepository {
 }
 
 bool isExplicitFeedback(String text) => RegExp(
-  r'^(feedback\s*:|add (this|that) to (the )?backlog\b|.*\bcreate (a )?feedback ticket\b)',
+  r'^(feedback\b|add (this|that) to (the )?backlog\b|.*\bcreate (a )?feedback ticket\b)',
   caseSensitive: false,
 ).hasMatch(text.trim());
+
+bool startsWithFeedback(String text) =>
+    RegExp(r'^feedback\b', caseSensitive: false).hasMatch(text.trim());
+
+String feedbackRequestText(String text) => text
+    .trim()
+    .replaceFirst(RegExp(r'^feedback\b\s*[:-]?\s*', caseSensitive: false), '')
+    .trim();

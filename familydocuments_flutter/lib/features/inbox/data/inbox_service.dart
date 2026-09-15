@@ -173,11 +173,11 @@ class InboxService {
         .where((x) => x.isNotEmpty)
         .toSet()
         .toList();
-    final response = await _post('/rest/rpc/inbox_save_attachment', {
-      'message': messageId,
-      'attachment': attachmentId,
-      'category': categoryId,
-      'selected_tags': normalized,
+    final response = await _post('/drive/inbox-attachment', {
+      'message_id': messageId,
+      'attachment_id': attachmentId,
+      'category_id': categoryId,
+      'tags': normalized,
       'request_id': requestId,
       'request_ocr': requestOcr,
     });

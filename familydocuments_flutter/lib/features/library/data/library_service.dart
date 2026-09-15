@@ -146,6 +146,197 @@ class LibraryService {
     );
   }
 
+  Future<void> createRentalProperty({
+    required String name,
+    required String address,
+  }) => _collectionAction('create_rental_property', {
+    'property_name': name.trim(),
+    'property_address': address.trim(),
+  });
+
+  Future<void> addRentalBill({
+    required String propertyId,
+    required String documentId,
+    required String category,
+  }) => _collectionAction('create_rental_bill', {
+    'property': propertyId,
+    'document': documentId,
+    'category': category,
+  });
+
+  Future<void> setRentalBillStatus(String billId, String status) =>
+      _collectionAction('set_rental_bill_status', {
+        'bill': billId,
+        'new_status': status,
+      });
+
+  Future<void> addRentalIncome({
+    required String propertyId,
+    required String receivedDate,
+    required num amount,
+    required String description,
+    String currency = 'NZD',
+  }) => _collectionAction('add_rental_income', {
+    'property': propertyId,
+    'received_date': receivedDate,
+    'received_amount': amount,
+    'received_currency': currency,
+    'income_description': description.trim(),
+  });
+
+  Future<Map<String, dynamic>> rentalFinancialYearReview({
+    required String propertyId,
+    required String financialYearStart,
+  }) async {
+    final response = await _post('/rest/rpc/rental_financial_year_review', {
+      'property': propertyId,
+      'financial_year_start': financialYearStart,
+    });
+    if (response.statusCode != 200) {
+      throw const LibraryServiceException(
+        'The financial-year review could not be loaded.',
+      );
+    }
+    try {
+      return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+    } catch (_) {
+      throw const LibraryServiceException(
+        'The financial-year review returned an unexpected response.',
+      );
+    }
+  }
+
+  Future<void> createTravelTrip({
+    required String name,
+    String? destination,
+    String? startDate,
+    String? endDate,
+  }) => _collectionAction('create_travel_trip', {
+    'trip_name': name.trim(),
+    'destination_name': destination?.trim(),
+    'trip_start': startDate,
+    'trip_end': endDate,
+  });
+
+  Future<void> addTravelRecord({
+    required String tripId,
+    required String documentId,
+    required String kind,
+  }) => _collectionAction('create_travel_record', {
+    'trip': tripId,
+    'document': documentId,
+    'kind': kind,
+  });
+
+  Future<Map<String, dynamic>> travelWorkspace() async {
+    final response = await _post('/rest/rpc/travel_workspace', const {});
+    if (response.statusCode != 200) {
+      throw const LibraryServiceException(
+        'Travel records could not be loaded. Try again.',
+      );
+    }
+    try {
+      return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+    } catch (_) {
+      throw const LibraryServiceException(
+        'Travel records returned an unexpected response.',
+      );
+    }
+  }
+
+  Future<void> updateTravelTrip({
+    required String tripId,
+    required String name,
+    required String destination,
+    required String startDate,
+    required String endDate,
+    required String currency,
+    required num budget,
+    required String status,
+    required String notes,
+  }) => _collectionAction('update_travel_trip', {
+    'trip': tripId,
+    'trip_name': name.trim(),
+    'destination_name': destination.trim(),
+    'trip_start': startDate.trim().isEmpty ? null : startDate.trim(),
+    'trip_end': endDate.trim().isEmpty ? null : endDate.trim(),
+    'home_currency_code': currency.trim().toUpperCase(),
+    'budget_amount': budget,
+    'trip_status': status,
+    'trip_notes': notes.trim(),
+  });
+
+  Future<void> addTripTraveller({
+    required String tripId,
+    required String name,
+  }) => _collectionAction('add_trip_traveller', {
+    'trip': tripId,
+    'traveller_name': name.trim(),
+    'member': null,
+  });
+
+  Future<void> addTravelCost({
+    required String tripId,
+    required String category,
+    required String status,
+    required num amount,
+    required String currency,
+    required String notes,
+  }) => _collectionAction('add_travel_cost', {
+    'trip': tripId,
+    'record': null,
+    'category': category,
+    'cost_status': status,
+    'amount': amount,
+    'currency': currency.trim().toUpperCase(),
+    'exchange_rate': null,
+    'rate_source': null,
+    'rate_date': null,
+    'notes': notes.trim(),
+  });
+
+  Future<void> addTravelItineraryEntry({
+    required String tripId,
+    required String kind,
+    required String title,
+    required String provider,
+    required String origin,
+    required String destination,
+    required String startsAt,
+    required String endsAt,
+    required String bookingReference,
+    required String notes,
+  }) => _collectionAction('create_travel_itinerary_entry', {
+    'trip': tripId,
+    'item_kind': kind,
+    'item_title': title.trim(),
+    'provider_name': provider.trim(),
+    'origin_name': origin.trim(),
+    'destination_name': destination.trim(),
+    'starts': startsAt.trim().isEmpty ? null : startsAt.trim(),
+    'ends': endsAt.trim().isEmpty ? null : endsAt.trim(),
+    'booking_ref': bookingReference.trim(),
+    'item_notes': notes.trim(),
+  });
+
+  Future<void> _collectionAction(
+    String operation,
+    Map<String, dynamic> body,
+  ) async {
+    final response = await _post('/rest/rpc/$operation', body);
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw const LibraryServiceException(
+        'You do not have permission to change this Family collection.',
+        accessRevoked: true,
+      );
+    }
+    if (response.statusCode != 200) {
+      throw const LibraryServiceException(
+        'That collection change could not be saved. Check the details and try again.',
+      );
+    }
+  }
+
   Future<LibrarySource> source(String documentId) async {
     final response = await _post('/rest/rpc/document_preview_source', {
       'document': documentId,

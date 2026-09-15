@@ -79,7 +79,7 @@ func (g *driveGateway) rpc(name, authorization string, input, output any) error 
 		return err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var problem struct {
 			Code    string `json:"code"`
@@ -264,8 +264,11 @@ func (g *driveGateway) register(m *http.ServeMux) {
 	m.HandleFunc("POST /drive/connect", g.cors(g.connect))
 	m.HandleFunc("GET /drive/folders", g.cors(g.folders))
 	m.HandleFunc("POST /drive/folders", g.cors(g.createFolder))
+	m.HandleFunc("POST /drive/library-folders", g.cors(g.createLibraryFolder))
+	m.HandleFunc("POST /drive/library-move", g.cors(g.moveLibraryDocument))
 	m.HandleFunc("POST /drive/folders/select", g.cors(g.selectFolder))
 	m.HandleFunc("POST /drive/upload", g.cors(g.upload))
+	m.HandleFunc("POST /drive/inbox-attachment", g.cors(g.uploadInboxAttachment))
 	m.HandleFunc("DELETE /drive/files/{id}", g.cors(g.remove))
 	m.HandleFunc("POST /drive/open", g.cors(g.open))
 	m.HandleFunc("POST /drive/disconnect", g.cors(g.disconnect))
@@ -363,6 +366,167 @@ func (g *driveGateway) createFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonReply(w, 200, folder)
+}
+
+// createLibraryFolder creates one registered child of the selected Family root
+// or another app-owned Library node. It deliberately does not accept arbitrary
+// Drive parent IDs, so the limited drive.file credential cannot be used as a
+// general folder-creation API.
+func (g *driveGateway) createLibraryFolder(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		NodeKey       string `json:"node_key"`
+		NodeKind      string `json:"node_kind"`
+		ParentFolder  string `json:"parent_folder_id"`
+		Name          string `json:"name"`
+		RelatedEntity string `json:"related_entity_id"`
+	}
+	if decodeJSON(w, r, 4096, &in) != nil {
+		jsonReply(w, 400, map[string]string{"error": "invalid_request"})
+		return
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	if len(in.Name) < 1 || len(in.Name) > 180 || len(in.ParentFolder) < 10 || len(in.ParentFolder) > 200 {
+		jsonReply(w, 422, map[string]string{"error": "invalid_library_folder"})
+		return
+	}
+	var existing struct {
+		FolderID string `json:"provider_folder_id"`
+		ParentID string `json:"parent_folder_id"`
+		Name     string `json:"folder_name"`
+	}
+	if err := g.rpc("library_drive_node", r.Header.Get("Authorization"), map[string]any{"node_key_value": in.NodeKey}, &existing); err != nil {
+		jsonReply(w, 403, map[string]string{"error": "library_node_lookup_denied"})
+		return
+	}
+	if existing.FolderID != "" {
+		if existing.ParentID != in.ParentFolder {
+			jsonReply(w, 409, map[string]string{"error": "library_node_parent_conflict"})
+			return
+		}
+		jsonReply(w, 200, map[string]any{"id": existing.FolderID, "name": existing.Name, "parent_id": existing.ParentID, "existing": true})
+		return
+	}
+	a, err := g.auth(r, "authorize_library_drive_parent", map[string]any{"parent_folder": in.ParentFolder})
+	if err != nil {
+		jsonReply(w, 403, map[string]string{"error": "library_parent_denied"})
+		return
+	}
+	var reservation struct {
+		FolderID         string `json:"provider_folder_id"`
+		ReservationToken string `json:"reservation_token"`
+		Existing         bool   `json:"existing"`
+		Provisioning     bool   `json:"provisioning"`
+	}
+	err = g.rpc("reserve_library_drive_node", g.serviceAuthorization(), map[string]any{
+		"target_household": a.HouseholdID, "actor": a.UserID,
+		"node_key_value": in.NodeKey, "node_kind_value": in.NodeKind,
+		"parent_folder": in.ParentFolder, "display_name": in.Name, "related_entity": nil,
+	}, &reservation)
+	if err != nil {
+		jsonReply(w, 502, map[string]string{"error": "library_folder_reservation_failed"})
+		return
+	}
+	if reservation.Existing && reservation.FolderID != "" {
+		jsonReply(w, 200, map[string]any{"id": reservation.FolderID, "name": in.Name, "parent_id": in.ParentFolder, "existing": true})
+		return
+	}
+	if reservation.Provisioning || reservation.ReservationToken == "" {
+		jsonReply(w, 409, map[string]string{"error": "library_folder_provisioning"})
+		return
+	}
+	access, _, err := g.access(a.HouseholdID)
+	if err != nil {
+		jsonReply(w, 409, map[string]string{"error": "drive_reconnect_required"})
+		return
+	}
+	raw, _ := json.Marshal(map[string]any{"name": in.Name, "mimeType": "application/vnd.google-apps.folder", "parents": []string{in.ParentFolder}})
+	var folder driveFile
+	_, err = g.google("POST", "https://www.googleapis.com/drive/v3/files?fields=id,name,mimeType,webViewLink,parents", access, "application/json", bytes.NewReader(raw), &folder)
+	if err != nil || len(folder.Parents) != 1 || folder.Parents[0] != in.ParentFolder {
+		jsonReply(w, 502, map[string]string{"error": "library_folder_create_failed"})
+		return
+	}
+	var registered any
+	err = g.rpc("complete_library_drive_node", g.serviceAuthorization(), map[string]any{
+		"target_household": a.HouseholdID, "actor": a.UserID,
+		"reservation": reservation.ReservationToken, "provider_folder": folder.ID,
+	}, &registered)
+	if err != nil {
+		// The Drive folder has no authoritative application record. Do not expose
+		// it as usable; a later repair flow can safely identify it by ID.
+		jsonReply(w, 502, map[string]string{"error": "library_folder_register_failed"})
+		return
+	}
+	jsonReply(w, 200, map[string]any{"id": folder.ID, "name": folder.Name, "parent_id": in.ParentFolder, "node": registered})
+}
+
+// moveLibraryDocument moves a confirmed Drive original only after its target
+// is an app-registered Library folder. The database placement is written only
+// after Drive confirms the exact parent, keeping future opens truthful.
+func (g *driveGateway) moveLibraryDocument(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Document string `json:"document"`
+		Folder   string `json:"folder_id"`
+	}
+	if decodeJSON(w, r, 4096, &in) != nil || len(in.Document) != 36 || len(in.Folder) < 10 || len(in.Folder) > 200 {
+		jsonReply(w, 400, map[string]string{"error": "invalid_library_move"})
+		return
+	}
+	source, err := g.auth(r, "authorize_google_drive_document", map[string]any{"document": in.Document})
+	if err != nil {
+		jsonReply(w, 404, map[string]string{"error": "source_not_found"})
+		return
+	}
+	target, err := g.auth(r, "authorize_library_drive_parent", map[string]any{"parent_folder": in.Folder})
+	if err != nil || target.HouseholdID != source.HouseholdID {
+		jsonReply(w, 403, map[string]string{"error": "library_parent_denied"})
+		return
+	}
+	if source.FolderID == in.Folder {
+		jsonReply(w, 200, map[string]any{"document": in.Document, "folder_id": in.Folder, "existing": true})
+		return
+	}
+	access, _, err := g.access(source.HouseholdID)
+	if err != nil {
+		jsonReply(w, 409, map[string]string{"error": "drive_reconnect_required"})
+		return
+	}
+	var metadata driveFile
+	_, err = g.google("GET", "https://www.googleapis.com/drive/v3/files/"+url.PathEscape(source.FileID)+"?fields=id,parents,trashed", access, "", nil, &metadata)
+	if err != nil || metadata.Trashed {
+		jsonReply(w, 409, map[string]string{"error": "file_outside_expected_folder"})
+		return
+	}
+	if contains(metadata.Parents, in.Folder) && !contains(metadata.Parents, source.FolderID) {
+		if err = g.rpc("record_library_drive_placement", g.serviceAuthorization(), map[string]any{
+			"target_household": source.HouseholdID, "actor": source.UserID,
+			"document": in.Document, "node_folder": in.Folder,
+		}, nil); err != nil {
+			jsonReply(w, 502, map[string]string{"error": "library_move_record_failed"})
+			return
+		}
+		jsonReply(w, 200, map[string]any{"document": in.Document, "folder_id": in.Folder, "existing": true})
+		return
+	}
+	if !contains(metadata.Parents, source.FolderID) {
+		jsonReply(w, 409, map[string]string{"error": "file_outside_expected_folder"})
+		return
+	}
+	params := "addParents=" + url.QueryEscape(in.Folder) + "&removeParents=" + url.QueryEscape(source.FolderID) + "&fields=id,parents"
+	var moved driveFile
+	_, err = g.google("PATCH", "https://www.googleapis.com/drive/v3/files/"+url.PathEscape(source.FileID)+"?"+params, access, "application/json", strings.NewReader("{}"), &moved)
+	if err != nil || len(moved.Parents) != 1 || moved.Parents[0] != in.Folder {
+		jsonReply(w, 502, map[string]string{"error": "library_move_failed"})
+		return
+	}
+	if err = g.rpc("record_library_drive_placement", g.serviceAuthorization(), map[string]any{
+		"target_household": source.HouseholdID, "actor": source.UserID,
+		"document": in.Document, "node_folder": in.Folder,
+	}, nil); err != nil {
+		jsonReply(w, 502, map[string]string{"error": "library_move_record_failed"})
+		return
+	}
+	jsonReply(w, 200, map[string]any{"document": in.Document, "folder_id": in.Folder})
 }
 func (g *driveGateway) selectFolder(w http.ResponseWriter, r *http.Request) {
 	a, err := g.auth(r, "authorize_google_drive_admin", map[string]any{})

@@ -261,7 +261,11 @@ class _MessageBubble extends StatelessWidget {
                   children: [
                     FilledButton(
                       onPressed: confirmation!.expired ? null : onConfirm,
-                      child: const Text('Confirm'),
+                      child: Text(
+                        message.data['feedback_confirmation'] == true
+                            ? 'Add feedback'
+                            : 'Confirm',
+                      ),
                     ),
                     OutlinedButton(
                       onPressed: confirmation!.expired

@@ -44,8 +44,16 @@ func newTelegramAPI(origin, api, botIdentity, botUsername, webhookSecret, deepLi
 }
 
 func (h *telegramAPI) register(mux *http.ServeMux) {
+	h.registerStatus(mux)
+	h.registerTransport(mux)
+}
+
+func (h *telegramAPI) registerStatus(mux *http.ServeMux) {
 	mux.HandleFunc("OPTIONS /integrations/telegram/status", h.status)
 	mux.HandleFunc("POST /integrations/telegram/status", h.status)
+}
+
+func (h *telegramAPI) registerTransport(mux *http.ServeMux) {
 	mux.HandleFunc("OPTIONS /integrations/telegram/connect", h.connect)
 	mux.HandleFunc("POST /integrations/telegram/connect", h.connect)
 	mux.HandleFunc("OPTIONS /integrations/telegram/disconnect", h.disconnect)
@@ -108,9 +116,18 @@ func (h *telegramAPI) status(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusBadGateway, map[string]string{"error": "integration_unavailable"})
 		return
 	}
+	var result map[string]any
+	if json.Unmarshal(data, &result) != nil {
+		jsonReply(w, http.StatusBadGateway, map[string]string{"error": "integration_unavailable"})
+		return
+	}
+	result["available"] = h.botIdentity != ""
+	if h.botIdentity != "" {
+		result["bot_username"] = h.botUsername
+	}
 	w.Header().Set("content-type", "application/json")
 	w.Header().Set("cache-control", "no-store")
-	_, _ = w.Write(data)
+	_ = json.NewEncoder(w).Encode(result)
 }
 
 func (h *telegramAPI) connect(w http.ResponseWriter, r *http.Request) {

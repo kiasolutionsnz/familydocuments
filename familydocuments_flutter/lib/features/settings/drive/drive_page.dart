@@ -78,7 +78,7 @@ class _DrivePageState extends State<DrivePage> {
   Future<void> verifyIdentity() => run(() async {
     final success = await showDialog<bool>(
       context: context,
-      builder: (_) => _IdentityDialog(auth: widget.auth),
+      builder: (_) => IdentityVerificationDialog(auth: widget.auth),
     );
     if (success != true || !mounted) return;
     await refreshStatus();
@@ -287,14 +287,14 @@ class _DrivePageState extends State<DrivePage> {
   }
 }
 
-class _IdentityDialog extends StatefulWidget {
-  const _IdentityDialog({required this.auth});
+class IdentityVerificationDialog extends StatefulWidget {
+  const IdentityVerificationDialog({super.key, required this.auth});
   final AuthService auth;
   @override
-  State<_IdentityDialog> createState() => _IdentityDialogState();
+  State<IdentityVerificationDialog> createState() => _IdentityDialogState();
 }
 
-class _IdentityDialogState extends State<_IdentityDialog> {
+class _IdentityDialogState extends State<IdentityVerificationDialog> {
   final code = TextEditingController();
   String? factor, setupKey, setupUri, error;
   bool busy = true;

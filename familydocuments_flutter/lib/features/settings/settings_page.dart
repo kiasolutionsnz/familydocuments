@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../../core/auth/auth_service.dart';
 import 'drive/drive_page.dart';
+import 'email/email_forwarding_page.dart';
+import 'family_settings_page.dart';
+import 'telegram/telegram_integration_page.dart';
 import 'telegram/telegram_integration_service.dart';
 
 class SettingsPage extends StatelessWidget {
@@ -29,20 +32,44 @@ class SettingsPage extends StatelessWidget {
               ).push(MaterialPageRoute(builder: (_) => DrivePage(auth: auth))),
             ),
             ListTile(
+              leading: const Icon(Icons.group_outlined),
+              title: const Text('Family and categories'),
+              subtitle: const Text(
+                'Members, invitations and document categories',
+              ),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => FamilySettingsPage(auth: auth),
+                ),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.forward_to_inbox_outlined),
+              title: const Text('Email forwarding'),
+              subtitle: const Text(
+                'Forward messages and manage trusted senders',
+              ),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => EmailForwardingPage(auth: auth),
+                ),
+              ),
+            ),
+            ListTile(
               key: const ValueKey('telegram-integration'),
               leading: const Icon(Icons.send_outlined),
               title: const Text('Telegram'),
-              subtitle: const Text('Temporarily unavailable'),
-              enabled: false,
-            ),
-            const Divider(),
-            const ListTile(
-              leading: Icon(Icons.settings_outlined),
-              title: Text('More settings'),
-              subtitle: Text(
-                'Additional settings will be connected in a later phase.',
+              subtitle: const Text('Connect the FamilyDocuments bot privately'),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => TelegramIntegrationPage(
+                    repository:
+                        telegramRepository ?? TelegramIntegrationService(auth),
+                  ),
+                ),
               ),
             ),
+            const Divider(),
           ],
         ),
       ),

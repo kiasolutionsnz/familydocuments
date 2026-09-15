@@ -33,6 +33,7 @@ class ConversationController extends ChangeNotifier {
   ConversationAction? _pendingClarification;
   String? _pendingClarificationId;
   ConversationConfirmation? _confirmation;
+  String? _pendingFeedback;
   bool _loading = false;
   bool _familySelectionRequired = false;
   List<ActiveFamilyChoice> _families = const [];
@@ -70,6 +71,7 @@ class ConversationController extends ChangeNotifier {
         _conversationId = null;
         _messages.clear();
         _confirmation = null;
+        _pendingFeedback = null;
         return;
       }
       final snapshot = await _repository.restore();
@@ -142,6 +144,7 @@ class ConversationController extends ChangeNotifier {
       _pendingClarification = null;
       _pendingClarificationId = null;
       _confirmation = null;
+      _pendingFeedback = null;
       notifyListeners();
     } finally {
       _setLoading(false);
@@ -155,6 +158,7 @@ class ConversationController extends ChangeNotifier {
     _pendingClarification = null;
     _pendingClarificationId = null;
     _confirmation = null;
+    _pendingFeedback = null;
     _loading = false;
     _familySelectionRequired = false;
     _families = const [];
@@ -162,7 +166,7 @@ class ConversationController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> submit(
+  Future<bool> submit(
     String text, {
     bool hasAttachment = false,
     String? attachmentId,
@@ -171,7 +175,7 @@ class ConversationController extends ChangeNotifier {
     List<int>? attachmentBytes,
   }) async {
     final message = text.trim();
-    if (_loading || (message.isEmpty && !hasAttachment)) return;
+    if (_loading || (message.isEmpty && !hasAttachment)) return false;
     _setLoading(true);
     try {
       final ticketReply = RegExp(
@@ -189,6 +193,32 @@ class ConversationController extends ChangeNotifier {
               ticketReply != null ||
               immediateReply)) {
         // Feedback never stages attachments or calls model/action execution.
+        if (startsWithFeedback(message)) {
+          final request = feedbackRequestText(message);
+          if (request.isEmpty) {
+            _showTransportFailure('Please describe the feedback you want to add.');
+            return false;
+          }
+          _pendingFeedback = message;
+          _confirmation = ConversationConfirmation(
+            id: _newId('feedback-confirmation'),
+            summary: request,
+            targetLabel: 'Add this to your private feedback backlog?',
+            expiresAt: _now().add(const Duration(minutes: 10)),
+          );
+          _messages.add(
+            ConversationMessage(
+              id: _newId('feedback-draft'),
+              role: ConversationRole.assistant,
+              kind: ConversationMessageKind.confirmation,
+              content: 'I found this feedback request:\n$request',
+              createdAt: _now(),
+              data: const {'feedback_confirmation': true},
+            ),
+          );
+          notifyListeners();
+          return true;
+        }
         if (_conversationId == null) {
           try {
             await _ensureConversation();
@@ -197,14 +227,23 @@ class ConversationController extends ChangeNotifier {
           }
         }
         final explicit = isExplicitFeedback(message);
-        final result = await feedback!.request(
-          explicit ? 'create' : 'reply',
-          message: ticketReply?.group(2) ?? message,
-          ticket: explicit
-              ? null
-              : (ticketReply?.group(1) ?? (lastTicket as Map)['id'] as String),
-          conversation: _conversationId,
-        );
+        late final FeedbackTicket result;
+        try {
+          result = await feedback!.request(
+            explicit ? 'create' : 'reply',
+            message: ticketReply?.group(2) ?? message,
+            ticket: explicit
+                ? null
+                : (ticketReply?.group(1) ??
+                      (lastTicket as Map)['id'] as String),
+            conversation: _conversationId,
+          );
+        } catch (_) {
+          _showTransportFailure(
+            'Your feedback was not saved. Check your connection and try Send again.',
+          );
+          return false;
+        }
         _messages.removeWhere(
           (m) =>
               m.data['feedback_ticket'] is Map &&
@@ -221,7 +260,7 @@ class ConversationController extends ChangeNotifier {
           ),
         );
         notifyListeners();
-        return;
+        return true;
       }
       await _ensureConversation();
       if (hasAttachment && attachmentBytes != null) {
@@ -249,7 +288,7 @@ class ConversationController extends ChangeNotifier {
           ..addAll(_collapse(snapshot.messages));
         _restorePendingClarification();
         notifyListeners();
-        return;
+        return true;
       }
       await _append(
         ConversationMessage(
@@ -278,7 +317,7 @@ class ConversationController extends ChangeNotifier {
             ..addAll(_collapse(snapshot.messages));
           _restorePendingClarification();
           notifyListeners();
-          return;
+          return true;
         }
         if (_isCancel(message)) {
           final outcome = await _repository.decideClarification(
@@ -286,7 +325,7 @@ class ConversationController extends ChangeNotifier {
             decision: 'cancel',
           );
           await _applyOutcome(outcome);
-          return;
+          return true;
         }
         final optionId = _optionIdForAnswer(message);
         if (optionId != null) {
@@ -296,7 +335,7 @@ class ConversationController extends ChangeNotifier {
             optionId: optionId,
           );
           await _applyOutcome(outcome);
-          return;
+          return true;
         }
         final missing = _pendingClarification?.parameters['missing_parameter'];
         if (_pendingClarification?.type ==
@@ -307,7 +346,7 @@ class ConversationController extends ChangeNotifier {
           );
           await _supersedeClarification();
           await _route(action);
-          return;
+          return true;
         }
         if (const {
               'reminder',
@@ -321,7 +360,7 @@ class ConversationController extends ChangeNotifier {
           action = await _resolveReminderDraft(message);
           await _supersedeClarification();
           await _route(action);
-          return;
+          return true;
         }
         if (deterministic != null) {
           await _supersedeClarification();
@@ -340,10 +379,13 @@ class ConversationController extends ChangeNotifier {
             );
       }
       await _route(action);
+      return true;
     } on ConversationServiceException catch (error) {
       _showTransportFailure(error.message);
+      return false;
     } on Object {
       _showTransportFailure('FamilyDocuments could not be reached. Try again.');
+      return false;
     } finally {
       _setLoading(false);
     }
@@ -435,6 +477,34 @@ class ConversationController extends ChangeNotifier {
     if (pending == null || _loading) return;
     _setLoading(true);
     try {
+      final feedbackMessage = _pendingFeedback;
+      if (feedbackMessage != null) {
+        try {
+          final result = await feedback!.request(
+            'create',
+            message: feedbackMessage,
+            conversation: _conversationId,
+          );
+          _pendingFeedback = null;
+          _confirmation = null;
+          _messages.add(
+            ConversationMessage(
+              id: 'feedback-${result.id}',
+              role: ConversationRole.assistant,
+              kind: ConversationMessageKind.result,
+              content: 'Created ${result.summary}',
+              createdAt: _now(),
+              data: {'feedback_ticket': result.data},
+            ),
+          );
+          notifyListeners();
+        } catch (_) {
+          _showTransportFailure(
+            'Your feedback was not saved. Check your connection and try Add feedback again.',
+          );
+        }
+        return;
+      }
       final outcome = await _repository.decideConfirmation(
         pending.id,
         confirm: true,
@@ -453,6 +523,21 @@ class ConversationController extends ChangeNotifier {
     if (pending == null || _loading) return;
     _setLoading(true);
     try {
+      if (_pendingFeedback != null) {
+        _pendingFeedback = null;
+        _confirmation = null;
+        _messages.add(
+          ConversationMessage(
+            id: _newId('feedback-cancelled'),
+            role: ConversationRole.assistant,
+            kind: ConversationMessageKind.result,
+            content: 'Feedback was not added.',
+            createdAt: _now(),
+          ),
+        );
+        notifyListeners();
+        return;
+      }
       final outcome = await _repository.decideConfirmation(
         pending.id,
         confirm: false,

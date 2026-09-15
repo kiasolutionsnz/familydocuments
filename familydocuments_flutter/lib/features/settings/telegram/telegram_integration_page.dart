@@ -130,6 +130,12 @@ class _TelegramIntegrationPageState extends State<TelegramIntegrationPage> {
         message: 'Choose an active Family before connecting Telegram.',
       );
     }
+    if (!value.available) {
+      return const _MessageState(
+        message:
+            'Telegram setup is not complete for this staging environment yet.',
+      );
+    }
     if (value.state == TelegramConnectionState.membershipRevoked) {
       return const _MessageState(
         message:

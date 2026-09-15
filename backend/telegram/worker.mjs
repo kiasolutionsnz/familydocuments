@@ -4,15 +4,20 @@ import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {checksum,detectSupportedFile,processTransportCycle,TELEGRAM_MAX_FILE_BYTES} from './worker-core.mjs';
 
-const api=(process.env.FP_API_URL||'http://127.0.0.1:54321/rest/v1').replace(/\/$/,'');
-const gateway=(process.env.FP_GATEWAY_URL||'http://127.0.0.1:3300').replace(/\/$/,'');
-const botAPI=(process.env.TELEGRAM_API_BASE_URL||'https://api.telegram.org').replace(/\/$/,'');
-const botIdentity=process.env.TELEGRAM_BOT_IDENTITY||'',token=process.env.TELEGRAM_BOT_TOKEN||'';
-const jwtIssuer=process.env.JWT_EXPECTED_ISSUER||'familydocuments';
-const stagingDir=process.env.TELEGRAM_STAGING_DIR||join(process.cwd(),'.telegram-staging');
+async function localEnv(name){try{return await readFile(new URL(`../${name}`,import.meta.url),'utf8')}catch{return ''}}
+const env=await localEnv('.env.local');
+const telegramEnv=await localEnv('.telegram.local');
+function value(source,key){return source.split(/\r?\n/).find(line=>line.startsWith(`${key}=`))?.slice(key.length+1).trim()||''}
+function configured(key,fallback=''){return process.env[key]||value(telegramEnv,key)||value(env,key)||fallback}
+const api=configured('FP_API_URL','http://127.0.0.1:55322').replace(/\/$/,'');
+const gateway=configured('FP_GATEWAY_URL','http://127.0.0.1:55327').replace(/\/$/,'');
+const botAPI=configured('TELEGRAM_API_BASE_URL','https://api.telegram.org').replace(/\/$/,'');
+const botIdentity=configured('TELEGRAM_BOT_IDENTITY'),token=configured('TELEGRAM_BOT_TOKEN');
+const jwtIssuer=configured('JWT_EXPECTED_ISSUER','familydocuments');
+const stagingDir=configured('TELEGRAM_STAGING_DIR',join(process.cwd(),'.telegram-staging'));
 const b64url=value=>Buffer.from(value).toString('base64url');
 function signedJwt(secret,role='service_role',subject,familyID){const now=Math.floor(Date.now()/1000),header=b64url(JSON.stringify({alg:'HS256',typ:'JWT'})),claims={role,aud:'authenticated',iss:jwtIssuer,iat:now,nbf:now-5,exp:now+300};if(subject)claims.sub=subject;if(familyID)claims.family_id=familyID;const payload=b64url(JSON.stringify(claims)),unsigned=`${header}.${payload}`;return `${unsigned}.${createHmac('sha256',secret).update(unsigned).digest('base64url')}`}
-async function secret(){if(process.env.GOTRUE_JWT_SECRET)return process.env.GOTRUE_JWT_SECRET;const contents=await readFile(new URL('../.env.local',import.meta.url),'utf8'),line=contents.split(/\r?\n/).find(x=>x.startsWith('GOTRUE_JWT_SECRET='));if(!line)throw new Error('GOTRUE_JWT_SECRET is required');return line.slice(line.indexOf('=')+1).trim()}
+async function secret(){const value=configured('GOTRUE_JWT_SECRET');if(!value)throw new Error('GOTRUE_JWT_SECRET is required');return value}
 async function post(url,body,bearer='',timeout=15000){const headers={'content-type':'application/json'};if(bearer)headers.authorization=`Bearer ${bearer}`;const response=await fetch(url,{method:'POST',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(timeout)}),parsed=await response.json().catch(()=>({}));if(!response.ok){const error=new Error(parsed.error||'service request failed');error.status=response.status;throw error}return parsed}
 const rpc=(name,body,bearer)=>post(`${api}/rpc/${name}`,body,bearer);
 const gatewayPost=(path,body,bearer,timeout)=>post(`${gateway}${path}`,body,bearer,timeout);

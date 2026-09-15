@@ -6,6 +6,14 @@ It must never reuse Bodycorp containers, schemas, databases, networks, volumes, 
 
 Temporary risk boundary: the currently available official Supabase development images contain known Critical/High vulnerability findings and are approved only for closed, loopback-only synthetic development. They must not join `proxy`, bind LAN/public interfaces or be promoted to production.
 
+## Gateway build and test memory
+
+The Google Drive/inbound gateway is Go source, but the supported runtime and
+validation environment is its pinned Docker build image (`golang:1.26.6-alpine`)
+in `inbound-gateway/Dockerfile`. A local Windows Go installation is optional and
+is not required. Validate gateway changes through the isolated Docker build and
+test path so the compiler/runtime match the candidate that can reach staging.
+
 The minimal stack disables Studio/Postgres Meta, Realtime, Storage, Edge Runtime and Analytics. Local email is inspected through Mailpit/Inbucket only.
 
 `family_passport_db` is an internal network with no published database port. `family_passport_app` is a normal bridge because Docker Desktop requires it for loopback port forwarding and future provider egress; Auth and Mailpit publish only to `127.0.0.1`.

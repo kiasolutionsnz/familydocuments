@@ -150,7 +150,24 @@ func TestTelegramStatusPassesThroughStableTypedState(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+conversationTestToken(secret, time.Now().Add(time.Hour)))
 	response := httptest.NewRecorder()
 	h.status(response, req)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"state":"not_connected"`) {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"state":"not_connected"`) || !strings.Contains(response.Body.String(), `"available":true`) {
 		t.Fatalf("stable status was not returned: code=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestTelegramStatusRemainsAvailableWhenTransportIsNotConfigured(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jsonReply(w, http.StatusOK, map[string]any{"state": "not_connected", "selection_required": false})
+	}))
+	defer upstream.Close()
+	secret := "correct"
+	h := newTelegramAPI("https://familydocuments.app", upstream.URL, "", "", "", "", accessTokenVerifier{secret: []byte(secret), issuer: "supabase", audience: "authenticated"}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/integrations/telegram/status", strings.NewReader(`{}`))
+	req.Header.Set("Origin", "https://familydocuments.app")
+	req.Header.Set("Authorization", "Bearer "+conversationTestToken(secret, time.Now().Add(time.Hour)))
+	response := httptest.NewRecorder()
+	h.status(response, req)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"available":false`) {
+		t.Fatalf("disabled status did not return a safe availability result: %d %s", response.Code, response.Body.String())
 	}
 }

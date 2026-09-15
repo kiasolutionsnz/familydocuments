@@ -51,6 +51,8 @@ void main() {
   test('only explicit feedback triggers intake', () {
     for (final text in [
       'Feedback: viewer too small',
+      'Feedback - add an FAQ section under profile',
+      'Feedback add an FAQ section under profile',
       'Add this to the backlog',
       'This did not work; create a feedback ticket.',
     ]) {
@@ -72,11 +74,20 @@ void main() {
         repository: MemoryConversationRepository(),
         feedback: feedback,
       );
-      await controller.submit('Feedback: make documents easier to open.');
+      expect(
+        await controller.submit('Feedback: make documents easier to open.'),
+        true,
+      );
+      expect(feedback.calls, isEmpty);
+      expect(controller.confirmation, isNotNull);
+      await controller.confirm();
       expect(controller.messages.last.content, contains('Created FD-123'));
-      await controller.submit('Tap the card.');
+      expect(await controller.submit('Tap the card.'), true);
       expect(feedback.calls, ['create:', 'reply:123']);
-      expect(controller.messages.length, 1);
+      expect(
+        controller.messages.where((m) => m.data['feedback_ticket'] is Map),
+        hasLength(1),
+      );
       expect(controller.messages.last.content, contains('Updated FD-123'));
     },
   );
@@ -87,8 +98,24 @@ void main() {
       feedback: feedback,
     );
     await c.newConversation();
-    await c.submit('FD-123: Tap the card.');
+    expect(await c.submit('FD-123: Tap the card.'), true);
     expect(feedback.calls, ['reply:123']);
+  });
+  test('feedback draft requires confirmation and can be cancelled', () async {
+    final feedback = FakeFeedback();
+    final controller = ConversationController(
+      repository: MemoryConversationRepository(),
+      feedback: feedback,
+    );
+    expect(
+      await controller.submit('Feedback - add an FAQ section under profile'),
+      true,
+    );
+    expect(controller.confirmation?.targetLabel, contains('private feedback'));
+    expect(feedback.calls, isEmpty);
+    await controller.cancelConfirmation();
+    expect(feedback.calls, isEmpty);
+    expect(controller.messages.last.content, 'Feedback was not added.');
   });
   test('attachment content never becomes feedback input', () async {
     final f = FakeFeedback();
@@ -96,12 +123,13 @@ void main() {
       repository: MemoryConversationRepository(),
       feedback: f,
     );
-    await c.submit(
+    expect(await c.submit(
       'Feedback: viewer too small',
       hasAttachment: true,
       attachmentBytes: [1, 2, 3],
       attachmentLabel: 'private.pdf',
-    );
+    ), true);
+    await c.confirm();
     expect(f.calls, ['create:']);
     expect(c.messages.last.data.containsKey('attachment_label'), false);
   });
@@ -111,8 +139,13 @@ void main() {
       repository: MemoryConversationRepository(),
       feedback: f,
     );
-    await c.submit('Feedback: test');
+    expect(await c.submit('Feedback: test'), true);
+    await c.confirm();
     expect(c.messages.any((m) => m.content.startsWith('Created')), false);
+    expect(
+      c.messages.last.content,
+      'Your feedback was not saved. Check your connection and try Add feedback again.',
+    );
   });
   testWidgets('private feedback list opens reply and withdrawal controls', (
     tester,

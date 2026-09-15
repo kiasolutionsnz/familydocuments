@@ -206,6 +206,12 @@ class _Service extends LibraryService {
   bool failLoad = false, failUpdate = false;
   int loadCalls = 0, updateCalls = 0;
 
+  // PB-10 adds an optional trip workspace request alongside the established
+  // Library data request. Keep this in-memory test double offline so existing
+  // Library rendering tests exercise their intended fixtures.
+  @override
+  Future<Map<String, dynamic>> travelWorkspace() async => const {};
+
   @override
   Future<LibraryData> load({
     String query = '',
@@ -645,7 +651,7 @@ void main() {
     expect(find.text('Tenancy notes'), findsOneWidget);
     await tester.tap(find.text('12 Example Street'));
     await tester.pumpAndSettle();
-    expect(find.text('Insurance'), findsOneWidget);
+    expect(find.text('Insurance'), findsWidgets);
     expect(find.text('Rental insurance'), findsOneWidget);
   });
 

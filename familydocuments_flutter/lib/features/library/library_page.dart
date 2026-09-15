@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../core/home/home_service.dart';
 import '../../core/security/public_https_url.dart';
+import '../settings/drive/drive_service.dart';
+import 'data/library_drive_organizer.dart';
 import 'data/library_service.dart';
 import 'document_viewer.dart';
 import 'library_navigation.dart';
@@ -27,6 +29,7 @@ class LibraryPage extends StatefulWidget {
     this.linkOpener,
     this.sourceDownloader,
     this.onMetadataChanged,
+    this.driveOrganizer,
   });
 
   final LibraryService service;
@@ -36,6 +39,7 @@ class LibraryPage extends StatefulWidget {
   final LinkOpener? linkOpener;
   final SourceDownloader? sourceDownloader;
   final VoidCallback? onMetadataChanged;
+  final LibraryDriveOrganizer? driveOrganizer;
 
   @override
   State<LibraryPage> createState() => LibraryPageState();
@@ -49,6 +53,7 @@ class LibraryPageState extends State<LibraryPage> {
   StreamSubscription<LibraryLocation>? navigationSubscription;
   LibraryLocation location = const LibraryLocation.top();
   LibraryData? data;
+  Map<String, dynamic> travelWorkspace = const {};
   bool loading = false, loadingMore = false;
   String? error, categoryFilter, tagFilter, linkCategoryFilter;
   LibrarySort sort = LibrarySort.newest;
@@ -112,6 +117,9 @@ class LibraryPageState extends State<LibraryPage> {
         sort: sort,
         offset: more ? (data?.documents.length ?? 0) : 0,
       );
+      final nextTravel = more
+          ? travelWorkspace
+          : await widget.service.travelWorkspace();
       if (!mounted) return;
       if (more && data != null) {
         final existing = {
@@ -141,6 +149,7 @@ class LibraryPageState extends State<LibraryPage> {
       } else {
         data = next;
       }
+      travelWorkspace = nextTravel;
       error = null;
     } on LibraryServiceException catch (failure) {
       if (mounted) error = failure.message;
@@ -746,6 +755,323 @@ class LibraryPageState extends State<LibraryPage> {
     return widget.service.createCategory(categoryName);
   }
 
+  Future<void> _createRentalProperty() async {
+    final name = TextEditingController();
+    final address = TextEditingController();
+    final result = await showDialog<(String, String)>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add rental property'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: name,
+              decoration: const InputDecoration(labelText: 'Property name'),
+            ),
+            TextField(
+              controller: address,
+              decoration: const InputDecoration(labelText: 'Street address'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(context, (name.text.trim(), address.text.trim())),
+            child: const Text('Add property'),
+          ),
+        ],
+      ),
+    );
+    if (result == null || result.$1.isEmpty || result.$2.isEmpty) return;
+    await _saveCollectionChange(
+      () => widget.service.createRentalProperty(
+        name: result.$1,
+        address: result.$2,
+      ),
+    );
+  }
+
+  Future<void> _createTrip() async {
+    final name = TextEditingController();
+    final destination = TextEditingController();
+    final result = await showDialog<(String, String)>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Create trip'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: name,
+              decoration: const InputDecoration(labelText: 'Trip name'),
+            ),
+            TextField(
+              controller: destination,
+              decoration: const InputDecoration(
+                labelText: 'Destination (optional)',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, (
+              name.text.trim(),
+              destination.text.trim(),
+            )),
+            child: const Text('Create trip'),
+          ),
+        ],
+      ),
+    );
+    if (result == null || result.$1.isEmpty) return;
+    await _saveCollectionChange(
+      () => widget.service.createTravelTrip(
+        name: result.$1,
+        destination: result.$2,
+      ),
+    );
+  }
+
+  Future<void> _addRentalBill(LibraryRelatedDocument record) async {
+    final properties = data!.rentals;
+    if (properties.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Add a rental property first.')),
+      );
+      return;
+    }
+    String propertyId = properties.first.id;
+    String category = 'other';
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Assign rental bill'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: propertyId,
+                decoration: const InputDecoration(labelText: 'Property'),
+                items: properties
+                    .map(
+                      (property) => DropdownMenuItem(
+                        value: property.id,
+                        child: Text(property.name),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) => setDialogState(() => propertyId = value!),
+              ),
+              DropdownButtonFormField<String>(
+                initialValue: category,
+                decoration: const InputDecoration(
+                  labelText: 'Expense category',
+                ),
+                items:
+                    const [
+                          'rates',
+                          'insurance',
+                          'interest',
+                          'repairs',
+                          'maintenance',
+                          'utilities',
+                          'professional_fees',
+                          'compliance',
+                          'other',
+                        ]
+                        .map(
+                          (value) => DropdownMenuItem(
+                            value: value,
+                            child: Text(value.replaceAll('_', ' ')),
+                          ),
+                        )
+                        .toList(),
+                onChanged: (value) => setDialogState(() => category = value!),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Assign'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (accepted == true) {
+      await _saveCollectionChange(
+        () => widget.service.addRentalBill(
+          propertyId: propertyId,
+          documentId: record.documentId,
+          category: category,
+        ),
+      );
+      final property = data?.rentals.firstWhere(
+        (item) => item.id == propertyId,
+      );
+      final document = data?.documents.firstWhere(
+        (item) => item.id == record.documentId,
+      );
+      if (property != null) {
+        await _organiseDrive(() async {
+          final organizer = widget.driveOrganizer;
+          if (organizer == null) return;
+          final folder = await organizer.organiseRentalBill(
+            property: property,
+            category: category,
+            transactionDate: _dateForDrive(document),
+          );
+          await organizer.drive.moveLibraryDocument(
+            documentId: record.documentId,
+            folderId: folder.id,
+          );
+        });
+      }
+    }
+  }
+
+  Future<void> _addTravelRecord(LibraryRelatedDocument record) async {
+    final trips = data!.trips;
+    if (trips.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Create a trip first.')));
+      return;
+    }
+    String tripId = trips.first.id;
+    String kind = 'other';
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Add travel record'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: tripId,
+                decoration: const InputDecoration(labelText: 'Trip'),
+                items: trips
+                    .map(
+                      (trip) => DropdownMenuItem(
+                        value: trip.id,
+                        child: Text(trip.name),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) => setDialogState(() => tripId = value!),
+              ),
+              DropdownButtonFormField<String>(
+                initialValue: kind,
+                decoration: const InputDecoration(labelText: 'Record type'),
+                items:
+                    const [
+                          'flight',
+                          'accommodation',
+                          'rail',
+                          'ferry',
+                          'car_rental',
+                          'activity',
+                          'insurance',
+                          'visa',
+                          'ticket',
+                          'other',
+                        ]
+                        .map(
+                          (value) => DropdownMenuItem(
+                            value: value,
+                            child: Text(value.replaceAll('_', ' ')),
+                          ),
+                        )
+                        .toList(),
+                onChanged: (value) => setDialogState(() => kind = value!),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Add'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (accepted == true) {
+      await _saveCollectionChange(
+        () => widget.service.addTravelRecord(
+          tripId: tripId,
+          documentId: record.documentId,
+          kind: kind,
+        ),
+      );
+      final trip = data?.trips.firstWhere((item) => item.id == tripId);
+      if (trip != null) {
+        await _organiseDrive(() async {
+          final organizer = widget.driveOrganizer;
+          if (organizer == null) return;
+          final folder = await organizer.organiseTravelRecord(
+            trip: trip,
+            kind: kind,
+          );
+          await organizer.drive.moveLibraryDocument(
+            documentId: record.documentId,
+            folderId: folder.id,
+          );
+        });
+      }
+    }
+  }
+
+  Future<void> _saveCollectionChange(Future<void> Function() change) async {
+    try {
+      await change();
+      await _load();
+      widget.onMetadataChanged?.call();
+    } on LibraryServiceException catch (failure) {
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(failure.message)));
+    }
+  }
+
+  Future<void> _organiseDrive(Future<void>? Function() organise) async {
+    try {
+      final pending = organise();
+      if (pending != null) await pending;
+    } on DriveException catch (failure) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Record saved. Drive folder pending: ${failure.message}',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
   Widget _travel() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
@@ -753,6 +1079,14 @@ class LibraryPageState extends State<LibraryPage> {
         'Travel',
         subtitle: 'Documents organised by trip.',
         back: const LibraryLocation.top(),
+      ),
+      Align(
+        alignment: Alignment.centerRight,
+        child: FilledButton.icon(
+          onPressed: _createTrip,
+          icon: const Icon(Icons.add),
+          label: const Text('Create trip'),
+        ),
       ),
       _search(),
       if (data!.trips.isEmpty && data!.travelRecords.isEmpty)
@@ -772,10 +1106,372 @@ class LibraryPageState extends State<LibraryPage> {
       ),
       if (data!.unassignedTravel.isNotEmpty) ...[
         _subheading('Other travel documents'),
-        ...data!.unassignedTravel.map(_relatedRow),
+        ...data!.unassignedTravel.map(
+          (record) => ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.description_outlined),
+            title: Text(record.title),
+            trailing: TextButton(
+              onPressed: () => _addTravelRecord(record),
+              child: const Text('Add to trip'),
+            ),
+            onTap: () => _open(
+              LibraryLocation(
+                LibrarySection.documents,
+                itemId: record.documentId,
+              ),
+            ),
+          ),
+        ),
       ],
     ],
   );
+
+  List<Map<String, dynamic>> _travelRows(String key) =>
+      (travelWorkspace[key] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+
+  String _travelCostTotals(List<Map<String, dynamic>> costs) {
+    final totals = <String, num>{};
+    for (final cost in costs) {
+      final currency = cost['currency']?.toString() ?? 'NZD';
+      totals[currency] =
+          (totals[currency] ?? 0) + (cost['amount'] as num? ?? 0);
+    }
+    return totals.entries
+        .map((item) => '${item.key} ${item.value}')
+        .join(' · ');
+  }
+
+  Future<void> _addTripTraveller(String tripId) async {
+    final name = TextEditingController();
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add traveller'),
+        content: TextField(
+          controller: name,
+          decoration: const InputDecoration(labelText: 'Name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+    if (saved == true && name.text.trim().isNotEmpty) {
+      await _saveCollectionChange(
+        () => widget.service.addTripTraveller(tripId: tripId, name: name.text),
+      );
+    }
+  }
+
+  Future<void> _addTripCost(String tripId) async {
+    final amount = TextEditingController();
+    final notes = TextEditingController();
+    final currency = TextEditingController(text: 'NZD');
+    var category = 'transport';
+    var status = 'paid';
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Add travel cost'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: amount,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Amount'),
+              ),
+              TextField(
+                controller: notes,
+                decoration: const InputDecoration(labelText: 'Note (optional)'),
+              ),
+              DropdownButtonFormField<String>(
+                initialValue: category,
+                decoration: const InputDecoration(labelText: 'Category'),
+                items:
+                    const [
+                          'transport',
+                          'accommodation',
+                          'food',
+                          'activity',
+                          'insurance',
+                          'visa',
+                          'other',
+                        ]
+                        .map((x) => DropdownMenuItem(value: x, child: Text(x)))
+                        .toList(),
+                onChanged: (value) => setDialogState(() => category = value!),
+              ),
+              DropdownButtonFormField<String>(
+                initialValue: status,
+                decoration: const InputDecoration(labelText: 'Status'),
+                items:
+                    const [
+                          'estimated',
+                          'booked',
+                          'paid',
+                          'refunded',
+                          'outstanding',
+                        ]
+                        .map((x) => DropdownMenuItem(value: x, child: Text(x)))
+                        .toList(),
+                onChanged: (value) => setDialogState(() => status = value!),
+              ),
+              TextField(
+                controller: currency,
+                decoration: const InputDecoration(labelText: 'Currency'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Add cost'),
+            ),
+          ],
+        ),
+      ),
+    );
+    final value = num.tryParse(amount.text.trim());
+    if (saved == true && value != null) {
+      await _saveCollectionChange(
+        () => widget.service.addTravelCost(
+          tripId: tripId,
+          category: category,
+          status: status,
+          amount: value,
+          currency: currency.text,
+          notes: notes.text,
+        ),
+      );
+    }
+  }
+
+  Future<void> _addTripItinerary(String tripId) async {
+    final title = TextEditingController();
+    final provider = TextEditingController();
+    final origin = TextEditingController();
+    final destination = TextEditingController();
+    final starts = TextEditingController();
+    final booking = TextEditingController();
+    var kind = 'flight';
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Add itinerary item'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: kind,
+                  decoration: const InputDecoration(labelText: 'Type'),
+                  items:
+                      const [
+                            'flight',
+                            'accommodation',
+                            'rail',
+                            'ferry',
+                            'car_rental',
+                            'activity',
+                            'meal',
+                            'transfer',
+                            'note',
+                            'other',
+                          ]
+                          .map(
+                            (x) => DropdownMenuItem(value: x, child: Text(x)),
+                          )
+                          .toList(),
+                  onChanged: (value) => setDialogState(() => kind = value!),
+                ),
+                TextField(
+                  controller: title,
+                  decoration: const InputDecoration(labelText: 'Title'),
+                ),
+                TextField(
+                  controller: provider,
+                  decoration: const InputDecoration(
+                    labelText: 'Provider (optional)',
+                  ),
+                ),
+                TextField(
+                  controller: origin,
+                  decoration: const InputDecoration(
+                    labelText: 'From (optional)',
+                  ),
+                ),
+                TextField(
+                  controller: destination,
+                  decoration: const InputDecoration(labelText: 'To (optional)'),
+                ),
+                TextField(
+                  controller: starts,
+                  decoration: const InputDecoration(
+                    labelText: 'Starts (ISO date/time, optional)',
+                  ),
+                ),
+                TextField(
+                  controller: booking,
+                  decoration: const InputDecoration(
+                    labelText: 'Booking reference (optional)',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Add item'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved == true && title.text.trim().isNotEmpty) {
+      await _saveCollectionChange(
+        () => widget.service.addTravelItineraryEntry(
+          tripId: tripId,
+          kind: kind,
+          title: title.text,
+          provider: provider.text,
+          origin: origin.text,
+          destination: destination.text,
+          startsAt: starts.text,
+          endsAt: '',
+          bookingReference: booking.text,
+          notes: '',
+        ),
+      );
+    }
+  }
+
+  Future<void> _editTrip(LibraryTrip trip, Map<String, dynamic> details) async {
+    final name = TextEditingController(text: trip.name);
+    final destination = TextEditingController(
+      text: details['destination']?.toString() ?? '',
+    );
+    final start = TextEditingController(
+      text: details['start_date']?.toString() ?? '',
+    );
+    final end = TextEditingController(
+      text: details['end_date']?.toString() ?? '',
+    );
+    final budget = TextEditingController(
+      text: details['budget']?.toString() ?? '0',
+    );
+    final currency = TextEditingController(
+      text: details['home_currency']?.toString() ?? 'NZD',
+    );
+    final notes = TextEditingController(
+      text: details['notes']?.toString() ?? '',
+    );
+    var status = details['status']?.toString() ?? 'planned';
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Edit trip'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: name,
+                  decoration: const InputDecoration(labelText: 'Trip name'),
+                ),
+                TextField(
+                  controller: destination,
+                  decoration: const InputDecoration(labelText: 'Destination'),
+                ),
+                TextField(
+                  controller: start,
+                  decoration: const InputDecoration(
+                    labelText: 'Start date (YYYY-MM-DD)',
+                  ),
+                ),
+                TextField(
+                  controller: end,
+                  decoration: const InputDecoration(
+                    labelText: 'End date (YYYY-MM-DD)',
+                  ),
+                ),
+                TextField(
+                  controller: budget,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Budget'),
+                ),
+                TextField(
+                  controller: currency,
+                  decoration: const InputDecoration(labelText: 'Currency'),
+                ),
+                DropdownButtonFormField<String>(
+                  initialValue: status,
+                  decoration: const InputDecoration(labelText: 'Status'),
+                  items: const ['planned', 'active', 'completed', 'cancelled']
+                      .map((x) => DropdownMenuItem(value: x, child: Text(x)))
+                      .toList(),
+                  onChanged: (value) => setDialogState(() => status = value!),
+                ),
+                TextField(
+                  controller: notes,
+                  decoration: const InputDecoration(labelText: 'Notes'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    final budgetValue = num.tryParse(budget.text.trim());
+    if (saved == true && name.text.trim().isNotEmpty && budgetValue != null) {
+      await _saveCollectionChange(
+        () => widget.service.updateTravelTrip(
+          tripId: trip.id,
+          name: name.text,
+          destination: destination.text,
+          startDate: start.text,
+          endDate: end.text,
+          currency: currency.text,
+          budget: budgetValue,
+          status: status,
+          notes: notes.text,
+        ),
+      );
+    }
+  }
 
   Widget _trip(String id) {
     final trip = data!.trips.where((x) => x.id == id).firstOrNull;
@@ -783,6 +1479,21 @@ class LibraryPageState extends State<LibraryPage> {
       return _StateView(message: 'You no longer have access to this item.');
     }
     final records = data!.travelRecords.where((x) => x.parentId == id).toList();
+    final details = _travelRows('trips')
+        .where((item) => item['id'] == id)
+        .firstOrNull;
+    final travellers = _travelRows('travellers')
+        .where((item) => item['trip_id'] == id)
+        .toList();
+    final itinerary = _travelRows('itinerary_entries')
+        .where((item) => item['trip_id'] == id)
+        .toList();
+    final costs = _travelRows('costs')
+        .where((item) => item['trip_id'] == id)
+        .toList();
+    final canContribute =
+        details?['can_contribute'] == true || details?['can_manage'] == true;
+    final canManage = details?['can_manage'] == true;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -794,6 +1505,98 @@ class LibraryPageState extends State<LibraryPage> {
           ].whereType<String>().join(' · '),
           back: const LibraryLocation(LibrarySection.travel),
         ),
+        if (details != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            [
+              details['status']?.toString(),
+              details['budget'] == null
+                  ? null
+                  : 'Budget ${details['home_currency'] ?? 'NZD'} ${details['budget']}',
+            ].whereType<String>().join(' · '),
+          ),
+          if ((details['notes']?.toString().trim().isNotEmpty ?? false))
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(details['notes'].toString()),
+            ),
+        ],
+        if (canContribute)
+          Wrap(
+            spacing: 8,
+            children: [
+              TextButton.icon(
+                onPressed: () => _addTripItinerary(id),
+                icon: const Icon(Icons.event_note_outlined),
+                label: const Text('Add itinerary'),
+              ),
+              TextButton.icon(
+                onPressed: () => _addTripTraveller(id),
+                icon: const Icon(Icons.person_add_alt_1_outlined),
+                label: const Text('Add traveller'),
+              ),
+              TextButton.icon(
+                onPressed: () => _addTripCost(id),
+                icon: const Icon(Icons.add_card_outlined),
+                label: const Text('Add cost'),
+              ),
+              if (canManage)
+                TextButton.icon(
+                  onPressed: () => _editTrip(trip, details!),
+                  icon: const Icon(Icons.edit_outlined),
+                  label: const Text('Edit trip'),
+                ),
+            ],
+          ),
+        if (travellers.isNotEmpty) ...[
+          _subheading('Travellers'),
+          Text(
+            travellers
+                .map((item) => item['name'])
+                .whereType<String>()
+                .join(' · '),
+          ),
+        ],
+        if (itinerary.isNotEmpty) ...[
+          _subheading('Itinerary'),
+          ...itinerary.map(
+            (item) => ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.event_outlined),
+              title: Text(item['title']?.toString() ?? 'Itinerary item'),
+              subtitle: Text(
+                [
+                      item['item_kind'],
+                      item['provider'],
+                      item['starts_at'],
+                      item['booking_reference'],
+                    ]
+                    .whereType<String>()
+                    .where((text) => text.isNotEmpty)
+                    .join(' · '),
+              ),
+            ),
+          ),
+        ],
+        if (costs.isNotEmpty) ...[
+          _subheading('Costs'),
+          Text('Recorded: ${_travelCostTotals(costs)}'),
+          ...costs.map(
+            (item) => ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.receipt_long_outlined),
+              title: Text(item['category']?.toString() ?? 'Cost'),
+              subtitle: Text(
+                item['notes']?.toString() ??
+                    item['cost_status']?.toString() ??
+                    '',
+              ),
+              trailing: Text(
+                '${item['currency'] ?? 'NZD'} ${item['amount'] ?? ''}',
+              ),
+            ),
+          ),
+        ],
         ..._grouped(records, _travelGroup),
       ],
     );
@@ -806,6 +1609,14 @@ class LibraryPageState extends State<LibraryPage> {
         'Rentals',
         subtitle: 'Documents organised by property.',
         back: const LibraryLocation.top(),
+      ),
+      Align(
+        alignment: Alignment.centerRight,
+        child: FilledButton.icon(
+          onPressed: _createRentalProperty,
+          icon: const Icon(Icons.add),
+          label: const Text('Add property'),
+        ),
       ),
       _search(),
       if (data!.rentals.isEmpty && data!.rentalRecords.isEmpty)
@@ -822,7 +1633,23 @@ class LibraryPageState extends State<LibraryPage> {
       ),
       if (data!.unassignedRentals.isNotEmpty) ...[
         _subheading('Other rental documents'),
-        ...data!.unassignedRentals.map(_relatedRow),
+        ...data!.unassignedRentals.map(
+          (record) => ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.description_outlined),
+            title: Text(record.title),
+            trailing: TextButton(
+              onPressed: () => _addRentalBill(record),
+              child: const Text('Assign bill'),
+            ),
+            onTap: () => _open(
+              LibraryLocation(
+                LibrarySection.documents,
+                itemId: record.documentId,
+              ),
+            ),
+          ),
+        ),
       ],
     ],
   );
@@ -843,9 +1670,165 @@ class LibraryPageState extends State<LibraryPage> {
           subtitle: rental.address,
           back: const LibraryLocation(LibrarySection.rentals),
         ),
-        ..._grouped(records, _rentalGroup),
+        const SizedBox(height: 12),
+        const Text(
+          'Bills are grouped into the rental financial year in the shared Drive. This is an organisational record, not tax advice.',
+        ),
+        Wrap(
+          spacing: 8,
+          children: [
+            TextButton.icon(
+              onPressed: () => _recordRentalIncome(rental),
+              icon: const Icon(Icons.add),
+              label: const Text('Record income'),
+            ),
+            TextButton.icon(
+              onPressed: () => _showRentalYearReview(rental),
+              icon: const Icon(Icons.summarize_outlined),
+              label: const Text('Year-end review'),
+            ),
+          ],
+        ),
+        ..._groupedRental(records),
       ],
     );
+  }
+
+  List<Widget> _groupedRental(List<LibraryRelatedDocument> records) {
+    final groups = <String, List<LibraryRelatedDocument>>{};
+    for (final record in records) {
+      groups.putIfAbsent(_rentalGroup(record.kind), () => []).add(record);
+    }
+    if (groups.isEmpty) {
+      return [const _StateView(message: 'No bills in this property yet.')];
+    }
+    return [
+      for (final entry in groups.entries) ...[
+        _subheading(entry.key),
+        ...entry.value.map(_rentalBillRow),
+      ],
+    ];
+  }
+
+  Widget _rentalBillRow(LibraryRelatedDocument record) => ListTile(
+    contentPadding: EdgeInsets.zero,
+    leading: const Icon(Icons.receipt_long_outlined),
+    title: Text(record.title),
+    subtitle: Text(_rentalGroup(record.kind)),
+    trailing: PopupMenuButton<String>(
+      tooltip: 'Update bill status',
+      onSelected: (status) => _saveCollectionChange(
+        () => widget.service.setRentalBillStatus(record.id, status),
+      ),
+      itemBuilder: (_) => const [
+        PopupMenuItem(value: 'confirmed', child: Text('Mark confirmed')),
+        PopupMenuItem(value: 'due', child: Text('Mark due')),
+        PopupMenuItem(value: 'paid', child: Text('Mark paid')),
+      ],
+      child: const Chip(label: Text('Bill status')),
+    ),
+    onTap: () => _open(
+      LibraryLocation(LibrarySection.documents, itemId: record.documentId),
+    ),
+  );
+
+  Future<void> _recordRentalIncome(LibraryRental rental) async {
+    final amount = TextEditingController();
+    final description = TextEditingController(text: 'Rental income');
+    DateTime date = DateTime.now();
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('Record income — ${rental.name}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: amount,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(labelText: 'Amount (NZD)'),
+              ),
+              TextField(
+                controller: description,
+                decoration: const InputDecoration(labelText: 'Description'),
+              ),
+              TextButton(
+                onPressed: () async {
+                  final chosen = await showDatePicker(
+                    context: context,
+                    firstDate: DateTime(2000),
+                    lastDate: DateTime(2100),
+                    initialDate: date,
+                  );
+                  if (chosen != null) setDialogState(() => date = chosen);
+                },
+                child: Text('Received ${_date(date)}'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Save income'),
+            ),
+          ],
+        ),
+      ),
+    );
+    final value = num.tryParse(amount.text.trim());
+    if (saved == true && value != null) {
+      await _saveCollectionChange(
+        () => widget.service.addRentalIncome(
+          propertyId: rental.id,
+          receivedDate: _isoDate(date),
+          amount: value,
+          description: description.text,
+        ),
+      );
+    }
+    amount.dispose();
+    description.dispose();
+  }
+
+  Future<void> _showRentalYearReview(LibraryRental rental) async {
+    final now = DateTime.now();
+    final start = DateTime(now.month >= 4 ? now.year : now.year - 1, 4, 1);
+    try {
+      final review = await widget.service.rentalFinancialYearReview(
+        propertyId: rental.id,
+        financialYearStart: _isoDate(start),
+      );
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Financial-year review'),
+          content: Text(
+            'FY ${start.year}–${(start.year + 1).toString().substring(2)}\n\n'
+            'Income: ${_moneyTotals(review['income'])}\n'
+            'Expenses: ${_moneyTotals(review['expenses'])}\n\n'
+            '${review['notice'] ?? ''}',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    } on LibraryServiceException catch (failure) {
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(failure.message)));
+    }
   }
 
   List<Widget> _grouped(
@@ -1143,6 +2126,20 @@ class _InlineError extends StatelessWidget {
 }
 
 String _date(DateTime value) => '${value.day}/${value.month}/${value.year}';
+String _isoDate(DateTime value) =>
+    '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+String _moneyTotals(dynamic value) {
+  final totals = value as List? ?? const [];
+  if (totals.isEmpty) return 'None recorded';
+  return totals
+      .whereType<Map>()
+      .map((row) => '${row['currency'] ?? 'NZD'} ${row['amount'] ?? 0}')
+      .join(' · ');
+}
+
+DateTime? _dateForDrive(LibraryDocument? document) =>
+    DateTime.tryParse(document?.documentDate ?? '') ??
+    DateTime.tryParse(document?.importantDate ?? '');
 String _fileType(String value) => switch (value) {
   'application/pdf' => 'PDF',
   'image/jpeg' => 'JPEG image',

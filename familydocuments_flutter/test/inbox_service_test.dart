@@ -82,7 +82,7 @@ class _Client extends http.BaseClient {
         'tags': [],
         'link_categories': [],
       },
-      '/rest/rpc/inbox_save_attachment' => {
+      '/drive/inbox-attachment' => {
         'document_id': 'document-1',
         'job_id': 'job-1',
         'duplicate': false,
@@ -148,7 +148,11 @@ void main() {
       );
       expect(result.jobId, 'job-1');
       final body = jsonDecode(client.requests.single.body) as Map;
-      expect(body['selected_tags'], ['invoice', 'family']);
+      expect(client.requests.single.url.path, '/drive/inbox-attachment');
+      expect(body['message_id'], 'message-1');
+      expect(body['attachment_id'], 'attachment-1');
+      expect(body['category_id'], 'finance');
+      expect(body['tags'], ['invoice', 'family']);
       expect(body['request_ocr'], isTrue);
       expect(body['request_id'], 'request-12345');
     },

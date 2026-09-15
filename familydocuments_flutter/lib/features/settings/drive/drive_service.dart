@@ -18,12 +18,14 @@ class DriveConnection {
     required this.familyId,
     required this.canManage,
     this.folderName,
+    this.folderId,
   });
 
   final DriveConnectionState state;
   final String familyId;
   final bool canManage;
   final String? folderName;
+  final String? folderId;
   // Connection readiness only, never permission to write a Family document.
   // The save endpoint must separately authorize the actor for every mutation.
   bool get canSave => state == DriveConnectionState.connected;
@@ -42,6 +44,7 @@ class DriveConnection {
         family.isEmpty ||
         value['can_manage'] is! bool ||
         (value['folder_name'] != null && value['folder_name'] is! String) ||
+        (value['folder_id'] != null && value['folder_id'] is! String) ||
         (state == DriveConnectionState.connected &&
             value['credential_available'] != true)) {
       throw const FormatException('Incomplete Drive connection');
@@ -51,6 +54,7 @@ class DriveConnection {
       familyId: family,
       canManage: value['can_manage'] as bool,
       folderName: value['folder_name'] as String?,
+      folderId: value['folder_id'] as String?,
     );
   }
 }
@@ -166,6 +170,40 @@ class DriveService implements DriveRepository {
       await _request('folders', body: {'name': name.trim()}) as Map,
     ),
   );
+
+  /// Creates a registered app-owned child in the selected shared Library tree.
+  /// Callers must show the proposed destination and obtain confirmation first.
+  Future<DriveFolder> createLibraryFolder({
+    required String nodeKey,
+    required String nodeKind,
+    required String parentFolderId,
+    required String name,
+  }) async {
+    final value = await _request(
+      'library-folders',
+      body: {
+        'node_key': nodeKey,
+        'node_kind': nodeKind,
+        'parent_folder_id': parentFolderId,
+        'name': name.trim(),
+      },
+    );
+    if (value is! Map) {
+      throw const DriveException('The Library folder could not be confirmed.');
+    }
+    return DriveFolder.fromJson(Map<String, dynamic>.from(value));
+  }
+
+  Future<void> moveLibraryDocument({
+    required String documentId,
+    required String folderId,
+  }) async {
+    await _request(
+      'library-move',
+      body: {'document': documentId, 'folder_id': folderId},
+    );
+  }
+
   @override
   Future<void> selectFolder(String id) async {
     await _request('folders/select', body: {'id': id});

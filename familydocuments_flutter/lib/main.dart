@@ -19,11 +19,15 @@ import 'features/inbox/data/inbox_service.dart';
 import 'features/inbox/inbox_page.dart';
 import 'features/inbox/models/inbox_models.dart';
 import 'features/library/data/library_service.dart';
+import 'features/library/data/library_drive_organizer.dart';
 import 'features/library/document_viewer.dart';
 import 'features/library/library_page.dart';
 import 'features/library/library_navigation.dart';
 import 'features/library/models/library_models.dart';
+import 'features/reminders/data/reminder_service.dart';
+import 'features/reminders/reminders_page.dart';
 import 'features/settings/settings_page.dart';
+import 'features/settings/drive/drive_service.dart';
 import 'features/feedback/feedback_service.dart';
 import 'features/feedback/feedback_page.dart';
 import 'features/timeline/data/timeline_service.dart';
@@ -62,6 +66,9 @@ class _AppState extends State<FamilyDocumentsApp> {
   late final TimelineService timelineService;
   late final LibraryService libraryService;
   late final InboxService inboxService;
+  late final ReminderService reminderService;
+  late final DriveService driveService;
+  late final LibraryDriveOrganizer libraryDriveOrganizer;
   late final LibraryNavigation libraryNavigation;
   late final DestinationState destinationState;
   late final ConversationController conversationController;
@@ -96,6 +103,9 @@ class _AppState extends State<FamilyDocumentsApp> {
     timelineService = widget.timelineService ?? TimelineService(auth);
     libraryService = widget.libraryService ?? LibraryService(auth);
     inboxService = widget.inboxService ?? InboxService(auth);
+    reminderService = ReminderService(auth);
+    driveService = DriveService(auth);
+    libraryDriveOrganizer = LibraryDriveOrganizer(driveService);
     libraryNavigation = createLibraryNavigation();
     final injectedHarness =
         widget.auth != null ||
@@ -172,14 +182,14 @@ class _AppState extends State<FamilyDocumentsApp> {
     final hasAttachment =
         uploadedBytes != null &&
         conversationController.pendingClarificationId == null;
-    await conversationController.submit(
+    final submitted = await conversationController.submit(
       instruction,
       hasAttachment: hasAttachment,
       attachmentLabel: uploadedName,
       attachmentMimeType: uploadedMimeType,
       attachmentBytes: uploadedBytes,
     );
-    if (mounted) query.clear();
+    if (mounted && submitted) query.clear();
   }
 
   void _conversationChanged() {
@@ -1721,6 +1731,8 @@ class _AppState extends State<FamilyDocumentsApp> {
             libraryService: libraryService,
             libraryNavigation: libraryNavigation,
             inboxService: inboxService,
+            reminderService: reminderService,
+            libraryDriveOrganizer: libraryDriveOrganizer,
             analysisJobs: analysisJobs.values.toList(),
             onRefreshAnalysis: refreshAnalysisJobs,
             onRetryAnalysisJob: retryAnalysisJob,
@@ -1925,6 +1937,8 @@ class Shell extends StatelessWidget {
     required this.libraryService,
     required this.libraryNavigation,
     required this.inboxService,
+    required this.reminderService,
+    required this.libraryDriveOrganizer,
     required this.analysisJobs,
     required this.onRefreshAnalysis,
     required this.onRetryAnalysisJob,
@@ -1983,6 +1997,8 @@ class Shell extends StatelessWidget {
   final LibraryService libraryService;
   final LibraryNavigation libraryNavigation;
   final InboxService inboxService;
+  final ReminderService reminderService;
+  final LibraryDriveOrganizer libraryDriveOrganizer;
   final List<AnalysisJob> analysisJobs;
   final Future<void> Function() onRefreshAnalysis;
   final Future<void> Function(String) onRetryAnalysisJob;
@@ -2145,6 +2161,7 @@ class Shell extends StatelessWidget {
         processingJobs: analysisJobs,
         onRefreshProcessing: onRefreshAnalysis,
         onMetadataChanged: onLibraryMetadataChanged,
+        driveOrganizer: libraryDriveOrganizer,
       ),
       3 => InboxPage(
         service: inboxService,
@@ -2157,7 +2174,7 @@ class Shell extends StatelessWidget {
         onOcrRequested: onRefreshAnalysis,
         onDiscuss: onDiscussInbox,
       ),
-      _ => Center(child: Text('${labels[tab]} will be connected in Phase 2.')),
+      _ => RemindersPage(service: reminderService),
     };
     final main = Column(
       children: [

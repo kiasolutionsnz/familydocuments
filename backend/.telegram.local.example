@@ -1,0 +1,7 @@
+# Copy this file to .telegram.local. It is ignored by Git.
+# Never paste these values into chat, app settings, or a tracked file.
+TELEGRAM_BOT_IDENTITY=familydocuments-staging
+TELEGRAM_BOT_USERNAME=FamilyDocumentsapp_bot
+TELEGRAM_BOT_TOKEN=
+# Use a fresh random value with at least 32 characters.
+TELEGRAM_WEBHOOK_SECRET=

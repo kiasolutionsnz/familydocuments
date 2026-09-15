@@ -99,6 +99,20 @@ void main() {
     expect(find.text('Connect Telegram'), findsNothing);
   });
 
+  testWidgets('unconfigured staging transport explains setup is incomplete', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(home: TelegramIntegrationPage(repository: _UnavailableRepository())),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Telegram setup is not complete for this staging environment yet.'),
+      findsOneWidget,
+    );
+    expect(find.text('Connect Telegram'), findsNothing);
+  });
+
   testWidgets('pending, disconnected and revoked states render safely', (
     tester,
   ) async {
@@ -184,4 +198,13 @@ class _SelectionRequiredRepository implements TelegramIntegrationRepository {
       throw UnimplementedError();
   @override
   Future<void> disconnect(String familyId) => throw UnimplementedError();
+}
+
+class _UnavailableRepository extends _SelectionRequiredRepository {
+  @override
+  Future<TelegramConnection> status() async => const TelegramConnection(
+    connected: false,
+    selectionRequired: false,
+    available: false,
+  );
 }
