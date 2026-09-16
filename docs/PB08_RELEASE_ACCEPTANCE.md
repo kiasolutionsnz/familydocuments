@@ -97,7 +97,8 @@ Archive listing and byte-for-byte readback passed; this is not a full restore dr
 - Built the Phase 2F gateway candidate without network access. Offline Trivy
   scan found zero High/Critical vulnerabilities. Built a Flutter candidate for
   the existing production API and `/prototype/` path with the public Drive
-  client ID. Neither artifact was published.
+  client ID. The source is backed up on GitHub release branch
+  `release/phase2f-pb08-20260917`; neither artifact was published.
 - Unattended worker recovery, production Worker route/package preservation,
   exact candidate freeze and fresh cutover-time backup remain open. A completed
   migration rehearsal is evidence of compatibility, not a deployment approval.

@@ -42,7 +42,12 @@ pass; those behaviors remain unverified, not passed.
    `familydocuments_flutter/build-production.ps1`. It uses `/prototype/` as
    base href, the existing production API, and the public Google Drive client
    ID from the established ignored production configuration. The secret and
-   token-encryption key are not embedded in the bundle.
+   token-encryption key are not embedded in the bundle. Source commit
+   `8fddc305f31c99c5e6e5dcc445c0727f4d597bca` is backed up on GitHub
+   branch `release/phase2f-pb08-20260917`. The verified main JavaScript SHA256
+   is `86C66A6DF4304E4A3D8779127811002A49ADDD5DEF812FA733AF7AF62ED890C8`.
+   The private production-web archive SHA256 is
+   `A0D3D8E06FA8E2267AA95EE75A9B3B2E3F5704E9B7EA37C640FF9E7B2324E510`.
 4. Gateway candidate `familydocuments-gateway-pb08-candidate:20260917` was
    built with no network access from the pinned local Go image. Image digest
    `sha256:98ad632f809a7e1cc74eeae63b1162cd45ff02597b236b834d26ec6843dd353d`;
@@ -53,6 +58,10 @@ pass; those behaviors remain unverified, not passed.
 5. Staging Drive status function drift was repaired and verified separately;
    it is not part of the production database yet. Production replay of 058 in
    the isolated migration sequence passed.
+6. Read-only task inspection found the production classifier, attachment
+   scanner, notifications, inbound health, AI/OCR health and daily statistics
+   tasks set to Interactive logon. The staging Telegram task is S4U, which does
+   not establish production recovery. The Restic repository is on local D:.
 
 ## Cutover sequence to prepare before approval
 
@@ -70,7 +79,9 @@ pass; those behaviors remain unverified, not passed.
 3. Close the host recovery gaps: make required notification, inbound and
    Telegram jobs start without interactive login, and prove a controlled
    no-login recovery. Confirm the existing Restic repository's off-host status;
-   the current backup/integrity check alone does not prove host-loss recovery.
+   current evidence shows a local D: repository, so a separate encrypted
+   off-host copy and restore test are required for host-loss recovery. The
+   current backup/integrity check alone does not prove host-loss recovery.
 4. Immediately before cutover, pause relevant writers for a short maintenance
    window, capture a fresh native and encrypted backup, verify the archive and
    restore it to an isolated database. Rerun migrations 040–069 there and compare
