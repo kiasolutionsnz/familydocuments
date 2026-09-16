@@ -100,7 +100,10 @@ Archive listing and byte-for-byte readback passed; this is not a full restore dr
   client ID. The source is backed up on GitHub release branch
   `release/phase2f-pb08-20260917`; neither artifact was published.
 - Unattended worker recovery, production Worker route/package preservation,
-  exact candidate freeze and fresh cutover-time backup remain open. A completed
+  exact candidate freeze and fresh cutover-time backup remain open. A local
+  public-site candidate retaining marketing/legal routes and replacing only
+  `/prototype/` built successfully; deployed Worker parity and public routing
+  remain unverified. A completed
   migration rehearsal is evidence of compatibility, not a deployment approval.
 
 ## Rollback boundary

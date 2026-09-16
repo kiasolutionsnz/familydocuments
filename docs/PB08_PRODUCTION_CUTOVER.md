@@ -64,16 +64,30 @@ pass; those behaviors remain unverified, not passed.
    not establish production recovery. The Docker Desktop service is Stopped
    with Manual startup while its user-session engine is running. The Restic
    repository is on local D:.
+7. A local candidate was assembled from the existing public Sites checkout
+   (`appgprj_6a85158e62b08191ba1ddb54f77614f8`) and the verified Flutter
+   build. It retains the home, blog, FAQ, privacy and terms source routes and
+   replaces only the old `/prototype/` assets. The Vinext build passed and
+   produced `dist/server/index.js` with a callable fetch handler plus the
+   Flutter app files; its main JS hash matches the verified Flutter bundle.
+   Private build archive SHA256:
+   `3EFD46AAFEDEAF1A35E977B866454FA4FDC68B30826D3DD6C5E6D37A028DEF27`.
+   Private source archive SHA256:
+   `CC588E97098A763A796EEC3F1550BEAC1B799BF5B246F07E18379F91EA57BC2F`.
+   Source archive excludes local environment files and old prototype assets.
+   This local checkout has not been proven identical to the currently deployed
+   production Worker, and the candidate has not been pushed or published.
 
 ## Cutover sequence to prepare before approval
 
-1. Create an exact production frontend package that serves the Flutter build
-   under `/prototype/` while preserving the current Worker marketing, legal,
-   auth callback and other existing routes. Do not publish the staging Sites
-   `/_api` proxy or staging identity gate to the production domain. Verify
-   asset paths, refresh/deep links, Google popup origin and CSP against the
-   production hostname. Record the current Worker deployment ID and a verified
-   rollback artifact.
+1. Reconcile the prepared local frontend candidate with the currently deployed
+   Worker revision, especially marketing copy, auth callbacks, any non-source
+   runtime config, and the old marketing links containing `#rentals` or `#auth`.
+   Verify app asset paths, refresh/deep links, Google popup origin and CSP
+   against the production hostname. Preserve the existing marketing/legal
+   routes and record the current Worker deployment ID and a verified rollback
+   artifact. The staging Sites `/_api` proxy and staging identity gate do not
+   belong on the production domain.
 2. Freeze one source commit and artifact hashes for Flutter, gateway, database
    migrations and the manual feedback/Telegram workers. Check the deployed
    worker scripts and task registration against this candidate. The current
