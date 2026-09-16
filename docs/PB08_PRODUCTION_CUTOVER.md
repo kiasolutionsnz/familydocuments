@@ -63,7 +63,9 @@ pass; those behaviors remain unverified, not passed.
    tasks set to Interactive logon. The staging Telegram task is S4U, which does
    not establish production recovery. The Docker Desktop service is Stopped
    with Manual startup while its user-session engine is running. The Restic
-   repository is on local D:.
+   repository is on D:, which `Get-Disk` identifies as a non-boot SATA disk
+   inside this computer. It is not an off-computer backup. The owner requires
+   unattended recovery after reboot, so this remains a release gate.
 7. A local candidate was assembled from the existing public Sites checkout
    (`appgprj_6a85158e62b08191ba1ddb54f77614f8`) and the verified Flutter
    build. It retains the home, blog, FAQ, privacy and terms source routes and
@@ -95,9 +97,9 @@ pass; those behaviors remain unverified, not passed.
 3. Close the host recovery gaps: make required notification, inbound and
    Telegram jobs start without interactive login, and prove a controlled
    no-login recovery, including a supported way for the Docker engine to start
-   without an owner session. Confirm the existing Restic repository's off-host status;
-   current evidence shows a local D: repository, so a separate encrypted
-   off-host copy and restore test are required for host-loss recovery. The
+   without an owner session. D: is an internal SATA disk, not an off-computer
+   destination. Obtain a separate encrypted off-computer copy and verify its
+   restore before host-loss recovery can be claimed. The
    current backup/integrity check alone does not prove host-loss recovery.
 4. Immediately before cutover, pause relevant writers for a short maintenance
    window, capture a fresh native and encrypted backup, verify the archive and
