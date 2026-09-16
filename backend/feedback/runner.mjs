@@ -122,16 +122,8 @@ export class ContainerCodexExecutor {
 }
 
 export async function main(configFile) {
- if(!configFile) {console.log('Feedback runner disabled: no centrally managed configuration.');return;}
- const config=JSON.parse(await readFile(configFile,'utf8'));
- if(config.enabled!==true) {console.log('Feedback runner disabled.');return;}
- const credentials=JSON.parse(await readFile(config.queueCredentialsFile,'utf8'));
- const db=new QueueClient(config.queueUrl,credentials.token);
- do {
-  try {console.log(`feedback_cycle=${await tick({db,executor:new ContainerCodexExecutor(config),enabled:true})}`);}
-  catch(_){console.error('feedback_cycle=queue_or_result_unavailable');}
-  if(!process.argv.includes('--watch')) break;
-  await new Promise(resolve=>setTimeout(resolve,intervalMs));
- } while(true);
+ // Product decision: feedback intake is a manual backlog, not execution authority.
+ // Do not read credentials or claim tickets, even if an old enabled config remains.
+ console.log('Feedback runner disabled: manual owner review is required.');
 }
 if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) main(process.env.FD_FEEDBACK_CONFIG).catch(()=>{console.error('feedback_runner=configuration_failed');process.exitCode=1;});

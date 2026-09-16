@@ -1,5 +1,22 @@
 # Private feedback backlog
 
+## Current decision — manual owner review (2026-09-17)
+
+Feedback is intake only: a user submits it and it remains in the backlog until
+the product owner reviews it and decides whether to clarify, accept, defer,
+reject or authorise a specific implementation. Submission, clarification replies
+and confirmation of feedback text do not authorise coding or deployment.
+
+The runner entrypoint is explicitly disabled, even with a legacy enabled config
+or --watch. It reads no queue credentials and claims no tickets. The execution
+design below is historical/deferred, not the active workflow.
+
+My feedback remains reporter-private. An owner-only cross-reporter review screen
+is still required; ordinary Family admins must not inherit global ticket access.
+It should show feedback and relevant context, record the owner's decision and
+clarification, and never automatically execute an accepted item. Do not claim
+that the existing My feedback screen provides this owner-wide review capability.
+
 Say `Feedback: ...`, `Add this to the backlog`, or `This did not work; create a
 feedback ticket`. Intake is separate from model-selected actions: stored document,
 OCR and imported-message text cannot call it. The authenticated gateway validates

@@ -1,12 +1,11 @@
 {
-    "name": "familydocuments_flutter",
-    "short_name": "familydocuments_flutter",
+    "name": "FamilyDocuments",
+    "short_name": "FamilyDocuments",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
+    "background_color": "#F7FCFA",
+    "theme_color": "#006B5E",
+    "description": "Your family’s documents, reminders and lists in one place.",
     "prefer_related_applications": false,
     "icons": [
         {

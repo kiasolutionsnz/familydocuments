@@ -1,6 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {tick,allowedFiles,intervalMs,ContainerCodexExecutor} from '../feedback/runner.mjs';
+import {main,tick,allowedFiles,intervalMs,ContainerCodexExecutor} from '../feedback/runner.mjs';
+
+test('manual mode never reads even a supplied legacy configuration',async()=>{
+ await main('nonexistent-config-must-not-be-read.json');
+});
 
 const files=['familydocuments_flutter/lib/features/library/library_page.dart'];
 function harness(overrides={}) {

@@ -3,6 +3,7 @@ import {mkdir,readFile,unlink,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {checksum,detectSupportedFile,processTransportCycle,TELEGRAM_MAX_FILE_BYTES} from './worker-core.mjs';
+import {telegramFetch} from './http-transport.mjs';
 
 async function localEnv(name){try{return await readFile(new URL(`../${name}`,import.meta.url),'utf8')}catch{return ''}}
 const env=await localEnv('.env.local');
@@ -13,12 +14,13 @@ const api=configured('FP_API_URL','http://127.0.0.1:55322').replace(/\/$/,'');
 const gateway=configured('FP_GATEWAY_URL','http://127.0.0.1:55327').replace(/\/$/,'');
 const botAPI=configured('TELEGRAM_API_BASE_URL','https://api.telegram.org').replace(/\/$/,'');
 const botIdentity=configured('TELEGRAM_BOT_IDENTITY'),token=configured('TELEGRAM_BOT_TOKEN');
+const telegramTransport=configured('TELEGRAM_HTTP_TRANSPORT','fetch');
 const jwtIssuer=configured('JWT_EXPECTED_ISSUER','familydocuments');
 const stagingDir=configured('TELEGRAM_STAGING_DIR',join(process.cwd(),'.telegram-staging'));
 const b64url=value=>Buffer.from(value).toString('base64url');
 function signedJwt(secret,role='service_role',subject,familyID){const now=Math.floor(Date.now()/1000),header=b64url(JSON.stringify({alg:'HS256',typ:'JWT'})),claims={role,aud:'authenticated',iss:jwtIssuer,iat:now,nbf:now-5,exp:now+300};if(subject)claims.sub=subject;if(familyID)claims.family_id=familyID;const payload=b64url(JSON.stringify(claims)),unsigned=`${header}.${payload}`;return `${unsigned}.${createHmac('sha256',secret).update(unsigned).digest('base64url')}`}
 async function secret(){const value=configured('GOTRUE_JWT_SECRET');if(!value)throw new Error('GOTRUE_JWT_SECRET is required');return value}
-async function post(url,body,bearer='',timeout=15000){const headers={'content-type':'application/json'};if(bearer)headers.authorization=`Bearer ${bearer}`;const response=await fetch(url,{method:'POST',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(timeout)}),parsed=await response.json().catch(()=>({}));if(!response.ok){const error=new Error(parsed.error||'service request failed');error.status=response.status;throw error}return parsed}
+async function post(url,body,bearer='',timeout=15000){const headers={'content-type':'application/json'};if(bearer)headers.authorization=`Bearer ${bearer}`;const options={method:'POST',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(timeout),timeout};const response=url.startsWith(`${botAPI}/bot`)?await telegramFetch(url,options,telegramTransport):await fetch(url,options),parsed=await response.json().catch(()=>({}));if(!response.ok){const error=new Error('service request failed');error.status=response.status;throw error}return parsed}
 const rpc=(name,body,bearer)=>post(`${api}/rpc/${name}`,body,bearer);
 const gatewayPost=(path,body,bearer,timeout)=>post(`${gateway}${path}`,body,bearer,timeout);
 function parts(update){const e=update.envelope||{},message=e.message,callback=e.callback_query;if(message)return{message,user:String(message.from?.id||''),chat:String(message.chat?.id||''),text:String(message.text||message.caption||'').trim()};return{callback,user:String(callback?.from?.id||''),chat:String(callback?.message?.chat?.id||''),text:''}}
@@ -32,7 +34,7 @@ async function downloadAttachment(record){
   if(Number(record.declared_size||0)>TELEGRAM_MAX_FILE_BYTES)throw Object.assign(new Error('file too large'),{attachmentID:record.id,terminal:true,category:'too_large'});
   const metadata=await post(`${botAPI}/bot${token}/getFile`,{file_id:record.file_id},'',10000),filePath=String(metadata.result?.file_path||'');
   if(!filePath||filePath.includes('..'))throw Object.assign(new Error('download failed'),{attachmentID:record.id,category:'download_failed'});
-  const remote=await fetch(`${botAPI}/file/bot${token}/${filePath}`,{signal:AbortSignal.timeout(20000)}),length=Number(remote.headers.get('content-length')||0);
+  const remote=await telegramFetch(`${botAPI}/file/bot${token}/${filePath}`,{signal:AbortSignal.timeout(20000),timeout:20000,maxBytes:TELEGRAM_MAX_FILE_BYTES},telegramTransport),length=Number(remote.headers.get('content-length')||0);
   if(!remote.ok)throw Object.assign(new Error('download failed'),{attachmentID:record.id,category:'download_failed'});
   if(length>TELEGRAM_MAX_FILE_BYTES)throw Object.assign(new Error('file too large'),{attachmentID:record.id,terminal:true,category:'too_large'});
   const bytes=Buffer.from(await remote.arrayBuffer());

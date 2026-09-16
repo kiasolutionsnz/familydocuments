@@ -12,6 +12,9 @@
 **/.wrangler/
 **/dist/
 **/coverage/
+**/.staging-backups/
+**/build-*.err
+**/pb*-build.err
 
 # Local preview output and packaged previews
 **/preview*.log
