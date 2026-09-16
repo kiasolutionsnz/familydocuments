@@ -91,21 +91,23 @@ class ReminderService {
       'action': action,
       'snooze_until': snoozeUntil,
     });
-    if (response.statusCode != 200)
+    if (response.statusCode != 200) {
       throw const ReminderServiceException(
         'That reminder could not be updated. Refresh and try again.',
       );
+    }
   }
 
   Future<void> configure(String id, String recurrence) async {
-    final response = await _post('configure_reminder', {
+    final response = await _post('set_reminder_recurrence', {
       'reminder': id,
       'repeat': recurrence,
     });
-    if (response.statusCode != 200)
+    if (response.statusCode != 200) {
       throw const ReminderServiceException(
         'The repeat schedule could not be updated.',
       );
+    }
   }
 
   Future<void> setAudience(String id, String audience) async {
@@ -114,10 +116,11 @@ class ReminderService {
       'new_audience': audience,
       'email_everyone': false,
     });
-    if (response.statusCode != 200)
+    if (response.statusCode != 200) {
       throw const ReminderServiceException(
         'Who can see this reminder could not be updated.',
       );
+    }
   }
 
   Future<void> setEmailDelivery(bool enabled) async {

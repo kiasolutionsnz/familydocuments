@@ -18,8 +18,13 @@ class _RemindersPageState extends State<RemindersPage> {
   bool _updatingDelivery = false;
 
   Future<void> _reload() async {
-    setState(() => _dashboard = widget.service.load());
-    await _dashboard;
+    setState(() {
+      _dashboard = widget.service.load();
+    });
+    // FutureBuilder owns load errors, including retries and refresh after edits.
+    try {
+      await _dashboard;
+    } catch (_) {}
   }
 
   List<ReminderItem> _items(ReminderDashboard data) => data.items.where((item) {
@@ -32,11 +37,12 @@ class _RemindersPageState extends State<RemindersPage> {
     setState(() => _workingId = item.id);
     try {
       await action();
-      if (mounted) _reload();
+      if (mounted) await _reload();
     } on ReminderServiceException catch (error) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.message)));
+      }
     } finally {
       if (mounted) setState(() => _workingId = null);
     }
@@ -45,11 +51,11 @@ class _RemindersPageState extends State<RemindersPage> {
   Future<void> _snooze(ReminderItem item) async {
     final date = await showDatePicker(
       context: context,
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 3650)),
+      firstDate: DateTime.now().add(const Duration(days: 1)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
       initialDate: DateTime.now().add(const Duration(days: 7)),
     );
-    if (date == null) return;
+    if (date == null || !mounted) return;
     await _run(
       item,
       () =>
@@ -62,20 +68,29 @@ class _RemindersPageState extends State<RemindersPage> {
     body: FutureBuilder<ReminderDashboard>(
       future: _dashboard,
       builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done)
+        if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
-        if (snapshot.hasError)
+        }
+        if (snapshot.hasError) {
           return Center(
-            child: FilledButton.icon(
-              onPressed: _reload,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Try again'),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Reminders could not be loaded.'),
+                FilledButton.icon(
+                  onPressed: _reload,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Try again'),
+                ),
+              ],
             ),
           );
+        }
         final items = _items(snapshot.data!);
         return RefreshIndicator(
           onRefresh: () async => _reload(),
           child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(20),
             children: [
               Text(
@@ -97,14 +112,15 @@ class _RemindersPageState extends State<RemindersPage> {
                             await widget.service.setEmailDelivery(enabled);
                             if (mounted) await _reload();
                           } on ReminderServiceException catch (error) {
-                            if (mounted) {
+                            if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(content: Text(error.message)),
                               );
                             }
                           } finally {
-                            if (mounted)
+                            if (mounted) {
                               setState(() => _updatingDelivery = false);
+                            }
                           }
                         },
                 ),
@@ -215,10 +231,13 @@ class _RemindersPageState extends State<RemindersPage> {
                   ),
                   if (widget.onAddToList != null)
                     OutlinedButton(
-                      onPressed: working ? null : () => widget.onAddToList!(item),
+                      onPressed: working
+                          ? null
+                          : () => widget.onAddToList!(item),
                       child: const Text('Add to shared list'),
                     ),
                   PopupMenuButton<String>(
+                    enabled: !working,
                     onSelected: (value) => _run(
                       item,
                       () => widget.service.configure(item.id, value),
@@ -240,6 +259,7 @@ class _RemindersPageState extends State<RemindersPage> {
                     child: const Chip(label: Text('Repeat')),
                   ),
                   PopupMenuButton<String>(
+                    enabled: !working,
                     onSelected: (value) => _run(
                       item,
                       () => widget.service.setAudience(item.id, value),

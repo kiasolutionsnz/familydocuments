@@ -11,9 +11,11 @@ class _Auth extends AuthService {
 }
 
 class _Client extends http.BaseClient {
+  final paths = <String>[];
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     final path = request.url.path;
+    paths.add(path);
     final response = switch (path) {
       '/rest/rpc/reminder_dashboard' => http.Response(
         jsonEncode({
@@ -32,6 +34,7 @@ class _Client extends http.BaseClient {
         200,
       ),
       '/rest/rpc/reminder_delivery_settings' => http.Response('{}', 503),
+      '/rest/rpc/set_reminder_recurrence' => http.Response('{}', 200),
       _ => http.Response('{}', 404),
     };
     return http.StreamedResponse(
@@ -43,6 +46,14 @@ class _Client extends http.BaseClient {
 }
 
 void main() {
+  test('repeat edits use the standalone-capable endpoint', () async {
+    final client = _Client();
+    await ReminderService(
+      _Auth(),
+      client: client,
+    ).configure('reminder-1', 'monthly');
+    expect(client.paths, ['/rest/rpc/set_reminder_recurrence']);
+  });
   test(
     'keeps reminders usable when optional delivery settings are unavailable',
     () async {
