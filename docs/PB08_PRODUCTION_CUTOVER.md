@@ -79,11 +79,23 @@ pass; those behaviors remain unverified, not passed.
    Source archive excludes local environment files and old prototype assets.
    This local checkout has not been proven identical to the currently deployed
    production Worker, and the candidate has not been pushed or published.
+8. The current Site source branch was fetched read-only at commit
+   `8a37a5706f5ad55d751ae13a22d23446fb2da065`. Its `frontend/app`
+   differs from the older local checkout only in privacy and terms page link
+   markup. A second local candidate was assembled from this exact Site source
+   plus the same verified Flutter build. Its Vinext route build and server
+   syntax check passed, and its Flutter bundle SHA256 matches item 3. The
+   ignored private build archive is
+   `backend/backups/fd-ux-20260917-092244/pb08-exact-site-rc/pb08-exact-site-dist.tar.gz`,
+   SHA256 `DC657A8A58E4BEE4DF5A92C2F501EAB655306706293C2D7372A5B40138ABD8DA`.
+   This resolves Site-source provenance, not parity with the separately
+   deployed `familydocuments.app` Cloudflare Worker. It was not published.
 
 ## Cutover sequence to prepare before approval
 
-1. Reconcile the prepared local frontend candidate with the currently deployed
-   Worker revision, especially marketing copy, auth callbacks, any non-source
+1. Reconcile the exact-Site-source frontend candidate with the currently
+   deployed `familydocuments.app` Worker revision, especially marketing copy,
+   auth callbacks, any non-source
    runtime config, and the old marketing links containing `#rentals` or `#auth`.
    Verify app asset paths, refresh/deep links, Google popup origin and CSP
    against the production hostname. Preserve the existing marketing/legal
