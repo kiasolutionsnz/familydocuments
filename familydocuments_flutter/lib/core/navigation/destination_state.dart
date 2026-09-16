@@ -4,7 +4,7 @@ import 'destination_state_factory_stub.dart'
     if (dart.library.html) 'destination_state_factory_web.dart'
     as platform;
 
-enum PrimaryDestination { home, timeline, library, inbox, reminders }
+enum PrimaryDestination { home, timeline, library, inbox, reminders, lists }
 
 PrimaryDestination destinationFromPath(String value) {
   final path = value

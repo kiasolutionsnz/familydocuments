@@ -13,6 +13,7 @@ enum ConversationMessageKind {
 }
 
 enum ConversationActionType {
+  addHouseholdListItem('add_household_list_item'),
   searchFamilyContent('search_family_content'),
   queryReminders('query_reminders'),
   saveDocument('save_document'),
@@ -387,6 +388,7 @@ class ConversationAction {
 }
 
 const _allowedParameters = <ConversationActionType, Set<String>>{
+  ConversationActionType.addHouseholdListItem: {'title', 'list_name'},
   ConversationActionType.recordRentalExpense: {
     'attachment_id',
     'document_id',
@@ -471,6 +473,7 @@ const _allowedParameters = <ConversationActionType, Set<String>>{
 };
 
 const _requiredParameters = <ConversationActionType, Set<String>>{
+  ConversationActionType.addHouseholdListItem: {'title', 'list_name'},
   ConversationActionType.searchFamilyContent: {'query'},
   ConversationActionType.queryReminders: {'scope'},
   ConversationActionType.saveDocument: {'attachment_id', 'category_name'},

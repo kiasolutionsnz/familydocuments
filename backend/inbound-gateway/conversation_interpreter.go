@@ -31,6 +31,7 @@ var reminderClock = regexp.MustCompile(`(?i)\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s
 var reminderDay = regexp.MustCompile(`(?i)\b(today|tomorrow)\b`)
 
 var actionParameters = map[string]map[string]bool{
+	"add_household_list_item": {"title": true, "list_name": true},
 	"record_rental_expense":    {"attachment_id": true, "document_id": true, "property_id": true, "property_name": true, "create_property": true, "address": true, "amount": true, "currency": true, "expected_updated_at": true, "property_version": true},
 	"search_family_content":    {"query": true, "document_id": true},
 	"query_reminders":          {"scope": true, "date": true},
@@ -49,6 +50,7 @@ var actionParameters = map[string]map[string]bool{
 }
 
 var requiredActionParameters = map[string][]string{
+	"add_household_list_item": {"title", "list_name"},
 	"search_family_content":    {"query"},
 	"query_reminders":          {"scope"},
 	"save_document":            {"attachment_id", "category_name"},
@@ -220,6 +222,11 @@ func readOnlyDocumentFallback(input interpreterInput) (modelProposal, bool) {
 func deterministicConversationProposal(input interpreterInput) (modelProposal, bool) {
 	message := strings.TrimSpace(input.Message)
 	lower := strings.ToLower(message)
+	if !input.Context.HasAttachment {
+		if match := regexp.MustCompile(`(?i)^add\s+(.{1,240})\s+to\s+(.{1,120})\s+list[.!]?$`).FindStringSubmatch(message); len(match) == 3 {
+			return modelProposal{Type: "add_household_list_item", Parameters: map[string]any{"title": strings.TrimSpace(match[1]), "list_name": strings.TrimSpace(match[2])}}, true
+		}
+	}
 	if input.Context.HasAttachment {
 		if strings.Contains(lower, "ocr") || strings.Contains(lower, "read") || strings.Contains(lower, "scan") || strings.Contains(lower, "bill") || strings.Contains(lower, "invoice") || strings.Contains(lower, "extract") {
 			mode := "document"

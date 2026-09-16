@@ -110,7 +110,14 @@ try {
   for (const [key, port] of Object.entries(ports)) env[`FD_${key}_URL`] = `http://127.0.0.1:${port}`;
   Object.assign(env, {FP_API_URL: env.FD_API_URL, FP_OCR_URL: env.FD_OCR_URL, FP_MAILPIT_URL: env.FD_MAIL_URL, FP_SEARCH_PORT: String(ports.SEARCH), FP_OLLAMA_URL: process.env.FD_TEST_OLLAMA_URL || 'http://127.0.0.1:1'});
   Object.assign(env, {FP_CLAMD_HOST: '127.0.0.1', FP_CLAMD_PORT: String(ports.CLAMD)});
-  await run('db', images.db, ['--network', networks[0], '--network-alias', 'db', '--tmpfs', '/var/lib/postgresql/data:rw,size=512m', '-e', `POSTGRES_PASSWORD=${password}`, '-e', 'POSTGRES_HOST=/var/run/postgresql', '-e', 'PGPORT=5432', '-e', 'POSTGRES_DB=postgres', '-e', `JWT_SECRET=${env.GOTRUE_JWT_SECRET}`, '-e', 'JWT_EXP=3600']);
+  // Manual environments survive host restarts; disposable test runs stay ephemeral.
+  const dbStorage = manualRuntime
+    ? ['--mount', `type=volume,source=${prefix}-pgdata,target=/var/lib/postgresql/data`]
+    : ['--tmpfs', '/var/lib/postgresql/data:rw,size=512m'];
+  if (manualRuntime) {
+    await command(docker, ['volume', 'create', '--label', `${label}=${prefix}`, `${prefix}-pgdata`], {quiet: true});
+  }
+  await run('db', images.db, ['--network', networks[0], '--network-alias', 'db', ...dbStorage, '-e', `POSTGRES_PASSWORD=${password}`, '-e', 'POSTGRES_HOST=/var/run/postgresql', '-e', 'PGPORT=5432', '-e', 'POSTGRES_DB=postgres', '-e', `JWT_SECRET=${env.GOTRUE_JWT_SECRET}`, '-e', 'JWT_EXP=3600']);
   for (let attempt = 0; ; attempt++) {
     try {const health = await command(docker, ['inspect', '-f', '{{.State.Health.Status}}', env.FD_TEST_CONTAINER], {quiet: true}); if (health !== 'healthy') throw new Error('Database is still initializing'); await command(docker, ['exec', env.FD_TEST_CONTAINER, 'pg_isready', '-U', 'postgres'], {quiet: true}); break;}
     catch (error) {if (attempt === 90) throw error; await new Promise(resolve => setTimeout(resolve, 500));}

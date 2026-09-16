@@ -26,6 +26,7 @@ import 'features/library/library_navigation.dart';
 import 'features/library/models/library_models.dart';
 import 'features/reminders/data/reminder_service.dart';
 import 'features/reminders/reminders_page.dart';
+import 'features/lists/lists_page.dart';
 import 'features/settings/settings_page.dart';
 import 'features/settings/drive/drive_service.dart';
 import 'features/feedback/feedback_service.dart';
@@ -238,6 +239,10 @@ class _AppState extends State<FamilyDocumentsApp> {
     ConversationAction action,
   ) async {
     switch (action.type) {
+      case ConversationActionType.addHouseholdListItem:
+        throw const ConversationServiceException(
+          'List additions require the authenticated conversation service.',
+        );
       case ConversationActionType.recordRentalExpense:
         throw const ConversationServiceException(
           'Rental expenses require the authenticated conversation service.',
@@ -2050,13 +2055,14 @@ class Shell extends StatelessWidget {
   final String familyName;
   final Future<void> Function() onSignOut;
   final ValueChanged<InboxMessage> onDiscussInbox;
-  static const labels = ['Home', 'Timeline', 'Library', 'Inbox', 'Reminders'];
+  static const labels = ['Home', 'Timeline', 'Library', 'Inbox', 'Reminders', 'Lists'];
   static const icons = [
     Icons.home_outlined,
     Icons.schedule_outlined,
     Icons.folder_outlined,
     Icons.inbox_outlined,
     Icons.notifications_outlined,
+    Icons.checklist_outlined,
   ];
 
   Widget profileMenu(BuildContext context) => PopupMenuButton<String>(
@@ -2174,7 +2180,16 @@ class Shell extends StatelessWidget {
         onOcrRequested: onRefreshAnalysis,
         onDiscuss: onDiscussInbox,
       ),
-      _ => RemindersPage(service: reminderService),
+      4 => RemindersPage(
+        service: reminderService,
+        onAddToList: (item) => Navigator.of(c).push(MaterialPageRoute<void>(
+          builder: (_) => Scaffold(
+            appBar: AppBar(title: const Text('Copy to a family-shared list')),
+            body: ListsPage(auth: auth, initialTitle: item.title),
+          ),
+        )),
+      ),
+      _ => ListsPage(auth: auth),
     };
     final main = Column(
       children: [
@@ -2258,7 +2273,7 @@ class Shell extends StatelessWidget {
               selectedIndex: tab,
               onDestinationSelected: onTab,
               destinations: List.generate(
-                5,
+                labels.length,
                 (i) => NavigationDestination(
                   icon: Icon(icons[i]),
                   label: labels[i],

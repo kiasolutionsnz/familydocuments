@@ -4,8 +4,9 @@ import 'data/reminder_service.dart';
 import 'models/reminder_models.dart';
 
 class RemindersPage extends StatefulWidget {
-  const RemindersPage({super.key, required this.service});
+  const RemindersPage({super.key, required this.service, this.onAddToList});
   final ReminderService service;
+  final ValueChanged<ReminderItem>? onAddToList;
   @override
   State<RemindersPage> createState() => _RemindersPageState();
 }
@@ -212,6 +213,11 @@ class _RemindersPageState extends State<RemindersPage> {
                     onPressed: working ? null : () => _snooze(item),
                     child: const Text('Snooze'),
                   ),
+                  if (widget.onAddToList != null)
+                    OutlinedButton(
+                      onPressed: working ? null : () => widget.onAddToList!(item),
+                      child: const Text('Add to shared list'),
+                    ),
                   PopupMenuButton<String>(
                     onSelected: (value) => _run(
                       item,

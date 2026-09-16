@@ -1,0 +1,47 @@
+begin;
+do $$
+declare a uuid:=gen_random_uuid();b uuid:=gen_random_uuid(); outsider uuid:=gen_random_uuid();
+  hid uuid:=gen_random_uuid(); other_hid uuid:=gen_random_uuid(); lid uuid:=gen_random_uuid();iid uuid:=gen_random_uuid();r jsonb;cid uuid;confirmation uuid;
+begin
+  insert into fp.households(id,name,owner_user_id) values(hid,'Lists test',a),(other_hid,'Other',outsider);
+  insert into fp.members(household_id,user_id,email,display_name,role) values
+    (hid,a,'lists-a@example.test','A','owner'),(hid,b,'lists-b@example.test','B','adult_member'),(other_hid,outsider,'lists-other@example.test','Other','owner');
+  perform set_config('request.jwt.claims',jsonb_build_object('sub',a,'family_id',hid)::text,true);
+  perform fp.create_household_list(lid,'Chores','chores');
+  cid:=(fp.start_conversation('lists-conversation-001')->>'id')::uuid;
+  r:=fp.submit_conversation_action(cid,'lists-action-0001','add_household_list_item',1,jsonb_build_object('title','Wash car','list_name','Chores'),'lists-request-0001');
+  if r->>'state'<>'awaiting_confirmation' or r#>>'{confirmation,summary}' not like '%Wash car%' then raise exception 'list confirmation missing';end if;
+  confirmation:=(r#>>'{confirmation,id}')::uuid;
+  r:=fp.decide_conversation_confirmation(confirmation,'confirm');
+  if r->>'state'<>'succeeded' then raise exception 'list conversation failed: %',r;end if;
+  perform fp.decide_conversation_confirmation(confirmation,'confirm');
+  if (select count(*) from fp.household_list_items where list_id=lid and title='Wash car')<>1 then raise exception 'duplicate confirmed item';end if;
+  r:=fp.submit_conversation_action(cid,'lists-action-0002','add_household_list_item',1,jsonb_build_object('title','Milk','list_name','Missing'),'lists-request-0002');
+  if r->>'state'<>'awaiting_clarification' then raise exception 'missing list did not clarify';end if;
+  perform fp.create_household_list(lid,'Chores','chores');
+  if (select count(*) from fp.household_lists where id=lid)<>1 then raise exception 'duplicate list';end if;
+  begin perform fp.create_household_list(lid,'Different','chores');raise exception 'changed retry accepted';exception when invalid_parameter_value then null;end;
+  r:=fp.save_household_list_item(lid,iid,0,jsonb_build_object('title','Filter','due_on','2026-01-31','recurrence','monthly','assigned_to',b));
+  perform fp.save_household_list_item(lid,iid,0,jsonb_build_object('title','Filter','due_on','2026-01-31','recurrence','monthly','assigned_to',b));
+  perform set_config('request.jwt.claims',jsonb_build_object('sub',b,'family_id',hid)::text,true);
+  if jsonb_array_length(fp.household_list_workspace(lid)->'items')<>2 then raise exception 'shared item missing';end if;
+  r:=fp.complete_household_list_item(iid,1,true);
+  if r->>'due_on'<>'2026-02-28' or r->>'completed_at' is not null then raise exception 'recurring completion failed';end if;
+  begin perform fp.complete_household_list_item(iid,1,true);raise exception 'stale completion accepted';exception when serialization_failure then null;end;
+  begin perform fp.save_household_list_item(lid,iid,2,jsonb_build_object('title','Filter','assigned_to',outsider));raise exception 'outside assignment accepted';exception when invalid_parameter_value then null;end;
+  r:=fp.save_household_list_item(lid,iid,2,jsonb_build_object('title','Filter','recurrence','none'));
+  r:=fp.complete_household_list_item(iid,3,true);
+  if r->>'completed_at' is null then raise exception 'completion missing';end if;
+  r:=fp.complete_household_list_item(iid,4,false);
+  if r->>'completed_at' is not null then raise exception 'reopen failed';end if;
+  update fp.members set status='suspended' where household_id=hid and user_id=b;
+  begin perform fp.household_list_workspace(lid);raise exception 'suspended member read accepted';exception when insufficient_privilege then null;end;
+  begin perform fp.complete_household_list_item(iid,5,true);raise exception 'suspended member write accepted';exception when insufficient_privilege then null;end;
+  perform set_config('request.jwt.claims',jsonb_build_object('sub',outsider,'family_id',other_hid)::text,true);
+  if jsonb_array_length(fp.household_lists_dashboard()->'lists')<>0 then raise exception 'cross-family disclosure';end if;
+  begin perform fp.household_list_workspace(lid);raise exception 'workspace disclosed';exception when insufficient_privilege then null;end;
+  begin perform fp.complete_household_list_item(iid,5,true);raise exception 'cross-family mutation';exception when insufficient_privilege then null;end;
+  if has_table_privilege('authenticated','fp.household_list_items','SELECT') then raise exception 'direct table access';end if;
+  if has_function_privilege('anon','fp.household_lists_dashboard()','EXECUTE') then raise exception 'anonymous access';end if;
+end $$;
+rollback;
