@@ -61,7 +61,9 @@ pass; those behaviors remain unverified, not passed.
 6. Read-only task inspection found the production classifier, attachment
    scanner, notifications, inbound health, AI/OCR health and daily statistics
    tasks set to Interactive logon. The staging Telegram task is S4U, which does
-   not establish production recovery. The Restic repository is on local D:.
+   not establish production recovery. The Docker Desktop service is Stopped
+   with Manual startup while its user-session engine is running. The Restic
+   repository is on local D:.
 
 ## Cutover sequence to prepare before approval
 
@@ -78,7 +80,8 @@ pass; those behaviors remain unverified, not passed.
    Telegram Windows transport is opt-in and the feedback runner stays disabled.
 3. Close the host recovery gaps: make required notification, inbound and
    Telegram jobs start without interactive login, and prove a controlled
-   no-login recovery. Confirm the existing Restic repository's off-host status;
+   no-login recovery, including a supported way for the Docker engine to start
+   without an owner session. Confirm the existing Restic repository's off-host status;
    current evidence shows a local D: repository, so a separate encrypted
    off-host copy and restore test are required for host-loss recovery. The
    current backup/integrity check alone does not prove host-loss recovery.
