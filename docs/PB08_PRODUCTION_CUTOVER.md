@@ -127,6 +127,19 @@ pass; those behaviors remain unverified, not passed.
    in OneDrive.com; a downloaded cloud-copy restore remains to close the
    host-loss recovery gate. The
    current backup/integrity check alone does not prove host-loss recovery.
+   On 2026-09-17, exact XML rollback copies of the six FamilyDocuments
+   production tasks were saved privately. The task change was attempted but
+   Windows denied it because the available shell is not an administrator;
+   no task was changed. `backend/scripts/enable-unattended-familydocuments-tasks.ps1`
+   now provides a checked preview and an elevated `-Apply` path: the three
+   long-running workers move from logon to startup triggers, and all six
+   tasks move from Interactive to S4U while preserving their actions and
+   periodic schedules. The script backs up task XML and rolls back on failure.
+   It does not restart current worker instances or solve Docker engine startup.
+   Docker's documented Desktop auto-start setting runs at user sign-in;
+   enabling `com.docker.service` alone is not proof that the Linux engine
+   starts without sign-in. A boot-time engine design and controlled host-wide
+   reboot test remain required.
 4. Immediately before cutover, pause relevant writers for a short maintenance
    window, capture a fresh native and encrypted backup, verify the archive and
    restore it to an isolated database. Rerun migrations 040–069 there and compare
