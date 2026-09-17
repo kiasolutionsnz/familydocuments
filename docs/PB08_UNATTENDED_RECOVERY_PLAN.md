@@ -12,16 +12,22 @@
   production FamilyDocuments tasks use Interactive principals. Their exact
   XML was saved privately under the ignored PB-08 backup directory. A
   reversible S4U/startup conversion script passed syntax and preview checks.
-  Applying it was denied by Windows because the available shell lacks an
-  administrator token. No task registration changed.
+  With owner-present administrator approval on 2026-09-17, the six tasks were
+  converted and read back: all six use S4U, and the three watch tasks now have
+  boot triggers. The three periodic tasks still showed pre-conversion last-run
+  results at that check. A later administrator postcheck has not yet succeeded,
+  so their first S4U runs are unverified. This change alone does not make the
+  Docker Desktop Linux engine available before sign-in.
 - Observed: the production stack has a PostgreSQL data volume and a ClamAV
   signature volume. The public API and inbound-email gateway currently route
   through shared Traefik/tunnel infrastructure on Docker Desktop. The public
   Flutter site is hosted separately, but is not useful when its API is down.
 - Observed: the host has 31.9 GiB physical memory, about 10.3 GiB free at
   inspection, and ample C:/D: space. A hypervisor is present and Hyper-V
-  cmdlets exist, but `Get-VM` is denied to the current non-admin shell. These
-  facts do not yet prove a dedicated VM can be provisioned safely.
+  cmdlets exist. An owner-approved administrator preflight confirmed Hyper-V
+  enabled, no existing VMs, and the Windows Default Switch; about 9.9 GiB RAM
+  was free then. These facts do not yet prove a dedicated VM can be provisioned
+  safely or that the current workers can run within it.
 
 ## Preferred target (planned, not deployed)
 
@@ -89,6 +95,8 @@ the preserved old tunnel, restart only its app workers if needed, and keep
 the new VM isolated for diagnosis. Never overwrite the old database to roll
 back; reconcile writes created during the cutover window before reopening.
 
-The user is away from the computer. No UAC prompt, task mutation, Docker
-restart, route change or reboot should be attempted until they return and
-approve the maintenance window.
+The owner is present and has approved a downtime window today, including a
+controlled host reboot once preflight passes. **The no-login recovery path has
+not passed preflight**: no candidate VM, restored application, isolated ingress,
+worker migration or rollback drill exists yet. No production route change or
+reboot has occurred. Do not treat the S4U task conversion as completion.
