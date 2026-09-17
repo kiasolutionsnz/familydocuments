@@ -90,6 +90,19 @@ pass; those behaviors remain unverified, not passed.
    SHA256 `DC657A8A58E4BEE4DF5A92C2F501EAB655306706293C2D7372A5B40138ABD8DA`.
    This resolves Site-source provenance, not parity with the separately
    deployed `familydocuments.app` Cloudflare Worker. It was not published.
+9. On 2026-09-17, Restic copied only verified production snapshot
+   `7211eb0b2ec348dd717a211b8f9574e2bb3b9fd84877a959993f8bfaeeb37353`
+   into a standalone encrypted repository. `restic check --read-data` passed,
+   and an isolated restore of its database dump matched SHA256
+   `300BB8B248E095C39DB5E33834B1BEFB76B4AEC81A6A422F8B35E524D30B42C3`.
+   A static 6,059,636-byte archive with SHA256
+   `751E7BCC731AE9DE075DDF9E8DAED4CA27B12E1E4E4A3143765C0F1EA54CDA81`
+   was copied to the connected OneDrive sync folder under
+   `FamilyDocuments-Backups/FamilyDocuments-2026-09-17-restic-encrypted.tar.gz`.
+   The same private folder and archive appeared in OneDrive.com at 5.78 MB.
+   The password was not copied. This proves local archive integrity and
+   cloud-side visibility, not a restore downloaded independently from cloud.
+   OneDrive desktop sync is not yet an unattended post-reboot backup method.
 
 ## Cutover sequence to prepare before approval
 
@@ -110,8 +123,9 @@ pass; those behaviors remain unverified, not passed.
    Telegram jobs start without interactive login, and prove a controlled
    no-login recovery, including a supported way for the Docker engine to start
    without an owner session. D: is an internal SATA disk, not an off-computer
-   destination. Obtain a separate encrypted off-computer copy and verify its
-   restore before host-loss recovery can be claimed. The
+   destination. A one-time encrypted FamilyDocuments archive is now visible
+   in OneDrive.com; a downloaded cloud-copy restore remains to close the
+   host-loss recovery gate. The
    current backup/integrity check alone does not prove host-loss recovery.
 4. Immediately before cutover, pause relevant writers for a short maintenance
    window, capture a fresh native and encrypted backup, verify the archive and
