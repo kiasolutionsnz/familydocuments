@@ -140,6 +140,10 @@ pass; those behaviors remain unverified, not passed.
    enabling `com.docker.service` alone is not proof that the Linux engine
    starts without sign-in. A boot-time engine design and controlled host-wide
    reboot test remain required.
+   The scoped VM option, worker relocation, route switch and rollback sequence
+   are recorded in `docs/PB08_UNATTENDED_RECOVERY_PLAN.md`. The owner is away
+   from the computer, so no UAC prompt, task change, route change or reboot
+   is attempted now.
 4. Immediately before cutover, pause relevant writers for a short maintenance
    window, capture a fresh native and encrypted backup, verify the archive and
    restore it to an isolated database. Rerun migrations 040–069 there and compare
