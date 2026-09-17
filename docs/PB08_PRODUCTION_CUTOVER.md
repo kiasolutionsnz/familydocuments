@@ -1,5 +1,20 @@
 # PB-08 production cutover preparation — 2026-09-17 NZ
 
+## Post-release chat authentication repair — 2026-09-17 NZ
+
+After the owner could sign in but chat reported an expired session, live
+inspection found production Auth and gateway lacked explicit JWT issuer
+settings. The gateway's verifier defaulted to `supabase`, while GoTrue
+v2.195.0's issuance code uses its unset issuer; this is the inferred cause,
+not a decoded owner token. Production Compose now sets
+`GOTRUE_JWT_ISSUER` and `JWT_EXPECTED_ISSUER` to the same
+`familydocuments` value. Only Auth and the inbound/API gateway were recreated;
+their images, database and other services were unchanged. Auth and public API
+health returned 200, public Auth discovery reported issuer `familydocuments`,
+and an unauthenticated chat request still returned 401. A fresh sign-in is
+required to obtain a newly issued token. Owner confirmation of authenticated
+chat success is pending; these configuration checks alone do not prove it.
+
 ## Production deployment update — 2026-09-17 15:34 NZ
 
 The owner directed deployment while deferring the no-sign-in recovery drill and
