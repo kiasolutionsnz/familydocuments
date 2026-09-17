@@ -1,15 +1,51 @@
 # PB-08 production cutover preparation — 2026-09-17 NZ
 
+## Production deployment update — 2026-09-17 15:34 NZ
+
+The owner directed deployment while deferring the no-sign-in recovery drill and
+additional backup/restore work. All 29 migrations 040–069 were applied to the
+existing production database under `supabase_admin`, with error-stop and each
+migration's own transaction. The before/after counts remained 41 households,
+75 memberships, 125 Auth users and 30 documents; invalid `fp` constraints stayed
+at zero. PostgREST was notified to reload its schema.
+
+The previously offline-scanned gateway candidate became local release
+`kia/familydocuments-inbound-gateway:0.6.0-pb08` (image ID
+`sha256:98ad632f809a7e1cc74eeae63b1162cd45ff02597b236b834d26ec6843dd353d`).
+Only `inbound-gateway` was recreated using the existing production Compose
+configuration. Public API health and Auth settings returned 200. A production
+API preflight returned 204 with the exact `https://familydocuments.app` origin
+and 403 for an unrelated origin.
+
+The public `familydocuments` Cloudflare Worker now runs version
+`2be67702-23b2-4081-9390-167787f6689d`. The previous full-traffic version
+`d669c428-3b62-4232-94d8-ff1d817e04da` remains available for frontend
+rollback. Root, FAQ, privacy, terms, `/prototype/`, its Bootstrap and main JS
+returned 200. The downloaded public main JS SHA256 exactly matched the tested
+Flutter build:
+`86C66A6DF4304E4A3D8779127811002A49ADDD5DEF812FA733AF7AF62ED890C8`.
+An initial publish unintentionally enabled the workers.dev alias; a corrected
+production configuration disabled both workers.dev and preview URLs, and the
+alias subsequently returned 404. The canonical custom domain still serves.
+
+This is a **deployed production release**, not full PB-08 acceptance. Authenticated
+public user journeys, real Google Drive/email/Telegram and physical-device
+tests were not run. No fresh cutover backup or new restore drill was run at the
+owner's direction; the earlier verified snapshot is retained. Docker Desktop
+recovery without Windows sign-in is still unproven. Do not use a frontend-only
+rollback to claim database rollback: the additive migrations remain in place,
+and post-release data must not be overwritten.
+
 ## Decision and scope
 
-This is a prepared replacement of the existing FamilyDocuments app at
+The original plan was a prepared replacement of the existing FamilyDocuments app at
 `familydocuments.app/prototype/` with the Phase 2F Flutter app. Preserve the
 public home, blog, help, privacy and terms pages, existing email delivery and
-inbound addresses. Production deployment has not occurred. The owner deferred
+inbound addresses. Production deployment is now recorded in the update above. The owner deferred
 live Drive/email/Telegram and physical-phone acceptance for this readiness
 pass; those behaviors remain unverified, not passed.
 
-## Observed production baseline
+## Observed pre-deployment production baseline
 
 - Public app: `familydocuments.app`; API:
   `api-familydocuments.servicehub.co.nz`; existing public frontend is a
@@ -104,7 +140,12 @@ pass; those behaviors remain unverified, not passed.
    cloud-side visibility, not a restore downloaded independently from cloud.
    OneDrive desktop sync is not yet an unattended post-reboot backup method.
 
-## Cutover sequence to prepare before approval
+## Original cutover sequence (historical plan; see deployment update above)
+
+The following checklist is retained as the pre-deployment record. Statements
+about the owner being away, task changes being denied, and production not yet
+being migrated are superseded by the dated deployment update and
+`PB08_UNATTENDED_RECOVERY_PLAN.md`.
 
 1. Reconcile the exact-Site-source frontend candidate with the currently
    deployed `familydocuments.app` Worker revision, especially marketing copy,
