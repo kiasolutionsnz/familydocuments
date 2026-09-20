@@ -130,8 +130,14 @@ func (g *driveGateway) decrypt(ciphertext, nonce string) (string, error) {
 	plain, err := aead.Open(nil, n, sealed, []byte("familydocuments/google-drive/v1"))
 	return string(plain), err
 }
-func (g *driveGateway) exchange(code string) (googleToken, error) {
-	form := url.Values{"code": {code}, "client_id": {g.clientID}, "client_secret": {g.clientSecret}, "redirect_uri": {g.origin}, "grant_type": {"authorization_code"}}
+func (g *driveGateway) exchange(code, flow string) (googleToken, error) {
+	form := url.Values{"code": {code}, "client_id": {g.clientID}, "client_secret": {g.clientSecret}, "grant_type": {"authorization_code"}}
+	// Google Identity Services web codes are bound to the public web origin.
+	// Google Sign-In native server-auth codes use the same confidential web
+	// client as the backend audience and must be exchanged without a redirect.
+	if flow == "web" {
+		form.Set("redirect_uri", g.origin)
+	}
 	resp, err := g.http.PostForm("https://oauth2.googleapis.com/token", form)
 	if err != nil {
 		return googleToken{}, err
@@ -286,12 +292,13 @@ func (g *driveGateway) connect(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Code string `json:"code"`
+		Flow string `json:"flow"`
 	}
-	if decodeJSON(w, r, 4096, &in) != nil || len(in.Code) < 10 || len(in.Code) > 4096 {
+	if decodeJSON(w, r, 4096, &in) != nil || len(in.Code) < 10 || len(in.Code) > 4096 || (in.Flow != "web" && in.Flow != "native") {
 		jsonReply(w, 400, map[string]string{"error": "invalid_code"})
 		return
 	}
-	token, err := g.exchange(in.Code)
+	token, err := g.exchange(in.Code, in.Flow)
 	if err != nil {
 		jsonReply(w, 502, map[string]string{"error": "google_authorization_failed"})
 		return

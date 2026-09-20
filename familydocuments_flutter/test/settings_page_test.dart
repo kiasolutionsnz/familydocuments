@@ -1,5 +1,6 @@
 import 'package:familydocuments_flutter/core/auth/auth_service.dart';
 import 'package:familydocuments_flutter/features/settings/settings_page.dart';
+import 'package:familydocuments_flutter/features/settings/notifications/push_notification_service.dart';
 import 'package:familydocuments_flutter/features/settings/telegram/telegram_integration_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,6 +23,15 @@ class _TelegramRepository implements TelegramIntegrationRepository {
     familyId: '11111111-1111-4111-8111-111111111111',
     familyName: 'Test Family',
   );
+}
+
+class _PushRepository implements PushNotificationRepository {
+  @override bool get configured => true;
+  @override bool get supported => true;
+  @override Future<bool> loadEnabled() async => false;
+  @override Future<void> enable() async {}
+  @override Future<void> disable() async {}
+  @override void dispose() {}
 }
 
 void main() {
@@ -61,5 +71,12 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Connect Telegram'), findsOneWidget);
+  });
+
+  testWidgets('opens phone reminder notification settings', (tester) async {
+    await tester.pumpWidget(MaterialApp(home: SettingsPage(auth: AuthService(), pushRepository: _PushRepository())));
+    await tester.tap(find.byKey(const ValueKey('push-notification-settings')));
+    await tester.pumpAndSettle();
+    expect(find.text('Push reminder notifications'), findsOneWidget);
   });
 }

@@ -4,13 +4,21 @@ import '../../core/auth/auth_service.dart';
 import 'drive/drive_page.dart';
 import 'email/email_forwarding_page.dart';
 import 'family_settings_page.dart';
+import 'notifications/push_notification_page.dart';
+import 'notifications/push_notification_service.dart';
 import 'telegram/telegram_integration_page.dart';
 import 'telegram/telegram_integration_service.dart';
 
 class SettingsPage extends StatelessWidget {
-  const SettingsPage({super.key, required this.auth, this.telegramRepository});
+  const SettingsPage({
+    super.key,
+    required this.auth,
+    this.telegramRepository,
+    this.pushRepository,
+  });
   final AuthService auth;
   final TelegramIntegrationRepository? telegramRepository;
+  final PushNotificationRepository? pushRepository;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -46,6 +54,20 @@ class SettingsPage extends StatelessWidget {
               onTap: () => Navigator.of(
                 context,
               ).push(MaterialPageRoute(builder: (_) => DrivePage(auth: auth))),
+            ),
+            ListTile(
+              key: const ValueKey('push-notification-settings'),
+              leading: const Icon(Icons.notifications_active_outlined),
+              title: const Text('Phone reminder notifications'),
+              subtitle: const Text('Control alerts and vibration on this device'),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => PushNotificationPage(
+                    auth: auth,
+                    repository: pushRepository,
+                  ),
+                ),
+              ),
             ),
             ListTile(
               leading: const Icon(Icons.group_outlined),

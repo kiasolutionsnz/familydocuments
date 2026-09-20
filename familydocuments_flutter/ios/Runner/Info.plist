@@ -16,6 +16,17 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>FamilyDocuments</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>$(GOOGLE_REVERSED_CLIENT_ID)</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -32,6 +43,13 @@
 	<string>Use the camera to scan documents and attach photos to your FamilyDocuments library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Select document images and photos to organise in your FamilyDocuments library and connected Google Drive.</string>
+	<key>FirebaseMessagingAutoInitEnabled</key>
+	<false/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>remote-notification</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

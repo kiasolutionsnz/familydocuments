@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -220,10 +219,6 @@ class _DrivePageState extends State<DrivePage> {
                   if (widget.clientId.isEmpty)
                     const Text(
                       'Google Drive authorization is not configured for this environment. Contact the app administrator.',
-                    ),
-                  if (!kIsWeb)
-                    const Text(
-                      'Use the web app to connect your Google account.',
                     ),
                   if (googleReady)
                     FilledButton(
