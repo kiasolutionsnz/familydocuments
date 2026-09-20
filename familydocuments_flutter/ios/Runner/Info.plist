@@ -28,6 +28,10 @@
 	<true/>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Use Face ID to unlock encrypted travel documents stored on this device.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Use the camera to scan documents and attach photos to your FamilyDocuments library.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Select document images and photos to organise in your FamilyDocuments library and connected Google Drive.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
