@@ -3,13 +3,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/home/home_service.dart';
+import '../../core/auth/auth_service.dart';
 import '../../core/security/public_https_url.dart';
 import '../settings/drive/drive_service.dart';
+import '../settings/drive/drive_page.dart';
 import 'data/library_drive_organizer.dart';
 import 'data/library_service.dart';
 import 'document_viewer.dart';
 import 'library_navigation.dart';
 import 'models/library_models.dart';
+import 'offline/offline_travel_models.dart';
+import 'offline/offline_travel_store.dart';
 import 'safe_open.dart';
 
 typedef LinkOpener = Future<bool> Function(String url);
@@ -30,6 +34,9 @@ class LibraryPage extends StatefulWidget {
     this.sourceDownloader,
     this.onMetadataChanged,
     this.driveOrganizer,
+    this.offlineTravelStore,
+    this.accountId = 'local',
+    this.auth,
   });
 
   final LibraryService service;
@@ -40,6 +47,9 @@ class LibraryPage extends StatefulWidget {
   final SourceDownloader? sourceDownloader;
   final VoidCallback? onMetadataChanged;
   final LibraryDriveOrganizer? driveOrganizer;
+  final OfflineTravelStore? offlineTravelStore;
+  final String accountId;
+  final AuthService? auth;
 
   @override
   State<LibraryPage> createState() => LibraryPageState();
@@ -49,11 +59,18 @@ class LibraryPageState extends State<LibraryPage> {
   final search = TextEditingController();
   Timer? debounce;
   late final LibraryNavigation navigation;
+  late final OfflineTravelStore offlineTravelStore;
   late final bool ownsNavigation;
   StreamSubscription<LibraryLocation>? navigationSubscription;
   LibraryLocation location = const LibraryLocation.top();
   LibraryData? data;
+  SavedLinksWorkspace savedLinks = const SavedLinksWorkspace(
+    links: [],
+    shareCandidates: [],
+  );
   Map<String, dynamic> travelWorkspace = const {};
+  final Set<String> offlineBusy = <String>{};
+  final Map<String, Future<List<OfflineTravelDocument>>> offlineLists = {};
   bool loading = false, loadingMore = false;
   String? error, categoryFilter, tagFilter, linkCategoryFilter;
   LibrarySort sort = LibrarySort.newest;
@@ -62,6 +79,9 @@ class LibraryPageState extends State<LibraryPage> {
   void initState() {
     super.initState();
     ownsNavigation = widget.navigation == null;
+    offlineTravelStore =
+        widget.offlineTravelStore ??
+        createOfflineTravelStore(accountId: widget.accountId);
     navigation = widget.navigation ?? createLibraryNavigation();
     location = navigation.current;
     navigationSubscription = navigation.changes.listen((value) {
@@ -120,6 +140,12 @@ class LibraryPageState extends State<LibraryPage> {
       final nextTravel = more
           ? travelWorkspace
           : await widget.service.travelWorkspace();
+      final nextSavedLinks = more
+          ? savedLinks
+          : await widget.service.savedLinksWorkspace(
+              query: search.text,
+              categoryId: linkCategoryFilter,
+            );
       if (!mounted) return;
       if (more && data != null) {
         final existing = {
@@ -150,6 +176,7 @@ class LibraryPageState extends State<LibraryPage> {
         data = next;
       }
       travelWorkspace = nextTravel;
+      savedLinks = nextSavedLinks;
       error = null;
     } on LibraryServiceException catch (failure) {
       if (mounted) error = failure.message;
@@ -319,21 +346,55 @@ class LibraryPageState extends State<LibraryPage> {
     ];
     final categories = value.categories
         .where(
-          (c) =>
-              c.count > 0 &&
-              !{
-                'documents',
-                'travel',
-                'rentals',
-                'rental records',
-              }.contains(c.name.toLowerCase()),
+          (c) => !{
+            'documents',
+            'travel',
+            'rentals',
+            'rental records',
+          }.contains(c.name.toLowerCase()),
         )
         .toList();
-    final noContent = value.documentCount == 0 && value.linkCount == 0;
+    final noContent =
+        value.documentCount == 0 && value.linkCount == 0 && categories.isEmpty;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _heading('Library', subtitle: 'Everything organised for you.'),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: _heading(
+                'Library',
+                subtitle: 'Everything organised for you.',
+              ),
+            ),
+            FilledButton.icon(
+              key: const ValueKey('library-new-category'),
+              onPressed: () async {
+                try {
+                  final created = await _createCategory(context);
+                  if (created == null || !mounted) return;
+                  await _load();
+                  if (mounted) {
+                    _open(
+                      LibraryLocation(
+                        LibrarySection.category,
+                        itemId: created.id,
+                      ),
+                    );
+                  }
+                } on LibraryServiceException catch (failure) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context)
+                        .showSnackBar(SnackBar(content: Text(failure.message)));
+                  }
+                }
+              },
+              icon: const Icon(Icons.create_new_folder_outlined),
+              label: const Text('New category'),
+            ),
+          ],
+        ),
         _search(),
         if (error != null) _InlineError(error!, _load),
         if (search.text.trim().isNotEmpty)
@@ -368,7 +429,7 @@ class LibraryPageState extends State<LibraryPage> {
           const Padding(
             padding: EdgeInsets.only(top: 28, bottom: 10),
             child: Text(
-              'Family categories',
+              'Your categories',
               style: TextStyle(fontSize: 19, fontWeight: FontWeight.w700),
             ),
           ),
@@ -378,7 +439,12 @@ class LibraryPageState extends State<LibraryPage> {
             children: categories
                 .map(
                   (category) => ActionChip(
-                    avatar: const Icon(Icons.folder_outlined, size: 18),
+                    avatar: Icon(
+                      category.visibility == 'private'
+                          ? Icons.lock_outline
+                          : Icons.folder_shared_outlined,
+                      size: 18,
+                    ),
                     label: Text('${category.name} · ${category.count}'),
                     onPressed: () => _open(
                       LibraryLocation(
@@ -728,31 +794,80 @@ class LibraryPageState extends State<LibraryPage> {
 
   Future<LibraryCategory?> _createCategory(BuildContext parent) async {
     var categoryName = '';
+    var visibility = 'private';
     final confirmed = await showDialog<bool>(
       context: parent,
-      builder: (context) => AlertDialog(
-        title: const Text('Create category?'),
-        content: TextFormField(
-          key: const ValueKey('new-category-name'),
-          onChanged: (value) => categoryName = value,
-          decoration: const InputDecoration(labelText: 'Category name'),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Create category'),
+          content: SizedBox(
+            width: 460,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  key: const ValueKey('new-category-name'),
+                  autofocus: true,
+                  onChanged: (value) => categoryName = value,
+                  decoration: const InputDecoration(labelText: 'Category name'),
+                ),
+                RadioGroup<String>(
+                  groupValue: visibility,
+                  onChanged: (value) =>
+                      setDialogState(() => visibility = value!),
+                  child: const Column(
+                    children: [
+                      RadioListTile<String>(
+                        value: 'private',
+                        title: Text('Private to me'),
+                        subtitle: Text(
+                          'Only you see this category in the Library. The connected Google Drive owner can still access stored files.',
+                        ),
+                      ),
+                      RadioListTile<String>(
+                        value: 'shared',
+                        title: Text('Share with Family'),
+                        subtitle: Text(
+                          'Visible to active Family members. Security verification is required.',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Continue'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Create'),
-          ),
-        ],
       ),
     );
     if (confirmed != true || categoryName.trim().isEmpty) {
       return null;
     }
-    return widget.service.createCategory(categoryName);
+    if (!parent.mounted) return null;
+    if (visibility == 'shared') {
+      final auth = widget.auth;
+      if (auth == null) {
+        throw const LibraryServiceException(
+          'Security verification is unavailable. Try again.',
+        );
+      }
+      final verified = await showDialog<bool>(
+        context: parent,
+        builder: (_) => IdentityVerificationDialog(auth: auth),
+      );
+      if (verified != true) return null;
+    }
+    return widget.service.createCategory(categoryName, visibility: visibility);
   }
 
   Future<void> _createRentalProperty() async {
@@ -1049,9 +1164,10 @@ class LibraryPageState extends State<LibraryPage> {
       await _load();
       widget.onMetadataChanged?.call();
     } on LibraryServiceException catch (failure) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(failure.message)));
+      }
     }
   }
 
@@ -1597,9 +1713,259 @@ class LibraryPageState extends State<LibraryPage> {
             ),
           ),
         ],
+        _offlineTravelPack(trip, records),
         ..._grouped(records, _travelGroup),
       ],
     );
+  }
+
+  Widget _offlineTravelPack(
+    LibraryTrip trip,
+    List<LibraryRelatedDocument> records,
+  ) => Card(
+    margin: const EdgeInsets.only(top: 18, bottom: 8),
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.offline_pin_outlined),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Offline travel pack',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            offlineTravelStore.supported
+                ? 'Keep selected critical documents encrypted on this phone for use without internet.'
+                : 'Secure offline travel packs are available in the FamilyDocuments mobile app.',
+          ),
+          if (offlineTravelStore.supported) ...[
+            const SizedBox(height: 8),
+            FutureBuilder<List<OfflineTravelDocument>>(
+              future: offlineLists.putIfAbsent(
+                trip.id,
+                () => offlineTravelStore.list(trip.id),
+              ),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting &&
+                    !snapshot.hasData) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: LinearProgressIndicator(),
+                  );
+                }
+                if (snapshot.hasError) {
+                  return const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: Text(
+                      'Offline copies could not be checked. Reopen this trip to try again.',
+                    ),
+                  );
+                }
+                final offline = {
+                  for (final item
+                      in snapshot.data ?? const <OfflineTravelDocument>[])
+                    item.documentId: item,
+                };
+                if (records.isEmpty) {
+                  return const Text(
+                    'Add travel documents before creating an offline pack.',
+                  );
+                }
+                return Column(
+                  children: records.map((record) {
+                    final saved = offline[record.documentId];
+                    final busy = offlineBusy.contains(record.documentId);
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        saved == null
+                            ? Icons.cloud_download_outlined
+                            : Icons.offline_pin,
+                      ),
+                      title: Text(record.title),
+                      subtitle: saved == null
+                          ? const Text('Online only')
+                          : Text('Available until ${_date(saved.expiresAt)}'),
+                      trailing: saved == null
+                          ? busy
+                                ? const SizedBox.square(
+                                    dimension: 24,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : TextButton(
+                                    onPressed: () => _saveOffline(trip, record),
+                                    child: const Text('Keep offline'),
+                                  )
+                          : PopupMenuButton<String>(
+                              tooltip: 'Offline document options',
+                              onSelected: (value) {
+                                if (value == 'open') _openOffline(saved);
+                                if (value == 'remove') {
+                                  _removeOffline(saved);
+                                }
+                              },
+                              itemBuilder: (_) => const [
+                                PopupMenuItem(
+                                  value: 'open',
+                                  child: Text('Open offline'),
+                                ),
+                                PopupMenuItem(
+                                  value: 'remove',
+                                  child: Text('Remove from device'),
+                                ),
+                              ],
+                            ),
+                    );
+                  }).toList(),
+                );
+              },
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
+
+  Future<void> _saveOffline(
+    LibraryTrip trip,
+    LibraryRelatedDocument record,
+  ) async {
+    final tripEnd = DateTime.tryParse(trip.endDate ?? '');
+    var expiry = tripEnd == null
+        ? DateTime.now().add(const Duration(days: 30))
+        : tripEnd.add(const Duration(days: 7));
+    if (!expiry.isAfter(DateTime.now())) {
+      expiry = DateTime.now().add(const Duration(days: 30));
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Keep this document offline?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'An encrypted copy of “${record.title}” will be stored only on this phone. It can be removed at any time.',
+              ),
+              const SizedBox(height: 12),
+              TextButton.icon(
+                onPressed: () async {
+                  final selected = await showDatePicker(
+                    context: dialogContext,
+                    initialDate: expiry,
+                    firstDate: DateTime.now().add(const Duration(days: 1)),
+                    lastDate: DateTime.now().add(const Duration(days: 730)),
+                    helpText: 'Keep offline until',
+                  );
+                  if (selected != null) {
+                    setDialogState(
+                      () => expiry = DateTime(
+                        selected.year,
+                        selected.month,
+                        selected.day,
+                        23,
+                        59,
+                        59,
+                      ),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.event_outlined),
+                label: Text('Available until ${_date(expiry)}'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Keep offline'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() => offlineBusy.add(record.documentId));
+    try {
+      final source = await widget.service.source(record.documentId);
+      await offlineTravelStore.save(
+        tripId: trip.id,
+        tripTitle: trip.name,
+        documentId: record.documentId,
+        title: record.title,
+        fileName: source.fileName,
+        mimeType: source.mimeType,
+        bytes: source.bytes,
+        expiresAt: expiry,
+      );
+      if (mounted) {
+        offlineLists.remove(trip.id);
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Encrypted copy is available offline.')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not save this document offline. Try again.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => offlineBusy.remove(record.documentId));
+      }
+    }
+  }
+
+  Future<void> _openOffline(OfflineTravelDocument document) async {
+    await showDocumentViewer(
+      context,
+      documentId: document.documentId,
+      loadSource: (_) async {
+        final file = await offlineTravelStore.read(document.documentId);
+        if (file == null) {
+          throw const LibraryServiceException(
+            'The offline copy is no longer available.',
+          );
+        }
+        return LibrarySource(
+          fileName: file.document.fileName,
+          mimeType: file.document.mimeType,
+          bytes: file.bytes,
+        );
+      },
+    );
+  }
+
+  Future<void> _removeOffline(OfflineTravelDocument document) async {
+    await offlineTravelStore.remove(document.documentId);
+    if (mounted) {
+      offlineLists.remove(document.tripId);
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Offline copy removed from this device.')),
+      );
+    }
   }
 
   Widget _rentals() => Column(
@@ -1825,9 +2191,10 @@ class LibraryPageState extends State<LibraryPage> {
         ),
       );
     } on LibraryServiceException catch (failure) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(failure.message)));
+      }
     }
   }
 
@@ -1861,16 +2228,17 @@ class LibraryPageState extends State<LibraryPage> {
   );
 
   Widget _links() {
-    final links = data!.links
-        .where(
-          (link) =>
-              linkCategoryFilter == null ||
-              link.categoryId == linkCategoryFilter,
-        )
-        .toList();
-    final groups = <String, List<LibraryLink>>{};
+    final links = savedLinks.links;
+    final groups = <String, List<SavedLinkItem>>{};
     for (final link in links) {
-      groups.putIfAbsent(link.category, () => []).add(link);
+      groups
+          .putIfAbsent(
+            link.ownedByMe
+                ? (link.categoryName ?? 'Saved Links')
+                : 'Shared with me',
+            () => [],
+          )
+          .add(link);
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1891,7 +2259,10 @@ class LibraryPageState extends State<LibraryPage> {
               (c) => DropdownMenuItem(value: c.id, child: Text(c.name)),
             ),
           ],
-          onChanged: (value) => setState(() => linkCategoryFilter = value),
+          onChanged: (value) {
+            setState(() => linkCategoryFilter = value);
+            unawaited(_load());
+          },
         ),
         if (links.isEmpty)
           _StateView(
@@ -1903,19 +2274,170 @@ class LibraryPageState extends State<LibraryPage> {
           _subheading(entry.key),
           ...entry.value.map(
             (link) => ListTile(
+              key: ValueKey('saved-link-${link.id}'),
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.link),
               title: Text(link.title),
-              subtitle: Text(link.domain),
-              trailing: TextButton(
-                onPressed: () => _safeOpen(link.url),
-                child: const Text('Open'),
+              subtitle: Text(
+                link.ownedByMe
+                    ? '${link.domain}${link.sharedWith.isEmpty ? ' · Private' : ' · Shared with ${link.sharedWith.length}'}'
+                    : '${link.domain} · Shared by ${link.sharedBy ?? 'a family member'}',
+              ),
+              trailing: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  TextButton(
+                    onPressed: () => _safeOpen(link.url),
+                    child: const Text('Open'),
+                  ),
+                  if (link.ownedByMe)
+                    PopupMenuButton<String>(
+                      tooltip: 'Manage ${link.title}',
+                      onSelected: (action) {
+                        if (action == 'share') {
+                          unawaited(_manageSavedLinkSharing(link));
+                        } else if (action == 'delete') {
+                          unawaited(_deleteSavedLink(link));
+                        }
+                      },
+                      itemBuilder: (context) => const [
+                        PopupMenuItem(
+                          value: 'share',
+                          child: Text('Manage sharing'),
+                        ),
+                        PopupMenuItem(value: 'delete', child: Text('Delete')),
+                      ],
+                    ),
+                ],
               ),
             ),
           ),
         ],
       ],
     );
+  }
+
+  Future<void> _manageSavedLinkSharing(SavedLinkItem link) async {
+    final selected = link.sharedWith.map((member) => member.id).toSet();
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Manage sharing'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: savedLinks.shareCandidates.isEmpty
+                ? const Text('No other active family members are available.')
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: savedLinks.shareCandidates
+                        .map(
+                          (member) => CheckboxListTile(
+                            value: selected.contains(member.id),
+                            title: Text(member.name),
+                            contentPadding: EdgeInsets.zero,
+                            onChanged: (checked) => setDialogState(() {
+                              if (checked == true) {
+                                selected.add(member.id);
+                              } else {
+                                selected.remove(member.id);
+                              }
+                            }),
+                          ),
+                        )
+                        .toList(),
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: savedLinks.shareCandidates.isEmpty
+                  ? null
+                  : () => Navigator.pop(context, true),
+              child: const Text('Save sharing'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved != true) return;
+    try {
+      await widget.service.setSavedLinkShares(link.id, selected.toList());
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Saved Link sharing updated.')),
+        );
+      }
+    } on LibraryServiceException catch (failure) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(failure.message)));
+      }
+    }
+  }
+
+  Future<void> _deleteSavedLink(SavedLinkItem link) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Saved Link?'),
+        content: const Text(
+          'It will be recoverable for 30 days. Anyone it was shared with will lose access immediately.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.service.deleteSavedLink(link.id);
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Saved Link deleted.'),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () => unawaited(_restoreSavedLink(link.id)),
+          ),
+        ),
+      );
+    } on LibraryServiceException catch (failure) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(failure.message)));
+      }
+    }
+  }
+
+  Future<void> _restoreSavedLink(String linkId) async {
+    try {
+      await widget.service.restoreSavedLink(linkId);
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Saved Link restored.')));
+      }
+    } on LibraryServiceException catch (failure) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(failure.message)));
+      }
+    }
   }
 
   Future<void> _safeOpen(String url) async {
@@ -1989,7 +2511,7 @@ class _CollectionCard extends StatelessWidget {
           children: [
             CircleAvatar(
               backgroundColor: const Color(0xffe5f1ee),
-              child: Icon(icon, color: const Color(0xff245b52)),
+              child: Icon(icon, color: const Color(0xff5755c9)),
             ),
             const SizedBox(width: 14),
             Expanded(

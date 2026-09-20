@@ -13,6 +13,10 @@ class FeedbackTicket {
   String get title => data['title'] as String;
   String get status => data['status'] as String;
   String get question => data['question'] as String? ?? '';
+  bool get unread => data['unread'] == true;
+  List<Map<String, dynamic>> get updates => (data['updates'] as List? ?? [])
+      .map((value) => Map<String, dynamic>.from(value as Map))
+      .toList();
   String get summary =>
       '$reference: $title\n$status${question.isEmpty ? '' : '\n$question'}';
 }

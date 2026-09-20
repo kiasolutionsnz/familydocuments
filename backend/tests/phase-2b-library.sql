@@ -9,7 +9,7 @@ declare
   documents_category uuid:=gen_random_uuid(); travel_category uuid; rentals_category uuid; custom_category uuid:=gen_random_uuid(); foreign_category uuid:=gen_random_uuid();
   primary_document uuid:=gen_random_uuid(); travel_document uuid:=gen_random_uuid(); unassigned_travel uuid:=gen_random_uuid(); rental_document uuid:=gen_random_uuid(); unassigned_rental uuid:=gen_random_uuid(); foreign_document uuid:=gen_random_uuid();
   trip_id uuid:=gen_random_uuid(); foreign_trip uuid:=gen_random_uuid(); property_id uuid:=gen_random_uuid(); foreign_property uuid:=gen_random_uuid();
-  link_category uuid:=gen_random_uuid(); result jsonb; before_version timestamptz;
+  link_category uuid:=gen_random_uuid(); private_category uuid; result jsonb; before_version timestamptz;
 begin
   insert into fp.households(id,name,owner_user_id) values
     (family_id,'Library family',owner_id),(other_family,'Other library family',outsider_id);
@@ -49,7 +49,9 @@ begin
   insert into fp.saved_links(household_id,owner_user_id,category_id,url,normalized_url_hash,source_host,title) values
     (family_id,owner_id,link_category,'https://example.test/library',repeat('4',64),'example.test','Library reference');
 
-  perform set_config('request.jwt.claims',jsonb_build_object('sub',owner_id,'email','library-owner@example.test','role','authenticated')::text,true);
+  perform set_config('request.jwt.claims',jsonb_build_object('sub',owner_id,'email','library-owner@example.test','role','authenticated','aal','aal2')::text,true);
+  result:=fp.create_library_category('Family archive','shared');
+  if result->>'visibility'<>'shared' then raise exception 'shared category visibility missing';end if;
   result:=fp.library_workspace(null,null,null,'newest',2,0);
   if (result->>'document_count')::int<>5 or jsonb_array_length(result->'documents')<>2 then raise exception 'counts or pagination failed';end if;
   if result->'documents'->0->>'title'<>'Family passport' then raise exception 'newest ordering failed';end if;
@@ -72,13 +74,18 @@ begin
   begin perform fp.update_library_document(primary_document,documents_category,'[]',before_version); raise exception 'stale update accepted'; exception when sqlstate 'PT409' then null;end;
 
   perform set_config('request.jwt.claims',jsonb_build_object('sub',viewer_id,'email','library-viewer@example.test','role','authenticated')::text,true);
+  result:=fp.create_library_category('My medical','private');
+  private_category:=(result->>'id')::uuid;
+  if result->>'visibility'<>'private' or not (result->>'owned_by_me')::boolean then raise exception 'private category result invalid';end if;
   result:=fp.library_workspace(null,null,null,'newest',40,0);
+  if not exists(select 1 from jsonb_array_elements(result->'categories') x where x->>'id'=private_category::text) then raise exception 'private category not visible to its member owner';end if;
   if jsonb_array_length(result->'documents')<>1 or result->'documents'->0->>'id'<>primary_document::text or (result->'documents'->0->>'can_edit')::boolean then raise exception 'read-only document permissions failed';end if;
   begin perform fp.update_library_document(primary_document,documents_category,'[]',(select updated_at from fp.documents where id=primary_document));raise exception 'viewer edited metadata';exception when insufficient_privilege then null;end;
   delete from fp.document_permissions p where p.document_id=primary_document and p.member_user_id=viewer_id;
   if jsonb_array_length(fp.library_workspace('Family passport',null,null,'newest',40,0)->'documents')<>0 then raise exception 'revoked document remained searchable';end if;
 
   perform set_config('request.jwt.claims',jsonb_build_object('sub',owner_id,'email','library-owner@example.test','role','authenticated')::text,true);
+  if exists(select 1 from jsonb_array_elements(fp.library_workspace(null,null,null,'newest',40,0)->'categories') x where x->>'id'=private_category::text) then raise exception 'private category leaked to family admin';end if;
   begin perform fp.create_travel_record(foreign_trip,primary_document,'other');raise exception 'cross-family trip association accepted';exception when insufficient_privilege then null;end;
   begin perform fp.create_rental_bill(foreign_property,primary_document,'other');raise exception 'cross-family rental association accepted';exception when insufficient_privilege then null;end;
 end $$;

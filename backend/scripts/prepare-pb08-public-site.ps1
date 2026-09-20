@@ -18,7 +18,7 @@ foreach($relative in @('package.json','app/page.tsx','app/privacy/page.tsx','app
   if(-not(Test-Path -LiteralPath (Join-Path $source $relative))){throw "Current public page missing: $relative"}
 }
 $html=Get-Content -LiteralPath (Join-Path $build 'index.html') -Raw
-if(-not $html.Contains('<base href="/prototype/">')){throw 'Flutter build is not targeted at /prototype/.'}
+if(-not $html.Contains('<base href="/app/">')){throw 'Flutter build is not targeted at /app/.'}
 $target=Join-Path $releaseRoot 'pb08-public-site-candidate'
 if(Test-Path -LiteralPath $target){throw 'Candidate target already exists; keep it for inspection or choose a fresh release directory.'}
 $null=New-Item -ItemType Directory -Path $target
@@ -27,9 +27,12 @@ $excludedDirs=@('node_modules','.next','dist','.wrangler','.sites-runtime',$excl
 $excludedFiles=@('.env','.env.local','.dev.vars','google-drive-config.local.js')
 & robocopy $source $target /E /R:1 /W:1 /XD $excludedDirs /XF $excludedFiles | Out-Null
 if($LASTEXITCODE -ge 8){throw 'Public Site source copy failed.'}
-$appTarget=Join-Path $target 'public/prototype'
+$appTarget=Join-Path $target 'public/app'
 $null=New-Item -ItemType Directory -Path $appTarget -Force
 Copy-Item -Path (Join-Path $build '*') -Destination $appTarget -Recurse -Force
+$legacyTarget=Join-Path $target 'public/prototype'
+$null=New-Item -ItemType Directory -Path $legacyTarget -Force
+[IO.File]::WriteAllText((Join-Path $legacyTarget 'index.html'),'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex"><meta http-equiv="refresh" content="0;url=/app/"><title>Family Documents</title><script>location.replace("/app/")</script></head><body><a href="/app/">Open Family Documents</a></body></html>')
 foreach($relative in @('index.html','main.dart.js','flutter_bootstrap.js')){
   if(-not(Test-Path -LiteralPath (Join-Path $appTarget $relative))){throw "Flutter asset missing: $relative"}
 }
@@ -37,7 +40,7 @@ $report=[ordered]@{
   status='LOCAL_SITE_CANDIDATE_PREPARED'
   site_project_id=$site.project_id
   target=$target
-  app_path='/prototype/'
+  app_path='/app/'
   flutter_bundle_sha256=(Get-FileHash -LiteralPath (Join-Path $appTarget 'main.dart.js') -Algorithm SHA256).Hash
   public_pages_preserved=@('/','/privacy','/terms','/faq')
   site_published=$false

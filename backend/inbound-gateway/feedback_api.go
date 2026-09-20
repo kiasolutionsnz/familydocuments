@@ -25,10 +25,10 @@ func (h *trustedConversationAPI) feedback(w http.ResponseWriter, r *http.Request
 		return
 	}
 	switch input.Operation {
-	case "create", "reply", "list", "detail", "withdraw":
+	case "create", "reply", "list", "detail", "mark_read", "withdraw":
 	default:
 		jsonReply(w, 400, map[string]string{"error": "invalid_feedback_operation"})
 		return
 	}
-	h.proxyTrustedRPC(w, actor, "feedback_request", input)
+	h.proxyTrustedRPC(w, actor, "feedback_request_v2", input)
 }

@@ -1,0 +1,93 @@
+name: FamilyDocuments iOS TestFlight
+
+on:
+  push:
+    branches:
+      - release/ios-1.0
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: familydocuments-ios-testflight
+  cancel-in-progress: false
+
+jobs:
+  build-and-upload:
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: familydocuments_flutter
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Flutter
+        run: |
+          git clone https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          git -C "$RUNNER_TEMP/flutter" checkout 6655482ec06e547f90abf8ae7590466f4415978d
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Install signing assets
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+          BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.IOS_CI_KEYCHAIN_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/familydocuments.p12"
+          PROFILE_PATH="$RUNNER_TEMP/familydocuments.mobileprovision"
+          KEYCHAIN_PATH="$RUNNER_TEMP/familydocuments-signing.keychain-db"
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
+          echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o "$PROFILE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/FamilyDocuments_AppStore.mobileprovision"
+
+      - name: Resolve Flutter dependencies
+        run: |
+          flutter --version
+          flutter pub get
+
+      - name: Run Flutter tests
+        run: flutter test
+
+      - name: Build signed IPA
+        run: >-
+          flutter build ipa --release
+          --build-name=1.0.0
+          --build-number="${{ github.run_number }}"
+          --export-options-plist=ios/ExportOptions.plist
+
+      - name: Install App Store Connect key
+        env:
+          ASC_KEY_BASE64: ${{ secrets.ASC_PRIVATE_KEY_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          mkdir -p "$HOME/private_keys"
+          echo -n "$ASC_KEY_BASE64" | base64 --decode -o "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          chmod 600 "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+
+      - name: Upload to TestFlight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: >-
+          xcrun altool --upload-app --type ios
+          --file "$(find build/ios/ipa -name '*.ipa' -print -quit)"
+          --apiKey "$ASC_KEY_ID"
+          --apiIssuer "$ASC_ISSUER_ID"
+
+      - name: Preserve build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: FamilyDocuments-iOS-${{ github.run_number }}
+          path: familydocuments_flutter/build/ios/ipa/*.ipa
+          if-no-files-found: error
+          retention-days: 14

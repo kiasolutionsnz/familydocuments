@@ -23,6 +23,22 @@ class SettingsPage extends StatelessWidget {
           children: [
             Text('Integrations', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
+            Card(
+              child: ListTile(
+                key: const ValueKey('email-forwarding-settings'),
+                leading: const Icon(Icons.forward_to_inbox_outlined),
+                title: const Text('Email forwarding and allowed senders'),
+                subtitle: const Text(
+                  'Manage your forwarding address and trusted sender list',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => EmailForwardingPage(auth: auth),
+                  ),
+                ),
+              ),
+            ),
             ListTile(
               leading: const Icon(Icons.cloud_outlined),
               title: const Text('Google Drive'),
@@ -40,18 +56,6 @@ class SettingsPage extends StatelessWidget {
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) => FamilySettingsPage(auth: auth),
-                ),
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.forward_to_inbox_outlined),
-              title: const Text('Email forwarding'),
-              subtitle: const Text(
-                'Forward messages and manage trusted senders',
-              ),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => EmailForwardingPage(auth: auth),
                 ),
               ),
             ),

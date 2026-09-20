@@ -116,7 +116,7 @@ services:
   inbound-gateway:
     profiles: [production]
     build: {context: ./inbound-gateway}
-    image: kia/familydocuments-inbound-gateway:0.5.4
+    image: kia/familydocuments-inbound-gateway:0.6.2-feedback
     depends_on:
       rest: {condition: service_healthy}
     environment:
@@ -136,6 +136,7 @@ services:
       TELEGRAM_BOT_IDENTITY: ${TELEGRAM_BOT_IDENTITY:-}
       TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      SMTP2GO_WEBHOOK_TOKEN: ${SMTP2GO_WEBHOOK_TOKEN:-}
     ports: ["127.0.0.1:55327:8080"]
     networks: [application]
     restart: unless-stopped

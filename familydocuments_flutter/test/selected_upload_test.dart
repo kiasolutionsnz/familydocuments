@@ -1,7 +1,9 @@
 import 'dart:typed_data';
+import 'dart:math';
 
 import 'package:familydocuments_flutter/core/home/selected_upload.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 
 void main() {
   test('Web-style in-memory PDF needs no filesystem path', () {
@@ -66,4 +68,36 @@ void main() {
       throwsA(isA<SelectedUploadException>()),
     );
   });
+
+  test(
+    'large photo is converted to an OCR-sized JPEG under server limit',
+    () async {
+      final photo = img.Image(width: 1400, height: 1400);
+      final random = Random(17);
+      for (var y = 0; y < photo.height; y++) {
+        for (var x = 0; x < photo.width; x++) {
+          photo.setPixelRgb(
+            x,
+            y,
+            random.nextInt(256),
+            random.nextInt(256),
+            random.nextInt(256),
+          );
+        }
+      }
+      final original = img.encodePng(photo);
+      expect(original.length, greaterThan(maxSelectedUploadBytes));
+      final upload = await preparePhotoUpload(
+        name: 'camera.png',
+        bytes: original,
+      );
+      expect(upload.optimized, isTrue);
+      expect(upload.name, 'camera.jpg');
+      expect(upload.mimeType, 'image/jpeg');
+      expect(upload.bytes.length, lessThanOrEqualTo(maxSelectedUploadBytes));
+      final decoded = img.decodeJpg(upload.bytes)!;
+      expect(decoded.width, 1400);
+      expect(decoded.height, 1400);
+    },
+  );
 }

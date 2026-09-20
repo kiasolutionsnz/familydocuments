@@ -13,12 +13,12 @@ $flutter='C:/src/flutter/bin/flutter.bat'
 if(-not(Test-Path -LiteralPath $flutter)){throw 'Flutter toolchain is unavailable.'}
 Push-Location $root
 try {
-  & $flutter build web --release --base-href=/prototype/ --dart-define=FAMILYDOCUMENTS_API_BASE_URL=https://api-familydocuments.servicehub.co.nz --dart-define=GOOGLE_DRIVE_CLIENT_ID=$clientId --pwa-strategy=none --no-wasm-dry-run
+  & $flutter build web --release --base-href=/app/ --dart-define=FAMILYDOCUMENTS_API_BASE_URL=https://api-familydocuments.servicehub.co.nz --dart-define=GOOGLE_DRIVE_CLIENT_ID=$clientId --pwa-strategy=none --no-wasm-dry-run
   if($LASTEXITCODE -ne 0){throw 'Flutter release build failed.'}
   $bundle=Join-Path $root 'build/web/main.dart.js'
   $contents=[IO.File]::ReadAllText($bundle)
   $index=[IO.File]::ReadAllText((Join-Path $root 'build/web/index.html'))
-  if(-not $index.Contains('<base href="/prototype/">') -or
+  if(-not $index.Contains('<base href="/app/">') -or
     -not $contents.Contains('https://api-familydocuments.servicehub.co.nz') -or
     $contents.Contains('familydocuments-phase2f-staging.inderchauhan.chatgpt.site') -or
     -not $contents.Contains($clientId)) {throw 'Release build target verification failed.'}
@@ -32,7 +32,7 @@ try {
     status='LOCAL_BUILD_VERIFIED'
     built_at=(Get-Date).ToUniversalTime().ToString('o')
     api_base_url='https://api-familydocuments.servicehub.co.nz'
-    base_href='/prototype/'
+    base_href='/app/'
     bundle_sha256=(Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash
     bundle_bytes=(Get-Item -LiteralPath $bundle).Length
     drive_client_id_sha256=$clientFingerprint

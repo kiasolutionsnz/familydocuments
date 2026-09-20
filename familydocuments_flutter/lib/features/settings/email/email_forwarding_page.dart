@@ -84,7 +84,7 @@ class _EmailForwardingPageState extends State<EmailForwardingPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Email forwarding')),
+    appBar: AppBar(title: const Text('Email forwarding and allowed senders')),
     body: FutureBuilder<_EmailSettings>(
       future: _data,
       builder: (context, snapshot) {
@@ -157,12 +157,12 @@ class _EmailForwardingPageState extends State<EmailForwardingPage> {
             ),
             const SizedBox(height: 16),
             Text(
-              'Trusted senders',
+              'Allowed senders',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
             const Text(
-              'Only allow senders you recognise. New attachments remain quarantined until a sender is allowed.',
+              'Only allow senders you recognise. Email from anyone else remains quarantined until you approve the sender.',
             ),
             const SizedBox(height: 8),
             ...data.rules.map(
@@ -200,7 +200,7 @@ class _EmailForwardingPageState extends State<EmailForwardingPage> {
                       });
                       _sender.clear();
                     },
-              child: const Text('Allow sender'),
+              child: const Text('Add allowed sender'),
             ),
           ],
         );

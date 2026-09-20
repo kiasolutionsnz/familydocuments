@@ -28,7 +28,7 @@ export default function HelpChat() {
       const source = data.source && typeof data.source === "object" && "title" in data.source && "url" in data.source && typeof data.source.title === "string" && typeof data.source.url === "string" && data.source.url.startsWith("/faq") ? {title:data.source.title,url:data.source.url} : undefined;
       setMessages(current => [...current, {role:"assistant",text:data.answer!.slice(0, 1200),source}]);
     } catch {
-      setMessages(current => [...current, {role:"assistant",text:"I can’t reach the help service just now. The FAQ is still available, or email support@familydocuments.app if you’re stuck.",source:{title:"Open the FAQ",url:"/faq"}}]);
+      setMessages(current => [...current, {role:"assistant",text:"I can’t reach the help service just now. The FAQ is still available, or email contact@familydocuments.app if you’re stuck.",source:{title:"Open the FAQ",url:"/faq"}}]);
     } finally {
       setBusy(false);
       requestAnimationFrame(() => input.current?.focus());

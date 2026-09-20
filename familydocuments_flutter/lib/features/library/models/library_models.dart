@@ -37,16 +37,22 @@ class LibraryCategory {
     required this.name,
     required this.count,
     required this.system,
+    this.visibility = 'shared',
+    this.ownedByMe = false,
   });
   final String id, name;
   final int count;
   final bool system;
+  final String visibility;
+  final bool ownedByMe;
 
   factory LibraryCategory.fromJson(Map value) => LibraryCategory(
     id: value['id']?.toString() ?? '',
     name: value['name']?.toString() ?? 'Category',
     count: (value['count'] as num?)?.toInt() ?? 0,
     system: value['is_system'] == true,
+    visibility: value['visibility']?.toString() ?? 'shared',
+    ownedByMe: value['owned_by_me'] == true,
   );
 }
 
@@ -215,6 +221,72 @@ class LibraryLink {
     tags:
         (value['tags'] as List?)?.map((x) => x.toString()).toList() ?? const [],
   );
+}
+
+class SavedLinkMember {
+  const SavedLinkMember({required this.id, required this.name});
+  final String id, name;
+
+  factory SavedLinkMember.fromJson(Map value) => SavedLinkMember(
+    id: value['id']?.toString() ?? '',
+    name: value['name']?.toString() ?? 'Family member',
+  );
+}
+
+class SavedLinkItem {
+  const SavedLinkItem({
+    required this.id,
+    required this.title,
+    required this.url,
+    required this.domain,
+    required this.ownedByMe,
+    required this.createdAt,
+    this.categoryId,
+    this.categoryName,
+    this.sharedBy,
+    this.sharedWith = const [],
+  });
+  final String id, title, url, domain;
+  final bool ownedByMe;
+  final DateTime createdAt;
+  final String? categoryId, categoryName, sharedBy;
+  final List<SavedLinkMember> sharedWith;
+
+  factory SavedLinkItem.fromJson(Map value) => SavedLinkItem(
+    id: value['id']?.toString() ?? '',
+    title: value['title']?.toString() ?? 'Saved link',
+    url: value['url']?.toString() ?? '',
+    domain: value['source_host']?.toString() ?? '',
+    ownedByMe: value['owned_by_me'] == true,
+    createdAt:
+        DateTime.tryParse(value['created_at']?.toString() ?? '')?.toLocal() ??
+        DateTime.fromMillisecondsSinceEpoch(0),
+    categoryId: value['category_id']?.toString(),
+    categoryName: value['category_name']?.toString(),
+    sharedBy: value['shared_by']?.toString(),
+    sharedWith: _maps(value['shared_with'])
+        .map(SavedLinkMember.fromJson)
+        .where((member) => member.id.isNotEmpty)
+        .toList(),
+  );
+}
+
+class SavedLinksWorkspace {
+  const SavedLinksWorkspace({
+    required this.links,
+    required this.shareCandidates,
+  });
+  final List<SavedLinkItem> links;
+  final List<SavedLinkMember> shareCandidates;
+
+  factory SavedLinksWorkspace.fromJson(Map<String, dynamic> value) =>
+      SavedLinksWorkspace(
+        links: _maps(value['links']).map(SavedLinkItem.fromJson).toList(),
+        shareCandidates: _maps(value['share_candidates'])
+            .map(SavedLinkMember.fromJson)
+            .where((member) => member.id.isNotEmpty)
+            .toList(),
+      );
 }
 
 class LibraryData {

@@ -223,6 +223,14 @@ func main() {
 		telegramAPI.registerTransport(mux)
 		log.Print(telegramConfigurationSummary(telegramBotIdentity, telegramBotUsername))
 	}
+	smtp2goWebhook, smtp2goErr := newSMTP2GOWebhook(api, optionalEnv("SMTP2GO_WEBHOOK_TOKEN"), jwtSecret, nil)
+	if smtp2goErr != nil {
+		log.Fatalf("SMTP2GO webhook configuration invalid: %v", smtp2goErr)
+	}
+	if smtp2goWebhook != nil {
+		smtp2goWebhook.register(mux)
+		log.Print("SMTP2GO delivery-event webhook enabled")
+	}
 	mux.HandleFunc("/help/chat", newHelpChatHandler(allowedOrigin, optionalEnv("OLLAMA_BASE_URL"), optionalEnv("HELP_CHAT_MODEL"), nil))
 	driveGateway, driveErr := newDriveGateway(api, allowedOrigin, jwtSecret)
 	if driveErr != nil {

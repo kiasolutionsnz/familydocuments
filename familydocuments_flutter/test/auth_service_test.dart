@@ -45,6 +45,23 @@ http.Response token(String access, String refresh) => http.Response(
 String jwt(int seconds) =>
     'x.${base64Url.encode(utf8.encode(jsonEncode({'exp': DateTime.now().add(Duration(seconds: seconds)).millisecondsSinceEpoch ~/ 1000}))).replaceAll('=', '')}.x';
 void main() {
+  test('sign up sends profile details without creating a local session', () async {
+    final store = MemoryStore();
+    final auth = AuthService(
+      store: store,
+      client: FakeClient((request) async {
+        expect(request.url.path, '/auth/signup');
+        final body = jsonDecode(await request.finalize().bytesToString()) as Map;
+        expect(body['email'], 'ava@example.com');
+        expect(body['password'], 'a long secret password');
+        expect((body['data'] as Map)['display_name'], 'Ava');
+        return http.Response('{}', 200);
+      }),
+    );
+    await auth.signUp(' ava@example.com ', 'a long secret password', ' Ava ');
+    expect(auth.session, isNull);
+    expect(store.writes, 0);
+  });
   test('sign in stores only refresh token', () async {
     final s = MemoryStore();
     final a = AuthService(

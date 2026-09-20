@@ -29,28 +29,39 @@ test("server-renders the Family Documents SEO landing page", async () => {
   assert.match(html, /Review the email suggestion/i);
   assert.match(html, /Forward an email/i);
   assert.match(html, /Choose one-off or repeating/i);
-  assert.match(html, /For rental property owners/i);
+  assert.match(html, /Rentals inside Library/i);
   assert.match(html, /Organisation, not tax advice/i);
-  assert.match(html, /href="\/prototype\/index\.html#auth"/i);
+  assert.match(html, /href="\/app\/"/i);
+  assert.doesNotMatch(html, /href="\/prototype\//i);
+  assert.match(html, /Originals in your Google Drive/i);
+  assert.match(html, /Rentals inside Library/i);
   assert.match(html, /rel="canonical" href="https:\/\/familydocuments\.app"/i);
   assert.match(html, /property="og:image" content="https:\/\/familydocuments\.app\/og\.png"/i);
   assert.doesNotMatch(html, /codex-preview|Building your site|react-loading-skeleton/i);
 });
 
-test("publishes complete privacy and terms routes", async () => {
-  const [privacyResponse, termsResponse] = await Promise.all([render("/privacy"), render("/terms")]);
+test("publishes complete privacy, terms and account-deletion routes", async () => {
+  const [privacyResponse, termsResponse, deletionResponse] = await Promise.all([render("/privacy"), render("/terms"), render("/account-deletion")]);
   assert.equal(privacyResponse.status, 200);
   assert.equal(termsResponse.status, 200);
-  const [privacy, terms] = await Promise.all([privacyResponse.text(), termsResponse.text()]);
+  assert.equal(deletionResponse.status, 200);
+  const [privacy, terms, deletion] = await Promise.all([privacyResponse.text(), termsResponse.text(), deletionResponse.text()]);
   assert.match(privacy, /Privacy Policy/);
   assert.match(privacy, /drive\.file/);
   assert.match(privacy, /Google API Services User Data Policy/);
   assert.match(privacy, /does not request permission to scan or list your whole Drive/i);
-  assert.match(privacy, /support@familydocuments\.app/);
+  assert.match(privacy, /encrypted Google refresh credential/i);
+  assert.match(privacy, /Google Drive is the source of truth for original documents/i);
+  assert.match(privacy, /Confirmed Library records are available to active members/i);
+  assert.match(privacy, /contact@familydocuments\.app/);
+  assert.match(privacy, /account-deletion/);
   assert.match(terms, /Terms of Service/);
   assert.match(terms, /will not be charged unless you expressly choose a paid plan/i);
   assert.match(terms, /keep your own backup/i);
   assert.match(terms, /New Zealand law/i);
+  assert.match(deletion, /Delete your FamilyDocuments account/i);
+  assert.match(deletion, /does not delete any files or folders from Google Drive/i);
+  assert.match(deletion, /Delete account/i);
 });
 
 test("publishes indexable blog and FAQ routes with the scoped help assistant", async () => {

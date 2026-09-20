@@ -115,6 +115,32 @@ class AuthService {
     return s;
   }
 
+  Future<void> signUp(String email, String password, String name) async {
+    http.Response response;
+    try {
+      response = await _client
+          .post(
+            Uri.parse('$baseUrl/signup'),
+            headers: {'content-type': 'application/json'},
+            body: jsonEncode({
+              'email': email.trim(),
+              'password': password,
+              'data': {'display_name': name.trim()},
+            }),
+          )
+          .timeout(const Duration(seconds: 20));
+    } catch (_) {
+      throw AuthException(
+        'We could not reach FamilyDocuments. Please try again.',
+      );
+    }
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw AuthException(
+        'Account creation could not be completed. Check your details and try again.',
+      );
+    }
+  }
+
   Future<Session?> restore() async {
     final token = await _store.readRefreshToken();
     if (token == null) return null;

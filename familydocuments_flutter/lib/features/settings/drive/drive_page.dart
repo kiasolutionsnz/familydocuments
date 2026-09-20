@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../core/auth/auth_service.dart';
@@ -50,7 +51,21 @@ class _DrivePageState extends State<DrivePage> {
     } on AuthException catch (e) {
       if (mounted) setState(() => error = e.message);
     } on DriveException catch (e) {
-      if (mounted) setState(() => error = e.message);
+      if (mounted) {
+        setState(() {
+          error = e.message;
+          if (e.message == 'Reconnect Google Drive, then try again.' &&
+              connection != null) {
+            connection = DriveConnection(
+              state: DriveConnectionState.reconnectRequired,
+              familyId: connection!.familyId,
+              canManage: connection!.canManage,
+              folderName: connection!.folderName,
+              folderId: connection!.folderId,
+            );
+          }
+        });
+      }
     } catch (_) {
       if (mounted) {
         setState(
@@ -372,15 +387,8 @@ class _IdentityDialogState extends State<IdentityVerificationDialog> {
                 ],
               ),
             ],
-            TextField(
-              controller: code,
-              autofocus: setupKey == null,
-              keyboardType: TextInputType.number,
-              maxLength: 6,
-              decoration: const InputDecoration(
-                labelText: 'Authenticator code',
-              ),
-            ),
+            const SizedBox(height: 12),
+            _SixDigitCodeField(controller: code, autofocus: setupKey == null),
             if (error != null) Text(error!),
           ],
         ),
@@ -412,4 +420,109 @@ class _IdentityDialogState extends State<IdentityVerificationDialog> {
       ),
     ],
   );
+}
+
+class _SixDigitCodeField extends StatefulWidget {
+  const _SixDigitCodeField({required this.controller, this.autofocus = false});
+  final TextEditingController controller;
+  final bool autofocus;
+
+  @override
+  State<_SixDigitCodeField> createState() => _SixDigitCodeFieldState();
+}
+
+class _SixDigitCodeFieldState extends State<_SixDigitCodeField> {
+  final focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_changed);
+    focusNode.addListener(_changed);
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_changed);
+    focusNode.removeListener(_changed);
+    focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final value = widget.controller.text;
+    return Semantics(
+      label: 'Six-digit authenticator code',
+      textField: true,
+      child: GestureDetector(
+        onTap: focusNode.requestFocus,
+        child: Stack(
+          children: [
+            Opacity(
+              opacity: 0.01,
+              child: TextField(
+                key: const ValueKey('authenticator-code-input'),
+                controller: widget.controller,
+                focusNode: focusNode,
+                autofocus: widget.autofocus,
+                keyboardType: TextInputType.number,
+                autofillHints: const [AutofillHints.oneTimeCode],
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(6),
+                ],
+                decoration: const InputDecoration(counterText: ''),
+              ),
+            ),
+            IgnorePointer(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final boxWidth = ((constraints.maxWidth - 40) / 6).clamp(
+                    36.0,
+                    48.0,
+                  );
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: List.generate(6, (index) {
+                      final active =
+                          focusNode.hasFocus && index == value.length;
+                      return AnimatedContainer(
+                        key: ValueKey('authenticator-digit-$index'),
+                        duration: const Duration(milliseconds: 120),
+                        width: boxWidth,
+                        height: 56,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: active
+                                ? Theme.of(context).colorScheme.primary
+                                : const Color(0xffcbd5e1),
+                            width: active ? 2 : 1,
+                          ),
+                        ),
+                        child: Text(
+                          index < value.length ? value[index] : '',
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      );
+                    }),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

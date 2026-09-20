@@ -97,7 +97,7 @@ class _MessageBubble extends StatelessWidget {
     final error = message.kind == ConversationMessageKind.error;
     final progress = message.kind == ConversationMessageKind.progress;
     final background = user
-        ? const Color(0xff123f78)
+        ? const Color(0xff17202e)
         : error
         ? const Color(0xfffff2f2)
         : const Color(0xfff6f8fb);

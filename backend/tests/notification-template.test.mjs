@@ -6,7 +6,9 @@ test("renders a branded, mobile-friendly invitation with a safe action",()=>{
   const html=renderNotificationHtml({kind:"invitation",subject:"You’re invited to the Chauhan family",body_text:"Inder invited you to join.\nThis invitation expires on 02 Sep 2026."});
   assert.match(html,/Family Documents/);
   assert.match(html,/Open Family Documents/);
-  assert.match(html,/familydocuments\.app\/prototype\/index\.html#auth/);
+  assert.match(html,/familydocuments\.app\/app\//);
+  assert.match(html,/one-time family invitation, not a marketing subscription/);
+  assert.match(html,/support@familydocuments\.app/);
   assert.match(html,/viewport/);
   assert.doesNotMatch(html,/tracking|pixel/i);
 });
@@ -22,4 +24,6 @@ test("keeps reminder emails free of invitation actions",()=>{
   const html=renderNotificationHtml({kind:"reminder",subject:"Passport renewal",body_text:"Due tomorrow."});
   assert.match(html,/FAMILY REMINDER/);
   assert.doesNotMatch(html,/Open Family Documents/);
+  assert.match(html,/creator can change the reminder audience/);
+  assert.match(html,/want email delivery stopped/);
 });

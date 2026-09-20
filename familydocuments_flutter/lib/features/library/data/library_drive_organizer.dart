@@ -53,7 +53,8 @@ class LibraryDriveOrganizer {
       parent: root.id,
       name: 'Travel',
     );
-    final year = DateTime.tryParse(trip.startDate ?? '')?.year ?? DateTime.now().year;
+    final year =
+        DateTime.tryParse(trip.startDate ?? '')?.year ?? DateTime.now().year;
     final tripFolder = await _folder(
       key: 'trip:${trip.id}',
       kind: 'trip',
@@ -72,7 +73,9 @@ class LibraryDriveOrganizer {
     final connection = await drive.status();
     final rootId = connection.folderId;
     if (!connection.canSave || rootId == null || rootId.isEmpty) {
-      throw const DriveException('Connect the shared Family Drive before organising this record.');
+      throw const DriveException(
+        'Connect the shared Family Drive before organising this record.',
+      );
     }
     return _folder(
       key: 'library:root',

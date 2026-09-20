@@ -14,6 +14,15 @@ class FakeFeedback implements FeedbackRepository {
     'title': 'Open documents',
     'status': 'Needs clarification',
     'question': 'Tap the card or Open button?',
+    'latest_update': 'We need one detail.',
+    'unread': true,
+    'updates': <dynamic>[
+      {
+        'status': 'Needs clarification',
+        'message': 'We need one detail.',
+        'release_reference': null,
+      },
+    ],
     'can_withdraw': true,
     'replies': <dynamic>[],
   });
@@ -42,6 +51,9 @@ class FakeFeedback implements FeedbackRepository {
         'status': 'New',
         'question': '',
       });
+    }
+    if (operation == 'mark_read') {
+      this.ticket = FeedbackTicket({...this.ticket.data, 'unread': false});
     }
     return this.ticket;
   }
@@ -82,6 +94,10 @@ void main() {
       expect(controller.confirmation, isNotNull);
       await controller.confirm();
       expect(controller.messages.last.content, contains('Created FD-123'));
+      expect(
+        controller.messages.last.content,
+        contains('Thanks — I’ve added this for review'),
+      );
       expect(await controller.submit('Tap the card.'), true);
       expect(feedback.calls, ['create:', 'reply:123']);
       expect(
@@ -123,12 +139,15 @@ void main() {
       repository: MemoryConversationRepository(),
       feedback: f,
     );
-    expect(await c.submit(
-      'Feedback: viewer too small',
-      hasAttachment: true,
-      attachmentBytes: [1, 2, 3],
-      attachmentLabel: 'private.pdf',
-    ), true);
+    expect(
+      await c.submit(
+        'Feedback: viewer too small',
+        hasAttachment: true,
+        attachmentBytes: [1, 2, 3],
+        attachmentLabel: 'private.pdf',
+      ),
+      true,
+    );
     await c.confirm();
     expect(f.calls, ['create:']);
     expect(c.messages.last.data.containsKey('attachment_label'), false);
@@ -154,13 +173,16 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: FeedbackPage(repository: f)));
     await tester.pumpAndSettle();
     expect(find.text('My feedback'), findsOneWidget);
+    expect(find.text('New'), findsOneWidget);
     await tester.tap(find.text('FD-123: Open documents'));
     await tester.pumpAndSettle();
+    expect(find.text('Updates'), findsOneWidget);
+    expect(find.text('We need one detail.'), findsOneWidget);
     expect(find.text('Withdraw'), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'Tap the card');
     await tester.tap(find.text('Send reply'));
     await tester.pumpAndSettle(const Duration(milliseconds: 400));
-    expect(f.calls, ['detail:123', 'reply:123']);
+    expect(f.calls, ['mark_read:123', 'reply:123']);
   });
   testWidgets('temporary feedback error offers retry', (tester) async {
     final f = FakeFeedback()..fail = true;

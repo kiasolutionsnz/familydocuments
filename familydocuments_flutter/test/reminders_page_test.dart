@@ -75,6 +75,28 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Next bill'), findsOneWidget);
   });
+  testWidgets('a reminder change revision refreshes the visible list', (
+    tester,
+  ) async {
+    final service = Service();
+    await tester.pumpWidget(
+      MaterialApp(home: RemindersPage(service: service, refreshRevision: 0)),
+    );
+    await tester.pumpAndSettle();
+    service.items = [
+      ...service.items,
+      item('Newly added reminder', 'upcoming'),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(home: RemindersPage(service: service, refreshRevision: 1)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Newly added reminder'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('reminders-last-updated')),
+      findsOneWidget,
+    );
+  });
   testWidgets('failed retry stays recoverable without an unhandled exception', (
     tester,
   ) async {

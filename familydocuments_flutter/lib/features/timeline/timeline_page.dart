@@ -498,7 +498,7 @@ class _TimelineRow extends StatelessWidget {
                     style: TextStyle(
                       color: item.isFailed
                           ? const Color(0xffa72d2d)
-                          : const Color(0xff245cc5),
+                          : const Color(0xff5755c9),
                       fontWeight: FontWeight.w600,
                     ),
                   ),

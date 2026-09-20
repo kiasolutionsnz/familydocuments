@@ -510,6 +510,26 @@ void main() {
     );
   });
 
+  testWidgets('Home composer offers a document category selector', (t) async {
+    final auth = FakeAuth(
+      Session(
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        email: 'ava@example.com',
+        userId: 'u',
+      ),
+    );
+    await t.pumpWidget(
+      FamilyDocumentsApp(auth: auth, homeService: FakeHomeService(auth)),
+    );
+    await t.pump();
+    expect(
+      find.byKey(const ValueKey('composer-category-button')),
+      findsOneWidget,
+    );
+    expect(find.text('Category'), findsOneWidget);
+  });
+
   testWidgets('Home asks for an ambiguous reminder date', (t) async {
     final auth = FakeAuth(
       Session(

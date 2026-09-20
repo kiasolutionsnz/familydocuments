@@ -128,13 +128,23 @@ class LibraryService {
     }
   }
 
-  Future<LibraryCategory> createCategory(String name) async {
-    final response = await _post('/rest/rpc/create_category', {
+  Future<LibraryCategory> createCategory(
+    String name, {
+    String visibility = 'shared',
+  }) async {
+    final response = await _post('/rest/rpc/create_library_category', {
       'category_name': name.trim(),
+      'category_visibility': visibility,
     });
     if (response.statusCode != 200) {
-      throw const LibraryServiceException(
-        'That category could not be created. Try again.',
+      throw LibraryServiceException(
+        response.statusCode == 401 || response.statusCode == 403
+            ? visibility == 'shared'
+                  ? 'Security verification expired or you are not a Family admin. Verify again and retry.'
+                  : 'Your session expired. Sign in and try again.'
+            : response.statusCode == 409
+            ? 'A category with that name already exists.'
+            : 'That category could not be created. Try again.',
       );
     }
     final value = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
@@ -143,7 +153,67 @@ class LibraryService {
       name: value['name']?.toString() ?? name.trim(),
       count: 0,
       system: false,
+      visibility: value['visibility']?.toString() ?? visibility,
+      ownedByMe: value['owned_by_me'] == true,
     );
+  }
+
+  Future<SavedLinksWorkspace> savedLinksWorkspace({
+    String query = '',
+    String? categoryId,
+  }) async {
+    final response = await _post('/rest/rpc/saved_link_workspace', {
+      'search_query': query.trim().isEmpty ? null : query.trim(),
+      'category': categoryId,
+      'visibility': 'all',
+      'result_limit': 200,
+    });
+    if (response.statusCode != 200) {
+      throw const LibraryServiceException(
+        'Saved Links could not be loaded. Try again.',
+      );
+    }
+    try {
+      return SavedLinksWorkspace.fromJson(
+        Map<String, dynamic>.from(jsonDecode(response.body) as Map),
+      );
+    } catch (_) {
+      throw const LibraryServiceException(
+        'Saved Links returned an unexpected response.',
+      );
+    }
+  }
+
+  Future<void> setSavedLinkShares(String linkId, List<String> memberIds) =>
+      _savedLinkAction('set_saved_link_shares', {
+        'link': linkId,
+        'member_ids': memberIds,
+      });
+
+  Future<void> deleteSavedLink(String linkId) =>
+      _savedLinkAction('delete_saved_link', {'link': linkId});
+
+  Future<void> restoreSavedLink(String linkId) =>
+      _savedLinkAction('restore_saved_link', {'link': linkId});
+
+  Future<void> _savedLinkAction(
+    String operation,
+    Map<String, dynamic> body,
+  ) async {
+    final response = await _post('/rest/rpc/$operation', body);
+    if (response.statusCode == 401 ||
+        response.statusCode == 403 ||
+        response.statusCode == 404) {
+      throw const LibraryServiceException(
+        'You no longer have permission to change this link.',
+        accessRevoked: true,
+      );
+    }
+    if (response.statusCode != 200) {
+      throw const LibraryServiceException(
+        'That Saved Link change could not be saved. Try again.',
+      );
+    }
   }
 
   Future<void> createRentalProperty({

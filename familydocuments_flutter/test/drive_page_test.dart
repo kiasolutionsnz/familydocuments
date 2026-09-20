@@ -7,7 +7,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 class FakeDrive extends DriveRepository {
   DriveConnectionState state = DriveConnectionState.notConnected;
-  bool admin = true, fail = false;
+  bool admin = true, fail = false, reconnectOnCreate = false;
   int statusCalls = 0, connections = 0, selections = 0, disconnections = 0;
   final items = <DriveFolder>[
     const DriveFolder('synthetic-folder-1', 'Family files'),
@@ -35,8 +35,13 @@ class FakeDrive extends DriveRepository {
   @override
   Future<List<DriveFolder>> folders() async => items;
   @override
-  Future<DriveFolder> createFolder(String name) async =>
-      DriveFolder('created-folder', name);
+  Future<DriveFolder> createFolder(String name) async {
+    if (reconnectOnCreate) {
+      throw const DriveException('Reconnect Google Drive, then try again.');
+    }
+    return DriveFolder('created-folder', name);
+  }
+
   @override
   Future<void> selectFolder(String id) async {
     selections++;
@@ -103,7 +108,13 @@ Future<void> verify(WidgetTester tester) async {
   // The parent retains its in-flight guard while the verification dialog is open.
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
+  for (var index = 0; index < 6; index++) {
+    expect(find.byKey(ValueKey('authenticator-digit-$index')), findsOneWidget);
+  }
   await tester.enterText(find.byType(TextField), '123456');
+  await tester.pump();
+  expect(find.text('1'), findsOneWidget);
+  expect(find.text('6'), findsOneWidget);
   await tester.tap(find.text('Verify'));
   await tester.pumpAndSettle();
 }
@@ -192,6 +203,21 @@ void main() {
     await tester.tap(find.text('Refresh connection'));
     await tester.pumpAndSettle();
     expect(find.text('Not connected'), findsOneWidget);
+  });
+  testWidgets('expired Drive credential exposes the reconnect action', (
+    tester,
+  ) async {
+    final drive = FakeDrive()
+      ..state = DriveConnectionState.connected
+      ..reconnectOnCreate = true;
+    await mount(tester, drive);
+    await verify(tester);
+    await tester.tap(find.text('Create folder'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.pumpAndSettle();
+    expect(find.text('Reconnect Google Drive'), findsOneWidget);
+    expect(find.text('Connect Google Drive'), findsOneWidget);
   });
   testWidgets('disconnect requires explicit confirmation and reloads status', (
     tester,

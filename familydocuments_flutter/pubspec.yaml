@@ -1,5 +1,5 @@
 name: familydocuments_flutter
-description: "A new Flutter project."
+description: "Securely organise, find, and share your family's important documents."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -34,16 +34,22 @@ dependencies:
   flutter_secure_storage: ^10.0.0
   http: ^1.6.0
   crypto: ^3.0.7
+  image: ^4.9.2
   pdfrx: ^2.6.1
   qr_flutter: ^4.1.0
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+  cryptography: 2.9.0
+  cryptography_flutter: 2.3.4
+  path_provider: 2.1.6
+  local_auth: 3.0.2
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  msix: ^3.18.0
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -62,6 +68,22 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+msix_config:
+  display_name: FamilyDocuments
+  publisher_display_name: Wellidev
+  identity_name: Wellidev.FamilyDocuments
+  publisher: CN=454EFBB3-EA74-4E7C-B058-BDAB21D4F909
+  msix_version: 1.0.0.0
+  logo_path: assets/store/familydocuments-icon.png
+  capabilities: internetClient
+  languages: en-nz, en-us
+  architecture: x64
+  store: true
+  sign_msix: false
+  install_certificate: false
+  output_path: build/windows/store
+  output_name: FamilyDocuments-1.0.0-x64
 
   # To add assets to your application, add an assets section, like this:
   # assets:

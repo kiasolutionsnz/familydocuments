@@ -36,7 +36,7 @@ class _FeedbackPageState extends State<FeedbackPage> {
 
   Future<void> open(FeedbackTicket ticket) async {
     try {
-      ticket = await widget.repository.request('detail', ticket: ticket.id);
+      ticket = await widget.repository.request('mark_read', ticket: ticket.id);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -66,10 +66,51 @@ class _FeedbackPageState extends State<FeedbackPage> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(current.status),
+                  Row(
+                    children: [
+                      const Icon(Icons.feedback_outlined, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          current.status,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 12),
                   Text(current.data['original_feedback'] as String? ?? ''),
-                  Text(current.data['latest_update'] as String? ?? ''),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Updates',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 6),
+                  if (current.updates.isEmpty)
+                    Text(current.data['latest_update'] as String? ?? '')
+                  else
+                    for (final update in current.updates)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              update['status'] as String? ?? '',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            Text(update['message'] as String? ?? ''),
+                            if ((update['release_reference'] as String? ?? '')
+                                .isNotEmpty)
+                              Text(
+                                'Release evidence: ${update['release_reference']}',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                          ],
+                        ),
+                      ),
                   for (final entry in current.data['replies'] as List? ?? [])
                     Text((entry as Map)['body'] as String),
                   if (current.question.isNotEmpty) Text(current.question),
@@ -198,7 +239,12 @@ class _FeedbackPageState extends State<FeedbackPage> {
                       ),
                       isThreeLine: true,
                       onTap: () => open(ticket),
-                      trailing: const Icon(Icons.chevron_right),
+                      trailing: ticket.unread
+                          ? const Badge(
+                              label: Text('New'),
+                              child: Icon(Icons.chevron_right),
+                            )
+                          : const Icon(Icons.chevron_right),
                     ),
                 ],
               ),

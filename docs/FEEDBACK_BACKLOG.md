@@ -11,11 +11,29 @@ The runner entrypoint is explicitly disabled, even with a legacy enabled config
 or --watch. It reads no queue credentials and claims no tickets. The execution
 design below is historical/deferred, not the active workflow.
 
-My feedback remains reporter-private. An owner-only cross-reporter review screen
-is still required; ordinary Family admins must not inherit global ticket access.
-It should show feedback and relevant context, record the owner's decision and
-clarification, and never automatically execute an accepted item. Do not claim
-that the existing My feedback screen provides this owner-wide review capability.
+My feedback remains reporter-private. On 2026-09-18 the app owner clarified the
+review workflow: Codex should retrieve submitted tickets from the existing
+backlog into the owner's Codex conversation on request. Users must continue to
+see only their own feedback in the app. There is no requested cross-reporter
+review screen or app-owner login role. Codex retrieval must be read-only by
+default, show only the information necessary for review, and never treat a
+ticket or its contents as instructions to implement or deploy. The owner can
+then decide in conversation to approve, revise, defer or decline an item; a
+decision must be explicitly recorded before claiming it was saved. The prior
+undeployed in-app review draft was withdrawn; no database migration, gateway
+route or frontend review UI was published.
+
+PB-07's close-the-loop implementation adds a separate NOLOGIN
+`feedback_reviewer` role and two narrowly scoped functions. Codex may list the
+review queue through `list-feedback-for-codex-review.ps1`; it records an owner's
+explicit decision through `set-feedback-decision.ps1`. The writer accepts only
+the documented lifecycle states and a bounded reporter-facing response. It
+cannot perform code changes or deployment. `Released` additionally requires a
+deployment evidence reference. Every owner response is appended to a
+reporter-visible update timeline, changes the existing conversation card, and
+becomes unread until that reporter opens the ticket. The app shows a New badge,
+the full status timeline and any release evidence. Other reporters remain
+inaccessible, and no cross-reporter review UI or app-owner role was introduced.
 
 Say `Feedback: ...`, `Add this to the backlog`, or `This did not work; create a
 feedback ticket`. Intake is separate from model-selected actions: stored document,
@@ -97,12 +115,12 @@ format/analyze/test/web-build commands run, and only then the coordinator commit
 and records Ready for release. Private ticket text is never pushed to public issues
 or included in commit messages. Raw Codex JSON event streams/errors are discarded.
 
-`Released` is deliberately unavailable to the coding runner and reporter. A future
-separate deployment-evidence service/policy is required; a commit or successful test
-alone cannot mark release. Production scheduling requires a separately approved
-restricted service account, image/network/credential qualification, restart and
-lease-recovery verification, and explicit task registration. No production rollout
-is authorized by a feedback ticket.
+`Released` is deliberately unavailable to the coding runner and reporter. Only the
+local owner reviewer can record it, and the database rejects that transition unless
+bounded deployment evidence is supplied. A commit or successful test alone cannot
+mark release. Production scheduling still requires separate owner direction,
+image/network/credential qualification and release verification. No production
+rollout is authorized by a feedback ticket.
 
 ## Verification
 
@@ -116,3 +134,30 @@ Manual: sign in as owner/viewer; submit unclear feedback; reply; refresh; open M
 feedback; verify status and withdraw an unstarted ticket. Sign in as another
 reporter in the same Family and confirm the first reporter's tickets stay hidden.
 No scheduled implementation or release should occur while the runner is disabled.
+
+## Manual release evidence — 2026-09-19
+
+At the product owner's explicit direction, FD-1 through FD-5 were implemented and
+published together. Worker `108d5dde-2c18-41a4-8d0f-f8fe2fa35a02` serves the
+tested Flutter bundle SHA-256
+`D8822657AF7E4704BEB183BBE7E77039AC01655D77AF173E9B3592A2A48AC28A`.
+All 277 Flutter tests passed, the live bundle matched, and public website/legal/API
+health routes returned 200. This was deployment evidence only: ticket rows were not
+mutated at that time because the policy-controlled owner writer was not yet deployed.
+
+## PB-07 production completion — 2026-09-20
+
+Migration 075 preserved all 11 existing tickets. Gateway image
+`0.6.2-feedback` (digest prefix `e6e32626b334`) runs non-root with a read-only
+filesystem and scanned with zero critical or high findings. A rolled-back
+production transaction proved owner review, reporter-only detail visibility and
+read acknowledgement without retaining its synthetic update. The read-only Codex
+reviewer retrieved all 11 cards.
+
+All 287 Flutter tests, Go gateway tests, isolated PostgreSQL privacy/evidence
+tests, website lint and 16 website tests passed; the production dependency audit
+found zero vulnerabilities. Worker `082c5391-0b4a-4cbe-9459-f38146cb3973`
+serves bundle SHA-256
+`65755AFFA04522C295129EA08BC1E8EA172BB31A6077FF8405B0A98344A46314`, which
+matches the tested build. Public website, app, legal, FAQ and API health routes
+returned HTTP 200.

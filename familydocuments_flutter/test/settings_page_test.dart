@@ -25,7 +25,21 @@ class _TelegramRepository implements TelegramIntegrationRepository {
 }
 
 void main() {
-  testWidgets('opens the Telegram private-chat connection flow', (tester) async {
+  testWidgets('makes forwarding and allowed senders prominent', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(home: SettingsPage(auth: AuthService())),
+    );
+
+    expect(find.text('Email forwarding and allowed senders'), findsOneWidget);
+    expect(
+      find.text('Manage your forwarding address and trusted sender list'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('opens the Telegram private-chat connection flow', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         home: SettingsPage(
@@ -35,11 +49,17 @@ void main() {
       ),
     );
 
-    expect(find.text('Connect the FamilyDocuments bot privately'), findsOneWidget);
+    expect(
+      find.text('Connect the FamilyDocuments bot privately'),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(const ValueKey('telegram-integration')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Use the FamilyDocuments bot in a private Telegram chat.'), findsOneWidget);
+    expect(
+      find.text('Use the FamilyDocuments bot in a private Telegram chat.'),
+      findsOneWidget,
+    );
     expect(find.text('Connect Telegram'), findsOneWidget);
   });
 }

@@ -8,7 +8,10 @@ import '../../core/auth/auth_service.dart';
 
 // A dialog's result completes before its closing animation. Keep form
 // controllers alive until the route has actually removed its widgets.
-Future<void> showListDialog({required BuildContext context, required WidgetBuilder builder}) async {
+Future<void> showListDialog({
+  required BuildContext context,
+  required WidgetBuilder builder,
+}) async {
   final route = DialogRoute<void>(context: context, builder: builder);
   await Navigator.of(context, rootNavigator: true).push(route);
   await route.completed;

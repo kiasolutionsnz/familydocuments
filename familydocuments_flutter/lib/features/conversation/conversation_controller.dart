@@ -196,7 +196,9 @@ class ConversationController extends ChangeNotifier {
         if (startsWithFeedback(message)) {
           final request = feedbackRequestText(message);
           if (request.isEmpty) {
-            _showTransportFailure('Please describe the feedback you want to add.');
+            _showTransportFailure(
+              'Please describe the feedback you want to add.',
+            );
             return false;
           }
           _pendingFeedback = message;
@@ -254,7 +256,9 @@ class ConversationController extends ChangeNotifier {
             id: 'feedback-${result.id}',
             role: ConversationRole.assistant,
             kind: ConversationMessageKind.result,
-            content: '${explicit ? 'Created ' : 'Updated '}${result.summary}',
+            content: explicit
+                ? 'Thanks — I’ve added this for review. Created ${result.summary}'
+                : 'Thanks for the extra detail. Updated ${result.summary}',
             createdAt: _now(),
             data: {'feedback_ticket': result.data},
           ),
@@ -492,7 +496,8 @@ class ConversationController extends ChangeNotifier {
               id: 'feedback-${result.id}',
               role: ConversationRole.assistant,
               kind: ConversationMessageKind.result,
-              content: 'Created ${result.summary}',
+              content:
+                  'Thanks — I’ve added this for review and we’ll let you know when its status changes. Created ${result.summary}',
               createdAt: _now(),
               data: {'feedback_ticket': result.data},
             ),

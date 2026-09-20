@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:familydocuments_flutter/core/auth/auth_service.dart';
 import 'package:familydocuments_flutter/core/home/home_service.dart';
@@ -7,6 +8,7 @@ import 'package:familydocuments_flutter/features/library/data/library_service.da
 import 'package:familydocuments_flutter/features/library/library_navigation.dart';
 import 'package:familydocuments_flutter/features/library/library_page.dart';
 import 'package:familydocuments_flutter/features/library/models/library_models.dart';
+import 'package:familydocuments_flutter/features/library/offline/offline_travel_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -44,6 +46,54 @@ class _Navigation implements LibraryNavigation {
   void replace(LibraryLocation location) => open(location);
   @override
   void dispose() => controller.close();
+}
+
+class _OfflineStore implements OfflineTravelStore {
+  _OfflineStore({this.supported = true});
+  @override
+  final bool supported;
+  final values = <OfflineTravelDocument>[];
+  Uint8List? savedBytes;
+
+  @override
+  Future<List<OfflineTravelDocument>> list(String tripId) async =>
+      values.where((item) => item.tripId == tripId).toList();
+  @override
+  Future<List<OfflineTravelDocument>> listAll() async => values;
+  @override
+  Future<int> purgeExpired() async => 0;
+  @override
+  Future<OfflineTravelFile?> read(String documentId) async => null;
+  @override
+  Future<void> remove(String documentId) async {
+    values.removeWhere((item) => item.documentId == documentId);
+  }
+
+  @override
+  Future<void> save({
+    required String tripId,
+    required String tripTitle,
+    required String documentId,
+    required String title,
+    required String fileName,
+    required String mimeType,
+    required Uint8List bytes,
+    required DateTime expiresAt,
+  }) async {
+    savedBytes = bytes;
+    values.add(
+      OfflineTravelDocument(
+        documentId: documentId,
+        tripId: tripId,
+        tripTitle: tripTitle,
+        title: title,
+        fileName: fileName,
+        mimeType: mimeType,
+        savedAt: DateTime.now(),
+        expiresAt: expiresAt,
+      ),
+    );
+  }
 }
 
 final _now = DateTime(2027, 1, 20, 12);
@@ -205,12 +255,70 @@ class _Service extends LibraryService {
   LibraryData current;
   bool failLoad = false, failUpdate = false;
   int loadCalls = 0, updateCalls = 0;
+  List<String>? savedRecipients;
+  String? deletedLink, restoredLink;
 
   // PB-10 adds an optional trip workspace request alongside the established
   // Library data request. Keep this in-memory test double offline so existing
   // Library rendering tests exercise their intended fixtures.
   @override
   Future<Map<String, dynamic>> travelWorkspace() async => const {};
+
+  @override
+  Future<SavedLinksWorkspace> savedLinksWorkspace({
+    String query = '',
+    String? categoryId,
+  }) async {
+    final q = query.trim().toLowerCase();
+    return SavedLinksWorkspace(
+      links: current.links
+          .where(
+            (link) =>
+                (categoryId == null || link.categoryId == categoryId) &&
+                (q.isEmpty ||
+                    '${link.title} ${link.domain} ${link.category}'
+                        .toLowerCase()
+                        .contains(q)),
+          )
+          .map(
+            (link) => SavedLinkItem(
+              id: link.id,
+              title: link.title,
+              url: link.url,
+              domain: link.domain,
+              categoryId: link.categoryId,
+              categoryName: link.category,
+              ownedByMe: true,
+              createdAt: link.savedAt,
+              sharedWith: link.id == 'l1'
+                  ? const [SavedLinkMember(id: 'member-2', name: 'Sam')]
+                  : const [],
+            ),
+          )
+          .where((link) => link.id != deletedLink)
+          .toList(),
+      shareCandidates: const [
+        SavedLinkMember(id: 'member-2', name: 'Sam'),
+        SavedLinkMember(id: 'member-3', name: 'Taylor'),
+      ],
+    );
+  }
+
+  @override
+  Future<void> setSavedLinkShares(String linkId, List<String> memberIds) async {
+    savedRecipients = memberIds;
+  }
+
+  @override
+  Future<void> deleteSavedLink(String linkId) async {
+    deletedLink = linkId;
+  }
+
+  @override
+  Future<void> restoreSavedLink(String linkId) async {
+    restoredLink = linkId;
+    deletedLink = null;
+  }
 
   @override
   Future<LibraryData> load({
@@ -316,12 +424,38 @@ class _Service extends LibraryService {
   }
 
   @override
-  Future<LibraryCategory> createCategory(String name) async => LibraryCategory(
-    id: 'created',
-    name: name.trim(),
-    count: 0,
-    system: false,
-  );
+  Future<LibraryCategory> createCategory(
+    String name, {
+    String visibility = 'shared',
+  }) async {
+    final created = LibraryCategory(
+      id: 'created',
+      name: name.trim(),
+      count: 0,
+      system: false,
+      visibility: visibility,
+      ownedByMe: true,
+    );
+    current = LibraryData(
+      categories: [...current.categories, created],
+      documents: current.documents,
+      documentTotal: current.documentTotal,
+      documentCount: current.documentCount,
+      travelCount: current.travelCount,
+      rentalCount: current.rentalCount,
+      linkCount: current.linkCount,
+      tags: current.tags,
+      trips: current.trips,
+      travelRecords: current.travelRecords,
+      unassignedTravel: current.unassignedTravel,
+      rentals: current.rentals,
+      rentalRecords: current.rentalRecords,
+      unassignedRentals: current.unassignedRentals,
+      links: current.links,
+      linkCategories: current.linkCategories,
+    );
+    return created;
+  }
 
   @override
   Future<LibrarySource> source(String documentId) async => LibrarySource(
@@ -361,6 +495,7 @@ Widget _app(
   List<AnalysisJob> jobs = const [],
   LinkOpener? openLink,
   SourceDownloader? download,
+  OfflineTravelStore? offlineTravelStore,
 }) => MaterialApp(
   home: Scaffold(
     body: LibraryPage(
@@ -370,6 +505,7 @@ Widget _app(
       navigation: navigation,
       linkOpener: openLink,
       sourceDownloader: download,
+      offlineTravelStore: offlineTravelStore,
     ),
   ),
 );
@@ -404,6 +540,27 @@ void main() {
       expect(tester.takeException(), isNull);
     }
     addTearDown(tester.view.resetPhysicalSize);
+  });
+
+  testWidgets('new private category refreshes and opens in Library', (
+    tester,
+  ) async {
+    final service = _Service();
+    await tester.pumpWidget(_app(service));
+    await _settle(tester);
+
+    await tester.tap(find.byKey(const ValueKey('library-new-category')));
+    await _settle(tester);
+    await tester.enterText(
+      find.byKey(const ValueKey('new-category-name')),
+      'Health records',
+    );
+    await tester.tap(find.text('Continue'));
+    await _settle(tester);
+
+    expect(find.text('Health records'), findsWidgets);
+    expect(service.current.categories.last.visibility, 'private');
+    expect(service.current.categories.last.ownedByMe, isTrue);
   });
 
   testWidgets(
@@ -609,7 +766,9 @@ void main() {
       );
       await tester.pumpWidget(_app(emptyService));
       await _settle(tester);
-      expect(find.text('Nothing has been saved yet.'), findsOneWidget);
+      // Empty custom categories stay visible so users can open them and add
+      // their first document.
+      expect(find.textContaining('Medical'), findsOneWidget);
       final navigation = _Navigation(
         const LibraryLocation(LibrarySection.documents),
       );
@@ -655,6 +814,51 @@ void main() {
     expect(find.text('Rental insurance'), findsOneWidget);
   });
 
+  testWidgets('travel document can be explicitly kept offline on mobile', (
+    tester,
+  ) async {
+    final service = _Service();
+    final offline = _OfflineStore();
+    final navigation = _Navigation(
+      const LibraryLocation(LibrarySection.travel, itemId: 'trip-fiji'),
+    );
+    await tester.pumpWidget(
+      _app(service, navigation: navigation, offlineTravelStore: offline),
+    );
+    await _settle(tester);
+    expect(find.text('Offline travel pack'), findsOneWidget);
+    expect(find.text('Online only'), findsOneWidget);
+    await tester.tap(find.text('Keep offline').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Keep this document offline?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Keep offline'));
+    await tester.pumpAndSettle();
+    expect(offline.values.single.documentId, 'd3');
+    expect(offline.savedBytes, isNotEmpty);
+    expect(find.textContaining('Available until'), findsOneWidget);
+  });
+
+  testWidgets('web explains that secure offline packs require mobile', (
+    tester,
+  ) async {
+    final navigation = _Navigation(
+      const LibraryLocation(LibrarySection.travel, itemId: 'trip-fiji'),
+    );
+    await tester.pumpWidget(
+      _app(
+        _Service(),
+        navigation: navigation,
+        offlineTravelStore: _OfflineStore(supported: false),
+      ),
+    );
+    await _settle(tester);
+    expect(
+      find.textContaining('available in the FamilyDocuments mobile app'),
+      findsOneWidget,
+    );
+    expect(find.text('Keep offline'), findsNothing);
+  });
+
   testWidgets(
     'Saved Links group by category, filter, and open only through the safe callback',
     (tester) async {
@@ -676,7 +880,7 @@ void main() {
       await _settle(tester);
       expect(find.text('Travel'), findsOneWidget);
       expect(find.text('Recipes'), findsOneWidget);
-      expect(find.text('example.test'), findsOneWidget);
+      expect(find.text('example.test · Shared with 1'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('link-category-filter')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Recipes').last);
@@ -690,6 +894,39 @@ void main() {
       expect(opened, 'https://recipes.example.test/soup');
     },
   );
+
+  testWidgets('Saved Links owner can change recipients, delete, and undo', (
+    tester,
+  ) async {
+    final service = _Service();
+    final navigation = _Navigation(const LibraryLocation(LibrarySection.links));
+    await tester.pumpWidget(_app(service, navigation: navigation));
+    await _settle(tester);
+
+    await tester.tap(find.byTooltip('Manage Family travel guide'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Manage sharing'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sam'), findsOneWidget);
+    expect(find.text('Taylor'), findsOneWidget);
+    await tester.tap(find.text('Taylor'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Save sharing'));
+    await tester.pumpAndSettle();
+    expect(service.savedRecipients, containsAll(['member-2', 'member-3']));
+
+    await tester.tap(find.byTooltip('Manage Recipe notes'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+    expect(service.deletedLink, 'l2');
+    expect(find.text('Recipe notes'), findsNothing);
+    await tester.tap(find.text('Undo'));
+    await tester.pumpAndSettle();
+    expect(service.restoredLink, 'l2');
+    expect(find.text('Recipe notes'), findsOneWidget);
+  });
 
   testWidgets(
     'processing status is shared and completion updates one document without duplication',

@@ -123,6 +123,10 @@ try {
     catch (error) {if (attempt === 90) throw error; await new Promise(resolve => setTimeout(resolve, 500));}
   }
   await sql(`ALTER ROLE supabase_auth_admin PASSWORD '${password}'; ALTER ROLE authenticator PASSWORD '${password}';`, 'supabase_admin');
+  // Supabase production migrations legitimately transfer SECURITY DEFINER
+  // ownership to supabase_admin. The disposable postgres role needs only this
+  // isolated membership so migration replay matches production ownership.
+  await sql('GRANT supabase_admin TO postgres;', 'supabase_admin');
   await sql('CREATE SCHEMA IF NOT EXISTS extensions; CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;');
   await run('mail', images.mail, ['--network', networks[1], '--network-alias', 'mail', '-p', `127.0.0.1:${ports.MAIL}:8025`, '-p', `127.0.0.1:${ports.SMTP}:1025`, '--tmpfs', '/data:rw,size=64m', '-e', 'MP_MAX_MESSAGES=500']);
   await ready(`${env.FD_MAIL_URL}/api/v1/messages`);

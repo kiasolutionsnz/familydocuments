@@ -13,12 +13,12 @@ func TestFeedbackAuthenticatedStrictTransport(t *testing.T) {
 	calls := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.URL.Path != "/rpc/feedback_request" {
+		if r.URL.Path != "/rpc/feedback_request_v2" {
 			t.Fatal("wrong RPC")
 		}
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body["operation"] != "list" {
+		if body["operation"] != "list" && body["operation"] != "mark_read" {
 			t.Fatal("wrong shape")
 		}
 		jsonReply(w, 200, map[string]any{"tickets": []any{}})
@@ -36,6 +36,7 @@ func TestFeedbackAuthenticatedStrictTransport(t *testing.T) {
 		{"POST", `{"operation":"list","reporter_id":"forged"}`, conversationTestToken("fake", time.Now().Add(time.Hour)), 400},
 		{"POST", `{"operation":"Released"}`, conversationTestToken("fake", time.Now().Add(time.Hour)), 400},
 		{"POST", `{"operation":"list"}`, conversationTestToken("fake", time.Now().Add(time.Hour)), 200},
+		{"POST", `{"operation":"mark_read","ticket":"12"}`, conversationTestToken("fake", time.Now().Add(time.Hour)), 200},
 		{"OPTIONS", ``, "", 204},
 	} {
 		req := httptest.NewRequest(tc.method, "/conversation/feedback", strings.NewReader(tc.body))
@@ -48,7 +49,7 @@ func TestFeedbackAuthenticatedStrictTransport(t *testing.T) {
 			t.Fatalf("expected %d got %d", tc.status, out.Code)
 		}
 	}
-	if calls != 1 {
+	if calls != 2 {
 		t.Fatalf("unexpected upstream calls %d", calls)
 	}
 }

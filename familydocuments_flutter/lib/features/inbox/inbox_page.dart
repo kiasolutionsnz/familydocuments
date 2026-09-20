@@ -282,36 +282,103 @@ class InboxPageState extends State<InboxPage> {
     );
   }
 
-  Widget _item(InboxItem item) => Card(
-    margin: const EdgeInsets.only(bottom: 10),
-    child: ListTile(
+  Widget _item(InboxItem item) => Material(
+    color: item.reviewState == 'unreviewed'
+        ? const Color(0xfff7f6ff)
+        : Colors.white,
+    child: InkWell(
       onTap: () => _open(item.id),
-      title: Text(item.subject, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('${item.sender} · ${_date(item.receivedAt)}'),
-          if (item.preview.isNotEmpty)
-            Text(item.preview, maxLines: 2, overflow: TextOverflow.ellipsis),
-          Wrap(
-            spacing: 10,
-            children: [
-              Text(item.source),
-              if (item.attachmentCount > 0)
-                Text(
-                  '${item.attachmentCount} attachment${item.attachmentCount == 1 ? '' : 's'}',
-                ),
-              if (item.linkCount > 0)
-                Text('${item.linkCount} link${item.linkCount == 1 ? '' : 's'}'),
-              if (item.actions.isNotEmpty)
-                Text(
-                  '${item.actions.length} completed action${item.actions.length == 1 ? '' : 's'}',
-                ),
-            ],
-          ),
-        ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: Color(0xffe5e7eb))),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 10,
+              height: 10,
+              margin: const EdgeInsets.only(top: 6, right: 12),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: item.reviewState == 'unreviewed'
+                    ? const Color(0xff5755c9)
+                    : Colors.transparent,
+              ),
+            ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          item.sender,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: item.reviewState == 'unreviewed'
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        _date(item.receivedAt),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xff64748b),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    item.subject,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  if (item.preview.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      item.preview,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Color(0xff64748b)),
+                    ),
+                  ],
+                  if (item.attachmentCount > 0 || item.linkCount > 0) ...[
+                    const SizedBox(height: 7),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        if (item.attachmentCount > 0)
+                          _InboxMeta(
+                            Icons.attach_file,
+                            '${item.attachmentCount} attachment${item.attachmentCount == 1 ? '' : 's'}',
+                          ),
+                        if (item.linkCount > 0)
+                          _InboxMeta(
+                            Icons.link,
+                            '${item.linkCount} link${item.linkCount == 1 ? '' : 's'}',
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.only(top: 15),
+              child: Icon(Icons.chevron_right, color: Color(0xff94a3b8)),
+            ),
+          ],
+        ),
       ),
-      trailing: const Icon(Icons.chevron_right),
     ),
   );
 
@@ -955,6 +1022,31 @@ class _GroupTitle extends StatelessWidget {
     child: Text(
       text,
       style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+    ),
+  );
+}
+
+class _InboxMeta extends StatelessWidget {
+  const _InboxMeta(this.icon, this.label);
+  final IconData icon;
+  final String label;
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: const Color(0xffeef1f5),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: const Color(0xff64748b)),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12, color: Color(0xff475569)),
+        ),
+      ],
     ),
   );
 }

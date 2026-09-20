@@ -4,9 +4,15 @@ import 'data/reminder_service.dart';
 import 'models/reminder_models.dart';
 
 class RemindersPage extends StatefulWidget {
-  const RemindersPage({super.key, required this.service, this.onAddToList});
+  const RemindersPage({
+    super.key,
+    required this.service,
+    this.onAddToList,
+    this.refreshRevision = 0,
+  });
   final ReminderService service;
   final ValueChanged<ReminderItem>? onAddToList;
+  final int refreshRevision;
   @override
   State<RemindersPage> createState() => _RemindersPageState();
 }
@@ -16,6 +22,15 @@ class _RemindersPageState extends State<RemindersPage> {
   String _filter = 'upcoming';
   String? _workingId;
   bool _updatingDelivery = false;
+  DateTime? _lastLoadedAt;
+
+  @override
+  void didUpdateWidget(covariant RemindersPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.refreshRevision != oldWidget.refreshRevision) {
+      _reload();
+    }
+  }
 
   Future<void> _reload() async {
     setState(() {
@@ -24,6 +39,7 @@ class _RemindersPageState extends State<RemindersPage> {
     // FutureBuilder owns load errors, including retries and refresh after edits.
     try {
       await _dashboard;
+      if (mounted) setState(() => _lastLoadedAt = DateTime.now());
     } catch (_) {}
   }
 
@@ -96,6 +112,13 @@ class _RemindersPageState extends State<RemindersPage> {
               Text(
                 'Every reminder, in one place.',
                 style: Theme.of(context).textTheme.titleMedium,
+              ),
+              Text(
+                _lastLoadedAt == null
+                    ? 'Up to date'
+                    : 'Updated ${TimeOfDay.fromDateTime(_lastLoadedAt!).format(context)}',
+                key: const ValueKey('reminders-last-updated'),
+                style: Theme.of(context).textTheme.bodySmall,
               ),
               Card(
                 child: SwitchListTile(
@@ -180,7 +203,7 @@ class _RemindersPageState extends State<RemindersPage> {
     final working = _workingId == item.id;
     final subtitle = [
       item.categoryName,
-      MaterialLocalizations.of(context).formatMediumDate(item.dueAt),
+            _dueLabel(item),
       if (item.dueTime != null) item.dueTime,
       if (item.recurrence != 'none') item.recurrence,
       item.audience == 'family' ? 'Family' : 'Personal',
@@ -289,6 +312,16 @@ class _RemindersPageState extends State<RemindersPage> {
         ),
       ),
     );
+  }
+
+  String _dueLabel(ReminderItem item) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final due = DateTime(item.dueAt.year, item.dueAt.month, item.dueAt.day);
+    final days = due.difference(today).inDays;
+    if (days == 0) return 'Today';
+    if (days == 1) return 'Tomorrow';
+    return MaterialLocalizations.of(context).formatMediumDate(item.dueAt);
   }
 }
 

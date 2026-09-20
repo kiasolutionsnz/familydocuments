@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'core/auth/auth_service.dart';
 import 'core/home/home_intent.dart';
@@ -23,14 +23,22 @@ import 'features/library/data/library_drive_organizer.dart';
 import 'features/library/document_viewer.dart';
 import 'features/library/library_page.dart';
 import 'features/library/library_navigation.dart';
+import 'features/library/safe_open.dart';
 import 'features/library/models/library_models.dart';
+import 'features/library/offline/offline_travel_models.dart';
+import 'features/library/offline/offline_travel_store.dart';
+import 'features/library/offline/offline_travel_vault_page.dart';
+import 'features/library/offline/offline_vault_authenticator.dart';
+import 'features/library/offline/offline_vault_authenticator_models.dart';
 import 'features/reminders/data/reminder_service.dart';
 import 'features/reminders/reminders_page.dart';
 import 'features/lists/lists_page.dart';
 import 'features/settings/settings_page.dart';
+import 'features/settings/drive/drive_page.dart';
 import 'features/settings/drive/drive_service.dart';
 import 'features/feedback/feedback_service.dart';
 import 'features/feedback/feedback_page.dart';
+import 'features/profile/profile_page.dart';
 import 'features/timeline/data/timeline_service.dart';
 import 'features/timeline/timeline_page.dart';
 
@@ -47,6 +55,8 @@ class FamilyDocumentsApp extends StatefulWidget {
     this.pickUpload,
     this.destinationState,
     this.conversationRepository,
+    this.offlineTravelStore,
+    this.offlineVaultAuthenticator,
   });
   final AuthService? auth;
   final HomeService? homeService;
@@ -56,6 +66,8 @@ class FamilyDocumentsApp extends StatefulWidget {
   final Future<SelectedUpload?> Function()? pickUpload;
   final DestinationState? destinationState;
   final ConversationRepository? conversationRepository;
+  final OfflineTravelStore? offlineTravelStore;
+  final OfflineVaultAuthenticator? offlineVaultAuthenticator;
   @override
   State<FamilyDocumentsApp> createState() => _AppState();
 }
@@ -73,10 +85,14 @@ class _AppState extends State<FamilyDocumentsApp> {
   late final LibraryNavigation libraryNavigation;
   late final DestinationState destinationState;
   late final ConversationController conversationController;
+  late final OfflineVaultAuthenticator offlineVaultAuthenticator;
+  OfflineTravelStore? offlineTravelStore;
   StreamSubscription<PrimaryDestination>? destinationSubscription;
   late final bool ownsDestinationState;
   bool checking = true, signingIn = false, busy = false;
-  String? error, message, retryAction;
+  bool offlineMode = false;
+  String? error, registrationMessage, message, retryAction;
+  String? composerCategory;
   SearchResponse? searchResponse;
   OrganisedDocument? organisedDocument;
   String? suggestedDestination;
@@ -95,6 +111,7 @@ class _AppState extends State<FamilyDocumentsApp> {
   SavedLinkCategory? pendingLinkSaveCategory;
   final Set<String> notifiedAnalysisJobs = {};
   int tab = 0;
+  int remindersRevision = 0;
   final query = TextEditingController();
   @override
   void initState() {
@@ -108,6 +125,9 @@ class _AppState extends State<FamilyDocumentsApp> {
     driveService = DriveService(auth);
     libraryDriveOrganizer = LibraryDriveOrganizer(driveService);
     libraryNavigation = createLibraryNavigation();
+    offlineVaultAuthenticator =
+        widget.offlineVaultAuthenticator ?? createOfflineVaultAuthenticator();
+    offlineTravelStore = widget.offlineTravelStore;
     final injectedHarness =
         widget.auth != null ||
         widget.homeService != null ||
@@ -153,6 +173,11 @@ class _AppState extends State<FamilyDocumentsApp> {
     } else {
       destinationState.reset();
       tab = PrimaryDestination.home.index;
+      offlineTravelStore ??= await openLastOfflineTravelStore();
+      if (offlineTravelStore != null &&
+          !await offlineVaultAuthenticator.isSupported()) {
+        offlineTravelStore = null;
+      }
     }
     if (mounted) setState(() => checking = false);
   }
@@ -161,6 +186,7 @@ class _AppState extends State<FamilyDocumentsApp> {
     setState(() => signingIn = true);
     try {
       await auth.signIn(e, p);
+      TextInput.finishAutofillContext(shouldSave: true);
       destinationState.reset();
       tab = PrimaryDestination.home.index;
       try {
@@ -168,7 +194,33 @@ class _AppState extends State<FamilyDocumentsApp> {
         _bindConversationJobs();
       } catch (_) {}
       await _restoreAnalysisJobs();
-      if (mounted) setState(() => error = null);
+      if (mounted) {
+        setState(() {
+          error = null;
+          offlineMode = false;
+        });
+      }
+    } on AuthException catch (x) {
+      if (mounted) setState(() => error = x.message);
+    } finally {
+      if (mounted) setState(() => signingIn = false);
+    }
+  }
+
+  Future<void> signUp(String name, String e, String p) async {
+    setState(() {
+      signingIn = true;
+      error = null;
+      registrationMessage = null;
+    });
+    try {
+      await auth.signUp(e, p, name);
+      TextInput.finishAutofillContext(shouldSave: true);
+      if (mounted) {
+        setState(
+          () => registrationMessage = 'Confirmation sent. Check your inbox and spam folder, open the verification link, then sign in.',
+        );
+      }
     } on AuthException catch (x) {
       if (mounted) setState(() => error = x.message);
     } finally {
@@ -177,12 +229,17 @@ class _AppState extends State<FamilyDocumentsApp> {
   }
 
   Future<void> send() async {
-    final instruction = query.text.trim();
+    var instruction = query.text.trim();
     if (busy || conversationController.loading) return;
     // A typed clarification answer acts on the already-staged attachment.
     final hasAttachment =
         uploadedBytes != null &&
         conversationController.pendingClarificationId == null;
+    if (composerCategory != null && hasAttachment) {
+      instruction = instruction.isEmpty
+          ? 'Save this in $composerCategory'
+          : '$instruction. Save this in $composerCategory';
+    }
     final submitted = await conversationController.submit(
       instruction,
       hasAttachment: hasAttachment,
@@ -190,7 +247,48 @@ class _AppState extends State<FamilyDocumentsApp> {
       attachmentMimeType: uploadedMimeType,
       attachmentBytes: uploadedBytes,
     );
-    if (mounted && submitted) query.clear();
+    if (mounted && submitted) {
+      query.clear();
+      if (hasAttachment) setState(() => composerCategory = null);
+    }
+  }
+
+  Future<void> _chooseComposerCategory() async {
+    final context = navigatorKey.currentContext;
+    if (context == null) return;
+    try {
+      final workspace = await libraryService.load(limit: 1);
+      if (!context.mounted) return;
+      final choice = await showDialog<_CategoryPickerResult>(
+        context: context,
+        builder: (_) => _ComposerCategoryDialog(
+          categories: workspace.categories,
+          canCreate: true,
+        ),
+      );
+      if (choice == null) return;
+      if (!context.mounted) return;
+      var name = choice.name;
+      if (choice.create) {
+        if (choice.visibility == 'shared') {
+          final verified = await showDialog<bool>(
+            context: context,
+            builder: (_) => IdentityVerificationDialog(auth: auth),
+          );
+          if (verified != true) return;
+        }
+        name = (await libraryService.createCategory(
+          choice.name,
+          visibility: choice.visibility,
+        )).name;
+      }
+      if (mounted) setState(() => composerCategory = name);
+    } on LibraryServiceException catch (failure) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(failure.message)));
+      }
+    }
   }
 
   void _conversationChanged() {
@@ -206,6 +304,7 @@ class _AppState extends State<FamilyDocumentsApp> {
       organisedDocument = null;
       suggestedDestination = null;
       retryAction = null;
+      composerCategory = null;
     });
     await conversationController.newConversation();
   }
@@ -772,6 +871,9 @@ class _AppState extends State<FamilyDocumentsApp> {
     }
     try {
       final result = await _executeConversationAction(action);
+      if (action.type == ConversationActionType.createReminder && mounted) {
+        setState(() => remindersRevision++);
+      }
       return ConversationAuthoritativeOutcome(
         executionId: action.id,
         state: 'succeeded',
@@ -823,6 +925,12 @@ class _AppState extends State<FamilyDocumentsApp> {
       'reminders': 4,
     }[destination];
     if (destinationIndex != null) _selectTab(destinationIndex);
+
+    if (outcome.actionType == 'create_reminder' &&
+        outcome.state == 'succeeded' &&
+        mounted) {
+      setState(() => remindersRevision++);
+    }
 
     if (const {
           'save_document',
@@ -1071,7 +1179,7 @@ class _AppState extends State<FamilyDocumentsApp> {
     if (selected == null) return;
     SelectedUpload upload;
     try {
-      upload = prepareSelectedUpload(
+      upload = await preparePhotoUpload(
         name: selected.name,
         bytes: selected.bytes,
       );
@@ -1084,7 +1192,9 @@ class _AppState extends State<FamilyDocumentsApp> {
       uploadedName = upload.name;
       uploadedMimeType = upload.mimeType;
       uploadedBytes = upload.bytes;
-      message = null;
+      message = upload.optimized
+          ? 'Photo optimised for upload while keeping text readable.'
+          : null;
       analysisRequestId = null;
     });
   }
@@ -1097,7 +1207,11 @@ class _AppState extends State<FamilyDocumentsApp> {
     );
     if (result == null) return null;
     final file = result.files.single;
-    return prepareSelectedUpload(name: file.name, bytes: file.bytes);
+    return SelectedUpload(
+      name: file.name,
+      bytes: file.bytes ?? Uint8List(0),
+      mimeType: '',
+    );
   }
 
   Future<void> _sendAttachment() async {
@@ -1689,7 +1803,13 @@ class _AppState extends State<FamilyDocumentsApp> {
     tab = PrimaryDestination.home.index;
     setState(() => checking = true);
     await auth.signOut();
-    if (mounted) setState(() => checking = false);
+    offlineTravelStore ??= await openLastOfflineTravelStore();
+    if (mounted) {
+      setState(() {
+        checking = false;
+        offlineMode = false;
+      });
+    }
   }
 
   Future<void> selectFamily(String familyId) async {
@@ -1715,12 +1835,50 @@ class _AppState extends State<FamilyDocumentsApp> {
     title: 'FamilyDocuments',
     theme: ThemeData(
       useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xff245b52)),
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: const Color(0xff5755c9),
+        primary: const Color(0xff5755c9),
+        surface: const Color(0xfff6f4ee),
+      ),
+      scaffoldBackgroundColor: const Color(0xfff6f4ee),
+      appBarTheme: const AppBarTheme(backgroundColor: Color(0xfff6f4ee)),
+      cardTheme: CardThemeData(
+        color: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: Colors.white,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(0, 50),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
     ),
     home: checking
         ? const Scaffold(body: Center(child: Text('Checking your session…')))
+        : offlineMode && offlineTravelStore != null
+        ? OfflineTravelVaultPage(
+            store: offlineTravelStore!,
+            authenticator: offlineVaultAuthenticator,
+            onClose: () => setState(() => offlineMode = false),
+          )
         : auth.session == null
-        ? Login(onSubmit: signIn, busy: signingIn, error: error)
+        ? Login(
+            onSubmit: signIn,
+            onSignUp: signUp,
+            busy: signingIn,
+            error: error,
+            message: registrationMessage,
+            onOpenOffline: offlineTravelStore == null
+                ? null
+                : () => setState(() => offlineMode = true),
+          )
         : conversationController.familySelectionRequired
         ? FamilySelectionPage(
             families: conversationController.families,
@@ -1737,6 +1895,7 @@ class _AppState extends State<FamilyDocumentsApp> {
             libraryNavigation: libraryNavigation,
             inboxService: inboxService,
             reminderService: reminderService,
+            remindersRevision: remindersRevision,
             libraryDriveOrganizer: libraryDriveOrganizer,
             analysisJobs: analysisJobs.values.toList(),
             onRefreshAnalysis: refreshAnalysisJobs,
@@ -1761,6 +1920,10 @@ class _AppState extends State<FamilyDocumentsApp> {
             onCancelConversationClarification:
                 conversationController.cancelClarification,
             onMoreConversationCategories: _showConversationCategories,
+            composerCategory: composerCategory,
+            onChooseComposerCategory: _chooseComposerCategory,
+            onClearComposerCategory: () =>
+                setState(() => composerCategory = null),
             query: query,
             busy: busy,
             message: message,
@@ -1880,51 +2043,256 @@ class Login extends StatefulWidget {
   const Login({
     super.key,
     required this.onSubmit,
+    required this.onSignUp,
     required this.busy,
     this.error,
+    this.message,
+    this.onOpenOffline,
   });
   final Future<void> Function(String, String) onSubmit;
+  final Future<void> Function(String, String, String) onSignUp;
   final bool busy;
   final String? error;
+  final String? message;
+  final VoidCallback? onOpenOffline;
   @override
   State<Login> createState() => _LoginState();
 }
 
 class _LoginState extends State<Login> {
-  final email = TextEditingController(), password = TextEditingController();
+  final name = TextEditingController(),
+      email = TextEditingController(),
+      password = TextEditingController();
+  bool creating = false;
+  @override
+  void dispose() {
+    name.dispose();
+    email.dispose();
+    password.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext c) => Scaffold(
-    body: Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 380),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'FamilyDocuments',
-                style: Theme.of(c).textTheme.headlineMedium,
+    body: DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xfffbfaf6), Color(0xffefedff), Color(0xffe6f3ed)],
+        ),
+      ),
+      child: Center(
+        child: SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Card(
+                elevation: 16,
+                shadowColor: const Color(0x335755c9),
+                child: Padding(
+                  padding: const EdgeInsets.all(30),
+                  child: AutofillGroup(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Align(
+                          alignment: Alignment.centerLeft,
+                          child: CircleAvatar(
+                            radius: 22,
+                            backgroundColor: Color(0xff17202e),
+                            foregroundColor: Colors.white,
+                            child: Text(
+                              'FD',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        const Text(
+                          'FAMILY DOCUMENTS',
+                          style: TextStyle(
+                            color: Color(0xff5755c9),
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 1.6,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          creating
+                              ? 'Create your family space'
+                              : 'Welcome back',
+                          style: Theme.of(c).textTheme.headlineMedium?.copyWith(
+                            color: const Color(0xff17202e),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          creating
+                              ? 'Create an account, then confirm your email.'
+                              : 'Sign in to Family Documents.',
+                          style: const TextStyle(color: Color(0xff657083)),
+                        ),
+                        const SizedBox(height: 18),
+                        if (creating)
+                          TextField(
+                            controller: name,
+                            autofillHints: const [AutofillHints.name],
+                            textCapitalization: TextCapitalization.words,
+                            decoration: const InputDecoration(
+                              labelText: 'Your name',
+                            ),
+                          ),
+                        if (creating) const SizedBox(height: 14),
+                        TextField(
+                          controller: email,
+                          autofillHints: const [
+                            AutofillHints.email,
+                            AutofillHints.username,
+                          ],
+                          keyboardType: TextInputType.emailAddress,
+                          autocorrect: false,
+                          decoration: const InputDecoration(
+                            labelText: 'Email address',
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        TextField(
+                          controller: password,
+                          obscureText: true,
+                          autofillHints: [
+                            creating
+                                ? AutofillHints.newPassword
+                                : AutofillHints.password,
+                          ],
+                          autocorrect: false,
+                          decoration: const InputDecoration(
+                            labelText: 'Password',
+                          ),
+                        ),
+                        if (creating)
+                          const Padding(
+                            padding: EdgeInsets.only(top: 8),
+                            child: Text(
+                              'Use at least 14 characters. We will email you a confirmation link.',
+                            ),
+                          ),
+                        if (widget.error != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 12),
+                            child: Text(
+                              widget.error!,
+                              style: const TextStyle(color: Colors.red),
+                            ),
+                          ),
+                        if (widget.message != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 12),
+                            child: Text(widget.message!),
+                          ),
+                        const SizedBox(height: 20),
+                        FilledButton(
+                          onPressed: widget.busy
+                              ? null
+                              : () {
+                                  if (creating) {
+                                    if (name.text.trim().isEmpty ||
+                                        !email.text.contains('@') ||
+                                        password.text.length < 14) {
+                                      ScaffoldMessenger.of(c).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Enter your name, email, and a password of at least 14 characters.',
+                                          ),
+                                        ),
+                                      );
+                                      return;
+                                    }
+                                    widget.onSignUp(
+                                      name.text,
+                                      email.text,
+                                      password.text,
+                                    );
+                                  } else {
+                                    widget.onSubmit(
+                                      email.text.trim(),
+                                      password.text,
+                                    );
+                                  }
+                                },
+                          child: Text(
+                            widget.busy
+                                ? 'Please wait…'
+                                : creating
+                                ? 'Create account'
+                                : 'Sign in',
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: widget.busy
+                              ? null
+                              : () => setState(() {
+                                  creating = !creating;
+                                  password.clear();
+                                }),
+                          child: Text(
+                            creating
+                                ? 'Already have an account? Sign in'
+                                : 'Create account',
+                          ),
+                        ),
+                        if (!creating && widget.onOpenOffline != null) ...[
+                          const Divider(height: 28),
+                          OutlinedButton.icon(
+                            onPressed: widget.busy
+                                ? null
+                                : widget.onOpenOffline,
+                            icon: const Icon(Icons.offline_pin_outlined),
+                            label: const Text('Open offline travel pack'),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'No internet is required. Your phone will verify you before opening encrypted copies.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Color(0xff657083)),
+                          ),
+                        ],
+                        const Divider(height: 32),
+                        const Text(
+                          'One calm place for documents, reminders and family plans.',
+                          style: TextStyle(color: Color(0xff657083)),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 4,
+                          children: [
+                            TextButton(
+                              onPressed: () => openExternalLink(
+                                'https://familydocuments.app/terms',
+                              ),
+                              child: const Text('Terms'),
+                            ),
+                            TextButton(
+                              onPressed: () => openExternalLink(
+                                'https://familydocuments.app/privacy',
+                              ),
+                              child: const Text('Privacy'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
-              TextField(
-                controller: email,
-                decoration: const InputDecoration(labelText: 'Email'),
-              ),
-              TextField(
-                controller: password,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: 'Password'),
-              ),
-              if (widget.error != null)
-                Text(widget.error!, style: const TextStyle(color: Colors.red)),
-              FilledButton(
-                onPressed: widget.busy
-                    ? null
-                    : () => widget.onSubmit(email.text, password.text),
-                child: Text(widget.busy ? 'Signing in…' : 'Sign in'),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -1943,6 +2311,7 @@ class Shell extends StatelessWidget {
     required this.libraryNavigation,
     required this.inboxService,
     required this.reminderService,
+    required this.remindersRevision,
     required this.libraryDriveOrganizer,
     required this.analysisJobs,
     required this.onRefreshAnalysis,
@@ -1963,6 +2332,9 @@ class Shell extends StatelessWidget {
     required this.onConversationClarificationOption,
     required this.onCancelConversationClarification,
     required this.onMoreConversationCategories,
+    required this.composerCategory,
+    required this.onChooseComposerCategory,
+    required this.onClearComposerCategory,
     required this.query,
     required this.busy,
     required this.message,
@@ -2003,6 +2375,7 @@ class Shell extends StatelessWidget {
   final LibraryNavigation libraryNavigation;
   final InboxService inboxService;
   final ReminderService reminderService;
+  final int remindersRevision;
   final LibraryDriveOrganizer libraryDriveOrganizer;
   final List<AnalysisJob> analysisJobs;
   final Future<void> Function() onRefreshAnalysis;
@@ -2024,6 +2397,9 @@ class Shell extends StatelessWidget {
   onConversationClarificationOption;
   final Future<void> Function() onCancelConversationClarification;
   final Future<void> Function() onMoreConversationCategories;
+  final String? composerCategory;
+  final Future<void> Function() onChooseComposerCategory;
+  final VoidCallback onClearComposerCategory;
   final TextEditingController query;
   final bool busy;
   final String? message;
@@ -2055,7 +2431,14 @@ class Shell extends StatelessWidget {
   final String familyName;
   final Future<void> Function() onSignOut;
   final ValueChanged<InboxMessage> onDiscussInbox;
-  static const labels = ['Home', 'Timeline', 'Library', 'Inbox', 'Reminders', 'Lists'];
+  static const labels = [
+    'Home',
+    'Timeline',
+    'Library',
+    'Inbox',
+    'Reminders',
+    'Lists',
+  ];
   static const icons = [
     Icons.home_outlined,
     Icons.schedule_outlined,
@@ -2070,12 +2453,21 @@ class Shell extends StatelessWidget {
     tooltip: 'Open profile menu',
     icon: CircleAvatar(
       radius: 20,
-      backgroundColor: const Color(0xffdce8ff),
-      foregroundColor: const Color(0xff245cc5),
+      backgroundColor: const Color(0xffeeedff),
+      foregroundColor: const Color(0xff34327f),
       child: Text(_initials(email)),
     ),
     onSelected: (value) async {
       if (value == 'signout') onSignOut();
+      if (value == 'profile') {
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                ProfilePage(auth: auth, onAccountDeleted: onSignOut),
+          ),
+        );
+        return;
+      }
       if (value == 'feedback') {
         await Navigator.of(context).push(
           MaterialPageRoute(
@@ -2091,6 +2483,7 @@ class Shell extends StatelessWidget {
       }
     },
     itemBuilder: (_) => const [
+      PopupMenuItem(value: 'profile', child: Text('Profile')),
       PopupMenuItem(value: 'feedback', child: Text('My feedback')),
       PopupMenuItem(value: 'settings', child: Text('Settings')),
       PopupMenuItem(value: 'signout', child: Text('Sign out')),
@@ -2119,6 +2512,9 @@ class Shell extends StatelessWidget {
         onConversationClarificationOption: onConversationClarificationOption,
         onCancelConversationClarification: onCancelConversationClarification,
         onMoreConversationCategories: onMoreConversationCategories,
+        composerCategory: composerCategory,
+        onChooseComposerCategory: onChooseComposerCategory,
+        onClearComposerCategory: onClearComposerCategory,
         query: query,
         busy: busy,
         message: message,
@@ -2163,6 +2559,8 @@ class Shell extends StatelessWidget {
       ),
       2 => LibraryPage(
         service: libraryService,
+        auth: auth,
+        accountId: auth.session?.userId ?? 'local',
         navigation: libraryNavigation,
         processingJobs: analysisJobs,
         onRefreshProcessing: onRefreshAnalysis,
@@ -2182,12 +2580,15 @@ class Shell extends StatelessWidget {
       ),
       4 => RemindersPage(
         service: reminderService,
-        onAddToList: (item) => Navigator.of(c).push(MaterialPageRoute<void>(
-          builder: (_) => Scaffold(
-            appBar: AppBar(title: const Text('Copy to a family-shared list')),
-            body: ListsPage(auth: auth, initialTitle: item.title),
+        refreshRevision: remindersRevision,
+        onAddToList: (item) => Navigator.of(c).push(
+          MaterialPageRoute<void>(
+            builder: (_) => Scaffold(
+              appBar: AppBar(title: const Text('Copy to a family-shared list')),
+              body: ListsPage(auth: auth, initialTitle: item.title),
+            ),
           ),
-        )),
+        ),
       ),
       _ => ListsPage(auth: auth),
     };
@@ -2213,7 +2614,7 @@ class Shell extends StatelessWidget {
                       style: const TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xff17233a),
+                        color: Color(0xff17202e),
                       ),
                     ),
                     Text(
@@ -2250,7 +2651,7 @@ class Shell extends StatelessWidget {
       ],
     );
     return Scaffold(
-      backgroundColor: const Color(0xfffbfcfe),
+      backgroundColor: const Color(0xfff6f4ee),
       body: SafeArea(
         bottom: false,
         child: wide
@@ -2319,7 +2720,7 @@ class _DesktopSidebar extends StatelessWidget {
           children: [
             CircleAvatar(
               radius: 18,
-              backgroundColor: Color(0xff123f78),
+              backgroundColor: Color(0xff17202e),
               foregroundColor: Colors.white,
               child: Text('F', style: TextStyle(fontWeight: FontWeight.w700)),
             ),
@@ -2343,8 +2744,8 @@ class _DesktopSidebar extends StatelessWidget {
               color: Colors.transparent,
               child: ListTile(
                 selected: selected == index,
-                selectedTileColor: const Color(0xffeaf0ff),
-                selectedColor: const Color(0xff245cc5),
+                selectedTileColor: const Color(0xffeeedff),
+                selectedColor: const Color(0xff34327f),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -2361,7 +2762,7 @@ class _DesktopSidebar extends StatelessWidget {
           contentPadding: const EdgeInsets.symmetric(horizontal: 10),
           leading: CircleAvatar(
             radius: 18,
-            backgroundColor: const Color(0xffdce8ff),
+            backgroundColor: const Color(0xffcfe9df),
             child: Text(Shell._initials(email)),
           ),
           title: Text(
@@ -2396,6 +2797,9 @@ class Home extends StatelessWidget {
     required this.onConversationClarificationOption,
     required this.onCancelConversationClarification,
     required this.onMoreConversationCategories,
+    required this.composerCategory,
+    required this.onChooseComposerCategory,
+    required this.onClearComposerCategory,
     required this.query,
     required this.busy,
     required this.message,
@@ -2437,6 +2841,9 @@ class Home extends StatelessWidget {
   onConversationClarificationOption;
   final Future<void> Function() onCancelConversationClarification;
   final Future<void> Function() onMoreConversationCategories;
+  final String? composerCategory;
+  final Future<void> Function() onChooseComposerCategory;
+  final VoidCallback onClearComposerCategory;
   final TextEditingController query;
   final bool busy;
   final String? message;
@@ -2483,6 +2890,9 @@ class Home extends StatelessWidget {
           onClarificationOption: onConversationClarificationOption,
           onCancelClarification: onCancelConversationClarification,
           onMoreCategories: onMoreConversationCategories,
+          composerCategory: composerCategory,
+          onChooseComposerCategory: onChooseComposerCategory,
+          onClearComposerCategory: onClearComposerCategory,
           onSend: onSend,
           onUpload: onUpload,
           onClearAttachment: onClearAttachment,
@@ -2501,6 +2911,9 @@ class Home extends StatelessWidget {
           onSend: onSend,
           onUpload: onUpload,
           onClearAttachment: onClearAttachment,
+          composerCategory: composerCategory,
+          onChooseComposerCategory: onChooseComposerCategory,
+          onClearComposerCategory: onClearComposerCategory,
         );
       }
       return Center(
@@ -2519,7 +2932,7 @@ class Home extends StatelessWidget {
                     width: 48,
                     height: 48,
                     decoration: BoxDecoration(
-                      color: const Color(0xff123f78),
+                      color: const Color(0xff17202e),
                       borderRadius: BorderRadius.circular(16),
                     ),
                     child: const Icon(Icons.auto_awesome, color: Colors.white),
@@ -2532,7 +2945,7 @@ class Home extends StatelessWidget {
                       fontSize: 30,
                       height: 1.15,
                       fontWeight: FontWeight.w700,
-                      color: Color(0xff071a36),
+                      color: Color(0xff17202e),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -2757,6 +3170,28 @@ class Home extends StatelessWidget {
                         icon: const Icon(Icons.attach_file),
                       ),
                       const SizedBox(width: 4),
+                      if (composerCategory == null)
+                        OutlinedButton.icon(
+                          key: const ValueKey('composer-category-button'),
+                          onPressed: busy ? null : onChooseComposerCategory,
+                          icon: const Icon(Icons.folder_outlined),
+                          label: const Text('Category'),
+                        )
+                      else
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 140),
+                          child: InputChip(
+                            key: const ValueKey('composer-category-chip'),
+                            avatar: const Icon(Icons.folder_outlined, size: 17),
+                            label: Text(
+                              composerCategory!,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onPressed: busy ? null : onChooseComposerCategory,
+                            onDeleted: busy ? null : onClearComposerCategory,
+                          ),
+                        ),
+                      const SizedBox(width: 4),
                       Expanded(
                         child: TextField(
                           controller: query,
@@ -2772,7 +3207,7 @@ class Home extends StatelessWidget {
                         onPressed: busy ? null : onSend,
                         tooltip: 'Send',
                         style: IconButton.styleFrom(
-                          backgroundColor: const Color(0xff123f78),
+                          backgroundColor: const Color(0xff17202e),
                           foregroundColor: Colors.white,
                         ),
                         icon: const Icon(Icons.send_outlined),
@@ -2835,6 +3270,9 @@ class _ActiveConversation extends StatefulWidget {
     required this.onClarificationOption,
     required this.onCancelClarification,
     required this.onMoreCategories,
+    required this.composerCategory,
+    required this.onChooseComposerCategory,
+    required this.onClearComposerCategory,
     required this.onSend,
     required this.onUpload,
     required this.onClearAttachment,
@@ -2855,6 +3293,9 @@ class _ActiveConversation extends StatefulWidget {
   onClarificationOption;
   final Future<void> Function() onCancelClarification;
   final Future<void> Function() onMoreCategories;
+  final String? composerCategory;
+  final Future<void> Function() onChooseComposerCategory;
+  final VoidCallback onClearComposerCategory;
   final VoidCallback onSend, onUpload, onClearAttachment;
 
   @override
@@ -2946,6 +3387,9 @@ class _ActiveConversationState extends State<_ActiveConversation> {
                 busy: widget.loading,
                 onSend: widget.onSend,
                 onUpload: widget.onUpload,
+                category: widget.composerCategory,
+                onChooseCategory: widget.onChooseComposerCategory,
+                onClearCategory: widget.onClearComposerCategory,
               ),
             ),
           ],
@@ -2956,9 +3400,14 @@ class _ActiveConversationState extends State<_ActiveConversation> {
 }
 
 class _CategoryPickerResult {
-  const _CategoryPickerResult(this.name, {this.create = false});
+  const _CategoryPickerResult(
+    this.name, {
+    this.create = false,
+    this.visibility = 'shared',
+  });
   final String name;
   final bool create;
+  final String visibility;
 }
 
 class _ConversationCategoryDialog extends StatefulWidget {
@@ -3050,6 +3499,173 @@ class _ConversationCategoryDialogState
   }
 }
 
+class _ComposerCategoryDialog extends StatefulWidget {
+  const _ComposerCategoryDialog({
+    required this.categories,
+    required this.canCreate,
+  });
+  final List<LibraryCategory> categories;
+  final bool canCreate;
+
+  @override
+  State<_ComposerCategoryDialog> createState() =>
+      _ComposerCategoryDialogState();
+}
+
+class _ComposerCategoryDialogState extends State<_ComposerCategoryDialog> {
+  final search = TextEditingController();
+  @override
+  void dispose() {
+    search.dispose();
+    super.dispose();
+  }
+
+  Future<void> _createCategory() async {
+    final controller = TextEditingController(text: search.text.trim());
+    var visibility = 'private';
+    final result = await showDialog<_CategoryPickerResult>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('New category'),
+          content: SizedBox(
+            width: 460,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  key: const ValueKey('new-composer-category-name'),
+                  controller: controller,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: 'Category name'),
+                ),
+                const SizedBox(height: 12),
+                RadioGroup<String>(
+                  groupValue: visibility,
+                  onChanged: (value) =>
+                      setDialogState(() => visibility = value!),
+                  child: const Column(
+                    children: [
+                      RadioListTile<String>(
+                        value: 'private',
+                        title: Text('Private to me'),
+                        subtitle: Text(
+                          'Only you see this category in the Library. The connected Google Drive owner can still access stored files.',
+                        ),
+                      ),
+                      RadioListTile<String>(
+                        value: 'shared',
+                        title: Text('Share with Family'),
+                        subtitle: Text(
+                          'Visible to active Family members. Security verification is required.',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final value = controller.text.trim();
+                if (value.isNotEmpty) {
+                  Navigator.pop(
+                    dialogContext,
+                    _CategoryPickerResult(
+                      value,
+                      create: true,
+                      visibility: visibility,
+                    ),
+                  );
+                }
+              },
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (result != null && mounted) {
+      Navigator.pop(context, result);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final needle = search.text.trim().toLowerCase();
+    final categories = widget.categories
+        .where((item) => item.name.toLowerCase().contains(needle))
+        .toList();
+    final exact = widget.categories.any(
+      (item) => item.name.toLowerCase() == needle,
+    );
+    return AlertDialog(
+      key: const ValueKey('composer-category-dialog'),
+      title: const Text('Choose document category'),
+      content: SizedBox(
+        width: 460,
+        height: 380,
+        child: Column(
+          children: [
+            TextField(
+              controller: search,
+              autofocus: true,
+              decoration: const InputDecoration(
+                hintText: 'Search or name a category',
+                prefixIcon: Icon(Icons.search),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: categories.isEmpty
+                  ? const Center(child: Text('No matching category.'))
+                  : ListView(
+                      children: [
+                        for (final item in categories)
+                          ListTile(
+                            leading: const Icon(Icons.folder_outlined),
+                            title: Text(item.name),
+                            onTap: () => Navigator.pop(
+                              context,
+                              _CategoryPickerResult(item.name),
+                            ),
+                          ),
+                      ],
+                    ),
+            ),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'This applies to your next attached document. If you do not choose one, FamilyDocuments will suggest a category.',
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        if (widget.canCreate)
+          TextButton(
+            key: const ValueKey('new-composer-category'),
+            onPressed: exact ? null : _createCategory,
+            child: const Text('+ New category'),
+          ),
+      ],
+    );
+  }
+}
+
 class _InitialConversation extends StatelessWidget {
   const _InitialConversation({
     required this.query,
@@ -3058,10 +3674,16 @@ class _InitialConversation extends StatelessWidget {
     required this.onSend,
     required this.onUpload,
     required this.onClearAttachment,
+    required this.composerCategory,
+    required this.onChooseComposerCategory,
+    required this.onClearComposerCategory,
   });
   final TextEditingController query;
   final bool busy;
   final String? uploadedName;
+  final String? composerCategory;
+  final Future<void> Function() onChooseComposerCategory;
+  final VoidCallback onClearComposerCategory;
   final VoidCallback onSend, onUpload, onClearAttachment;
 
   @override
@@ -3078,7 +3700,7 @@ class _InitialConversation extends StatelessWidget {
               style: TextStyle(
                 fontSize: 28,
                 fontWeight: FontWeight.w600,
-                color: Color(0xff071a36),
+                color: Color(0xff17202e),
               ),
             ),
             const SizedBox(height: 28),
@@ -3099,6 +3721,9 @@ class _InitialConversation extends StatelessWidget {
               busy: busy,
               onSend: onSend,
               onUpload: onUpload,
+              category: composerCategory,
+              onChooseCategory: onChooseComposerCategory,
+              onClearCategory: onClearComposerCategory,
             ),
             const SizedBox(height: 26),
             ...[
@@ -3135,9 +3760,15 @@ class _ConversationComposer extends StatelessWidget {
     required this.busy,
     required this.onSend,
     required this.onUpload,
+    required this.category,
+    required this.onChooseCategory,
+    required this.onClearCategory,
   });
   final TextEditingController query;
   final bool busy;
+  final String? category;
+  final Future<void> Function() onChooseCategory;
+  final VoidCallback onClearCategory;
   final VoidCallback onSend, onUpload;
 
   @override
@@ -3163,6 +3794,25 @@ class _ConversationComposer extends StatelessWidget {
           icon: const Icon(Icons.add),
         ),
         const SizedBox(width: 4),
+        if (category == null)
+          OutlinedButton.icon(
+            key: const ValueKey('composer-category-button'),
+            onPressed: busy ? null : onChooseCategory,
+            icon: const Icon(Icons.folder_outlined),
+            label: const Text('Category'),
+          )
+        else
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 140),
+            child: InputChip(
+              key: const ValueKey('composer-category-chip'),
+              avatar: const Icon(Icons.folder_outlined, size: 17),
+              label: Text(category!, overflow: TextOverflow.ellipsis),
+              onPressed: busy ? null : onChooseCategory,
+              onDeleted: busy ? null : onClearCategory,
+            ),
+          ),
+        const SizedBox(width: 4),
         Expanded(
           child: TextField(
             controller: query,
@@ -3178,7 +3828,7 @@ class _ConversationComposer extends StatelessWidget {
           onPressed: busy ? null : onSend,
           tooltip: 'Send',
           style: IconButton.styleFrom(
-            backgroundColor: const Color(0xff123f78),
+            backgroundColor: const Color(0xff17202e),
             foregroundColor: Colors.white,
           ),
           icon: const Icon(Icons.send_outlined),
