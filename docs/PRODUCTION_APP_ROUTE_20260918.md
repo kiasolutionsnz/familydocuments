@@ -67,3 +67,25 @@ reporter visibility and mark-read behavior. Worker version
 live hash matched, and `/`, `/app/`, `/privacy`, `/terms`, `/faq` and API health
 returned HTTP 200. Worker `8b1a7299-27f8-429a-861a-1ae7345fdb68` and gateway
 image `0.6.1-notifications` remain the immediate rollback references.
+
+## Inbox and Reminders resilience release — 2026-09-22
+
+Inbox and Reminders now place bounded time limits around remote requests and
+recover once from temporary dashboard failures. Inbox also keeps the email view
+available when the optional Telegram feed is unavailable. This prevents the
+mobile experience from remaining indefinitely on a loading or retry state when
+a transient network/TLS request fails.
+
+The focused Inbox, Reminders and page-widget regression suite passed, and the
+signed Android release build `1.0.1+2` was installed and visually verified on
+the Android emulator while signed in to the demo family. The canonical
+production Worker version `4db0222c-fa15-4645-a2c9-49ce022e896e` serves bundle
+SHA-256 `19CC83E791F0BFCDDD648733AD3153F08689A9652EE4DEEB57F61F9E5F41753E`.
+Public `/`, `/app/`, `/faq`, `/privacy`, `/terms`, and API health all returned
+HTTP 200, and the live app bundle hash matched the tested build. Worker
+`0bc084f6-c7cc-4b16-920a-a07e4d5e8aab` remains the immediate rollback reference.
+
+The Android App Bundle has been uploaded into the Google Play production draft.
+Its public rollout remains subject to the outstanding Google Play compliance
+declarations and review workflow; this record does not claim that the store
+release is live.

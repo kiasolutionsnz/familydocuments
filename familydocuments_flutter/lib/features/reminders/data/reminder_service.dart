@@ -11,41 +11,63 @@ class ReminderServiceException implements Exception {
 }
 
 class ReminderService {
-  ReminderService(this._auth, {http.Client? client})
-    : _client = client ?? http.Client();
+  ReminderService(
+    this._auth, {
+    http.Client? client,
+    Duration requestTimeout = const Duration(seconds: 10),
+    Duration retryDelay = const Duration(milliseconds: 300),
+  }) : _client = client ?? http.Client(),
+       _requestTimeout = requestTimeout,
+       _retryDelay = retryDelay;
   final AuthService _auth;
   final http.Client _client;
+  final Duration _requestTimeout;
+  final Duration _retryDelay;
 
   Future<http.Response> _post(
     String operation,
-    Map<String, dynamic> body,
-  ) async {
-    Future<http.Response> send() async => _client.post(
-      Uri.parse('$familyDocumentsApiBaseUrl/rest/rpc/$operation'),
-      headers: {
-        'authorization': 'Bearer ${await _auth.validAccessToken()}',
-        'content-type': 'application/json',
-      },
-      body: jsonEncode(body),
-    );
-    try {
-      var response = await send();
-      if (response.statusCode == 401) {
-        await _auth.refresh();
-        response = await send();
+    Map<String, dynamic> body, {
+    bool retryTransientFailure = false,
+    Duration? timeout,
+  }) async {
+    Future<http.Response> send() async => _client
+        .post(
+          Uri.parse('$familyDocumentsApiBaseUrl/rest/rpc/$operation'),
+          headers: {
+            'authorization': 'Bearer ${await _auth.validAccessToken()}',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(timeout ?? _requestTimeout);
+    for (var attempt = 0; ; attempt++) {
+      try {
+        var response = await send();
+        if (response.statusCode == 401) {
+          await _auth.refresh();
+          response = await send();
+        }
+        return response;
+      } on AuthException {
+        rethrow;
+      } catch (_) {
+        if (retryTransientFailure && attempt == 0) {
+          await Future<void>.delayed(_retryDelay);
+          continue;
+        }
+        throw const ReminderServiceException(
+          'Reminders could not be reached. Try again.',
+        );
       }
-      return response;
-    } on AuthException {
-      rethrow;
-    } catch (_) {
-      throw const ReminderServiceException(
-        'Reminders could not be reached. Try again.',
-      );
     }
   }
 
   Future<ReminderDashboard> load() async {
-    final dashboardResponse = await _post('reminder_dashboard', const {});
+    final dashboardResponse = await _post(
+      'reminder_dashboard',
+      const {},
+      retryTransientFailure: true,
+    );
     if (dashboardResponse.statusCode != 200) {
       throw const ReminderServiceException(
         'Reminders could not be loaded. Try again.',
@@ -63,6 +85,7 @@ class ReminderService {
         final settingsResponse = await _post(
           'reminder_delivery_settings',
           const {},
+          timeout: const Duration(seconds: 6),
         );
         if (settingsResponse.statusCode == 200) {
           settings = jsonDecode(settingsResponse.body) as Map;

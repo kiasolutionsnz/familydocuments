@@ -12,33 +12,54 @@ class InboxServiceException implements Exception {
 }
 
 class InboxService {
-  InboxService(this._auth, {http.Client? client})
-    : _client = client ?? http.Client();
+  InboxService(
+    this._auth, {
+    http.Client? client,
+    Duration requestTimeout = const Duration(seconds: 10),
+    Duration retryDelay = const Duration(milliseconds: 300),
+  }) : _client = client ?? http.Client(),
+       _requestTimeout = requestTimeout,
+       _retryDelay = retryDelay;
   final AuthService _auth;
   final http.Client _client;
+  final Duration _requestTimeout;
+  final Duration _retryDelay;
 
-  Future<http.Response> _post(String path, Map<String, dynamic> body) async {
-    Future<http.Response> send() async => _client.post(
-      Uri.parse('$familyDocumentsApiBaseUrl$path'),
-      headers: {
-        'authorization': 'Bearer ${await _auth.validAccessToken()}',
-        'content-type': 'application/json',
-      },
-      body: jsonEncode(body),
-    );
-    try {
-      var response = await send();
-      if (response.statusCode == 401) {
-        await _auth.refresh();
-        response = await send();
+  Future<http.Response> _post(
+    String path,
+    Map<String, dynamic> body, {
+    bool retryTransientFailure = false,
+    Duration? timeout,
+  }) async {
+    Future<http.Response> send() async => _client
+        .post(
+          Uri.parse('$familyDocumentsApiBaseUrl$path'),
+          headers: {
+            'authorization': 'Bearer ${await _auth.validAccessToken()}',
+            'content-type': 'application/json',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(timeout ?? _requestTimeout);
+    for (var attempt = 0; ; attempt++) {
+      try {
+        var response = await send();
+        if (response.statusCode == 401) {
+          await _auth.refresh();
+          response = await send();
+        }
+        return response;
+      } on AuthException {
+        rethrow;
+      } catch (_) {
+        if (retryTransientFailure && attempt == 0) {
+          await Future<void>.delayed(_retryDelay);
+          continue;
+        }
+        throw const InboxServiceException(
+          'Inbox could not be reached. Try again.',
+        );
       }
-      return response;
-    } on AuthException {
-      rethrow;
-    } catch (_) {
-      throw const InboxServiceException(
-        'Inbox could not be reached. Try again.',
-      );
     }
   }
 
@@ -55,7 +76,7 @@ class InboxService {
       'state_filter': effectiveFilter.name,
       'result_limit': limit,
       'result_offset': offset,
-    });
+    }, retryTransientFailure: true);
     if (response.statusCode != 200) {
       throw const InboxServiceException(
         'Inbox could not be loaded. Try again.',
@@ -66,15 +87,20 @@ class InboxService {
       if (filter == InboxFilter.links) {
         return email;
       }
-      final telegramResponse = await _post(
-        '/rest/rpc/telegram_inbox_workspace',
-        {
+      http.Response telegramResponse;
+      try {
+        // Telegram is an enhancement to the main Inbox. It must not leave all
+        // email items behind a spinner while its separate service is slow.
+        telegramResponse = await _post('/rest/rpc/telegram_inbox_workspace', {
           'search_query': query.trim().isEmpty ? null : query.trim(),
           'state_filter': effectiveFilter.name,
           'result_limit': limit,
           'result_offset': offset,
-        },
-      );
+        }, timeout: const Duration(seconds: 6));
+      } on InboxServiceException {
+        if (telegramOnly) rethrow;
+        return email;
+      }
       if (telegramResponse.statusCode != 200) {
         if (telegramOnly) {
           throw const InboxServiceException(

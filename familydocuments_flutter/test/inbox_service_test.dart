@@ -96,6 +96,22 @@ class _Client extends http.BaseClient {
   }
 }
 
+class _TransientClient extends _Client {
+  var failuresRemaining = 1;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    if (request.url.path == '/rest/rpc/inbox_workspace' &&
+        failuresRemaining > 0) {
+      failuresRemaining--;
+      return Future<http.StreamedResponse>.error(
+        http.ClientException('synthetic transient failure', request.url),
+      );
+    }
+    return super.send(request);
+  }
+}
+
 void main() {
   test('loads predictable Inbox query and filter parameters', () async {
     final client = _Client();
@@ -124,6 +140,18 @@ void main() {
       client.requests.map((item) => item.url.path),
       contains('/rest/rpc/telegram_inbox_workspace'),
     );
+  });
+
+  test('retries a transient Inbox dashboard request once', () async {
+    final client = _TransientClient();
+    final data = await InboxService(
+      _Auth(),
+      client: client,
+      retryDelay: Duration.zero,
+    ).load();
+
+    expect(data.items, isNotEmpty);
+    expect(client.failuresRemaining, 0);
   });
 
   test('loads safe message detail', () async {

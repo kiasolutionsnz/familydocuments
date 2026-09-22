@@ -45,6 +45,22 @@ class _Client extends http.BaseClient {
   }
 }
 
+class _TransientClient extends _Client {
+  var failuresRemaining = 1;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    if (request.url.path == '/rest/rpc/reminder_dashboard' &&
+        failuresRemaining > 0) {
+      failuresRemaining--;
+      return Future<http.StreamedResponse>.error(
+        http.ClientException('synthetic transient failure', request.url),
+      );
+    }
+    return super.send(request);
+  }
+}
+
 void main() {
   test('repeat edits use the standalone-capable endpoint', () async {
     final client = _Client();
@@ -67,4 +83,16 @@ void main() {
       expect(dashboard.deliveryHistory, isEmpty);
     },
   );
+
+  test('retries a transient reminder dashboard request once', () async {
+    final client = _TransientClient();
+    final dashboard = await ReminderService(
+      _Auth(),
+      client: client,
+      retryDelay: Duration.zero,
+    ).load();
+
+    expect(dashboard.items.single.title, 'Insurance renewal');
+    expect(client.failuresRemaining, 0);
+  });
 }
