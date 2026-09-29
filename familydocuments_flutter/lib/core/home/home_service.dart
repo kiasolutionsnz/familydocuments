@@ -391,6 +391,29 @@ class HomeService {
         const [];
   }
 
+  Future<void> createFamily(String name) async {
+    final normalized = name.trim();
+    if (normalized.length < 2 || normalized.length > 80) {
+      throw HomeServiceException('Enter a Family name between 2 and 80 characters.');
+    }
+    final response = await _post('/rest/rpc/bootstrap_household', {
+      'household_name': normalized,
+      'display_name': '',
+    });
+    if (response.statusCode != 200) {
+      throw HomeServiceException('Your Family could not be created. Try again.');
+    }
+  }
+
+  Future<void> joinInvitedFamily() async {
+    final response = await _post('/rest/rpc/accept_my_invitation', const {});
+    if (response.statusCode != 200) {
+      throw HomeServiceException(
+        'No active Family invitation was found for this email address.',
+      );
+    }
+  }
+
   Future<CategoryResolution> resolveCategory(String requested) async {
     return resolveCategoryName(requested, await categories());
   }

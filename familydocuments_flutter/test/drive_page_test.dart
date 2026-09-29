@@ -95,6 +95,7 @@ Future<void> mount(
         auth: auth ?? FakeDriveAuth(),
         repository: drive,
         clientId: 'synthetic-client',
+        supportsNativeAuthorization: true,
         prepareAuthorization: () async {},
         authorize: (_) async => 'synthetic-code',
       ),

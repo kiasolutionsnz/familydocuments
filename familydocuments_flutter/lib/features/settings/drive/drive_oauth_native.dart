@@ -7,6 +7,12 @@ const _iosClientId = String.fromEnvironment('GOOGLE_IOS_CLIENT_ID');
 
 String? _configuredServerClientId;
 
+// google_sign_in supplies native implementations only for Android and iOS.
+// Windows users complete Drive setup in the web app, then see the same
+// Family-wide Drive connection here.
+bool get supportsNativeDriveAuthorization =>
+    Platform.isAndroid || Platform.isIOS;
+
 Future<void> prepareDriveAuthorization() async {
   // Native Google Sign-In needs the OAuth "Web application" client ID here.
   // Its one-time server code is exchanged and retained by the backend; the

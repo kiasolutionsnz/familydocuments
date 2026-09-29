@@ -1,3 +1,5 @@
+bool get supportsNativeDriveAuthorization => false;
+
 Future<void> prepareDriveAuthorization() async {}
 
 Future<String> requestDriveAuthorization(String clientId) async =>

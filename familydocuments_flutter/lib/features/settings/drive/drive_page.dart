@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/auth/auth_service.dart';
 import 'drive_oauth.dart';
@@ -9,19 +10,22 @@ import 'drive_service.dart';
 const driveClientId = String.fromEnvironment('GOOGLE_DRIVE_CLIENT_ID');
 
 class DrivePage extends StatefulWidget {
-  const DrivePage({
+  DrivePage({
     super.key,
     required this.auth,
     this.repository,
     this.prepareAuthorization = prepareDriveAuthorization,
     this.authorize = requestDriveAuthorization,
     this.clientId = driveClientId,
-  });
+    bool? supportsNativeAuthorization,
+  }) : supportsNativeAuthorization =
+           supportsNativeAuthorization ?? supportsNativeDriveAuthorization;
   final AuthService auth;
   final DriveRepository? repository;
   final Future<void> Function() prepareAuthorization;
   final Future<String> Function(String) authorize;
   final String clientId;
+  final bool supportsNativeAuthorization;
   @override
   State<DrivePage> createState() => _DrivePageState();
 }
@@ -97,7 +101,7 @@ class _DrivePageState extends State<DrivePage> {
     if (success != true || !mounted) return;
     await refreshStatus();
     identityVerified = true;
-    if (widget.clientId.isNotEmpty) {
+    if (widget.supportsNativeAuthorization && widget.clientId.isNotEmpty) {
       await widget.prepareAuthorization();
       googleReady = true;
     }
@@ -115,6 +119,19 @@ class _DrivePageState extends State<DrivePage> {
       await refreshStatus();
       folders = await service.folders();
     });
+  }
+
+  Future<void> openWebDriveSetup() async {
+    final opened = await launchUrl(
+      Uri.parse('https://familydocuments.app/app/'),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened && mounted) {
+      setState(
+        () => error =
+            'Could not open the FamilyDocuments web app. Open familydocuments.app/app/ in your browser.',
+      );
+    }
   }
 
   Future<void> createFolder() async {
@@ -216,15 +233,27 @@ class _DrivePageState extends State<DrivePage> {
                 if (identityVerified &&
                     current?.state != DriveConnectionState.chooseFolder &&
                     current?.canSave != true) ...[
-                  if (widget.clientId.isEmpty)
+                  if (!widget.supportsNativeAuthorization) ...[
                     const Text(
-                      'Google Drive authorization is not configured for this environment. Contact the app administrator.',
+                      'Connect Google Drive in the FamilyDocuments web app. Once connected, this Windows app will use the same Family Drive.',
                     ),
-                  if (googleReady)
-                    FilledButton(
-                      onPressed: busy ? null : connect,
-                      child: const Text('Connect Google Drive'),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: busy ? null : openWebDriveSetup,
+                      icon: const Icon(Icons.open_in_new),
+                      label: const Text('Open web Drive setup'),
                     ),
+                  ] else ...[
+                    if (widget.clientId.isEmpty)
+                      const Text(
+                        'Google Drive authorization is not configured for this environment. Contact the app administrator.',
+                      ),
+                    if (googleReady)
+                      FilledButton(
+                        onPressed: busy ? null : connect,
+                        child: const Text('Connect Google Drive'),
+                      ),
+                  ],
                 ],
                 if (identityVerified &&
                     (current?.state == DriveConnectionState.chooseFolder ||

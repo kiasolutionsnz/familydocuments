@@ -1,5 +1,7 @@
 import 'dart:js_interop';
 
+bool get supportsNativeDriveAuthorization => true;
+
 @JS('familyDocumentsDrive.prepare')
 external JSPromise<JSAny?> _prepare();
 @JS('familyDocumentsDrive.authorize')

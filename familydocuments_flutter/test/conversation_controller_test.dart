@@ -219,6 +219,16 @@ class MultiFamilyRepository extends FakeRepository {
   }
 }
 
+class NoFamilyRepository extends FakeRepository {
+  @override
+  Future<ActiveFamilyWorkspace> activeFamilyWorkspace() async =>
+      const ActiveFamilyWorkspace(
+        selectionRequired: false,
+        families: [],
+        setupRequired: true,
+      );
+}
+
 ConversationController controller(
   FakeRepository repository,
   RecordingExecutor executor, {
@@ -293,6 +303,17 @@ ConversationController controller(
 );
 
 void main() {
+  test('an authenticated account without a Family is held at setup', () async {
+    final subject = controller(NoFamilyRepository(), RecordingExecutor());
+
+    await subject.restore();
+
+    expect(subject.familySetupRequired, isTrue);
+    expect(subject.familySelectionRequired, isFalse);
+    expect(subject.conversationId, isNull);
+    subject.dispose();
+  });
+
   test('free-text follow-up recovers from an unresolved intent', () async {
     final repository = FakeRepository()..modelFails = true;
     final executor = RecordingExecutor();

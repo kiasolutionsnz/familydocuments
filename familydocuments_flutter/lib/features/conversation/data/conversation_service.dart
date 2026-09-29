@@ -39,9 +39,12 @@ class ActiveFamilyWorkspace {
   const ActiveFamilyWorkspace({
     required this.selectionRequired,
     required this.families,
+    this.setupRequired = false,
   });
   final bool selectionRequired;
   final List<ActiveFamilyChoice> families;
+  /// The signed-in person has not yet created or joined a Family.
+  final bool setupRequired;
 }
 
 class ConversationCategoryOption {
@@ -738,6 +741,16 @@ class ConversationService implements ConversationRepository {
   @override
   Future<ActiveFamilyWorkspace> activeFamilyWorkspace() async {
     final response = await _post('/rest/rpc/active_family_workspace', const {});
+    // The server deliberately denies a workspace request when an authenticated
+    // account belongs to no Family. This is an onboarding state, not a
+    // conversation failure: keep the composer behind the setup screen.
+    if (response.statusCode == 403) {
+      return const ActiveFamilyWorkspace(
+        selectionRequired: false,
+        families: [],
+        setupRequired: true,
+      );
+    }
     if (response.statusCode != 200) {
       throw const ConversationServiceException(
         'Your Family access could not be checked.',

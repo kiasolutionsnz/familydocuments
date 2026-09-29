@@ -36,6 +36,7 @@ class ConversationController extends ChangeNotifier {
   String? _pendingFeedback;
   bool _loading = false;
   bool _familySelectionRequired = false;
+  bool _familySetupRequired = false;
   List<ActiveFamilyChoice> _families = const [];
   String? _activeFamilyName;
   int _sequence = 0;
@@ -46,6 +47,7 @@ class ConversationController extends ChangeNotifier {
   bool get loading => _loading;
   bool get started => _messages.isNotEmpty;
   bool get familySelectionRequired => _familySelectionRequired;
+  bool get familySetupRequired => _familySetupRequired;
   List<ActiveFamilyChoice> get families => List.unmodifiable(_families);
   String get activeFamilyName => _activeFamilyName ?? 'Family';
   String? get conversationId => _conversationId;
@@ -59,6 +61,7 @@ class ConversationController extends ChangeNotifier {
     try {
       final familyWorkspace = await _repository.activeFamilyWorkspace();
       _familySelectionRequired = familyWorkspace.selectionRequired;
+      _familySetupRequired = familyWorkspace.setupRequired;
       _families = familyWorkspace.families;
       _activeFamilyName = _families
           .where((family) => family.selected)
@@ -67,7 +70,7 @@ class ConversationController extends ChangeNotifier {
       _activeFamilyName ??= _families.length == 1
           ? _families.single.name
           : null;
-      if (_familySelectionRequired) {
+      if (_familySelectionRequired || _familySetupRequired) {
         _conversationId = null;
         _messages.clear();
         _confirmation = null;
@@ -92,6 +95,7 @@ class ConversationController extends ChangeNotifier {
     try {
       await _repository.selectActiveFamily(familyId);
       _familySelectionRequired = false;
+      _familySetupRequired = false;
       _conversationId = null;
       _messages.clear();
       _references.clear();
@@ -161,6 +165,7 @@ class ConversationController extends ChangeNotifier {
     _pendingFeedback = null;
     _loading = false;
     _familySelectionRequired = false;
+    _familySetupRequired = false;
     _families = const [];
     _activeFamilyName = null;
     notifyListeners();

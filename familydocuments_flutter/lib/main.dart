@@ -207,6 +207,20 @@ class _AppState extends State<FamilyDocumentsApp> {
     }
   }
 
+  Future<void> _createFamily(String name) async {
+    await homeService.createFamily(name);
+    await conversationController.restore();
+    await _restoreAnalysisJobs();
+    if (mounted) setState(() => error = null);
+  }
+
+  Future<void> _joinInvitedFamily() async {
+    await homeService.joinInvitedFamily();
+    await conversationController.restore();
+    await _restoreAnalysisJobs();
+    if (mounted) setState(() => error = null);
+  }
+
   Future<void> signUp(String name, String e, String p) async {
     setState(() {
       signingIn = true;
@@ -218,7 +232,9 @@ class _AppState extends State<FamilyDocumentsApp> {
       TextInput.finishAutofillContext(shouldSave: true);
       if (mounted) {
         setState(
-          () => registrationMessage = 'Confirmation sent. Check your inbox and spam folder, open the verification link, then sign in.',
+          () => registrationMessage =
+              'If this email is new, check your inbox and spam folder for a confirmation link. '
+              'If you already have an account, sign in instead or use Forgot password.',
         );
       }
     } on AuthException catch (x) {
@@ -1886,6 +1902,13 @@ class _AppState extends State<FamilyDocumentsApp> {
             onSelect: selectFamily,
             onSignOut: signOut,
           )
+        : conversationController.familySetupRequired
+        ? FamilySetupPage(
+            email: auth.session!.email,
+            onCreate: _createFamily,
+            onJoinInvitation: _joinInvitedFamily,
+            onSignOut: signOut,
+          )
         : Shell(
             auth: auth,
             tab: tab,
@@ -2033,6 +2056,138 @@ class FamilySelectionPage extends StatelessWidget {
               onTap: () => onSelect(family.id),
             );
           },
+        ),
+      ),
+    ),
+  );
+}
+
+class FamilySetupPage extends StatefulWidget {
+  const FamilySetupPage({
+    super.key,
+    required this.email,
+    required this.onCreate,
+    required this.onJoinInvitation,
+    required this.onSignOut,
+  });
+
+  final String email;
+  final Future<void> Function(String name) onCreate;
+  final Future<void> Function() onJoinInvitation;
+  final Future<void> Function() onSignOut;
+
+  @override
+  State<FamilySetupPage> createState() => _FamilySetupPageState();
+}
+
+class _FamilySetupPageState extends State<FamilySetupPage> {
+  final _name = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _run(Future<void> Function() action) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await action();
+    } on HomeServiceException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _error = 'Family setup could not be completed. Try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(
+      title: const Text('Set up your Family'),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : widget.onSignOut,
+          child: const Text('Sign out'),
+        ),
+      ],
+    ),
+    body: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: ListView(
+          padding: const EdgeInsets.all(24),
+          children: [
+            const Icon(Icons.family_restroom_outlined, size: 48),
+            const SizedBox(height: 20),
+            Text(
+              'Welcome to FamilyDocuments',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Create a shared Family space before saving documents, reminders and lists. You are signed in as ${widget.email}.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Color(0xff657083)),
+            ),
+            const SizedBox(height: 28),
+            TextField(
+              controller: _name,
+              enabled: !_busy,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(
+                labelText: 'Family name',
+                hintText: 'For example, Taylor Family',
+              ),
+              onSubmitted: (_) => _run(() => widget.onCreate(_name.text)),
+            ),
+            const SizedBox(height: 14),
+            FilledButton(
+              onPressed: _busy
+                  ? null
+                  : () => _run(() => widget.onCreate(_name.text)),
+              child: Text(_busy ? 'Setting up…' : 'Create Family'),
+            ),
+            const SizedBox(height: 20),
+            const Divider(),
+            const SizedBox(height: 12),
+            const Text(
+              'Already invited to a Family?',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Use the same email address that received the invitation, then accept it here.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xff657083)),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton(
+              onPressed: _busy ? null : () => _run(widget.onJoinInvitation),
+              child: const Text('Join invited Family'),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 16),
+              Text(
+                _error!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.red),
+              ),
+            ],
+          ],
         ),
       ),
     ),
