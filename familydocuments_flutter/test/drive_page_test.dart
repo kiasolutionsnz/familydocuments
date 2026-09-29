@@ -88,6 +88,8 @@ Future<void> mount(
   WidgetTester tester,
   FakeDrive drive, {
   AuthService? auth,
+  bool supportsNativeAuthorization = true,
+  Future<bool> Function(Uri url)? openWebSetup,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -95,7 +97,8 @@ Future<void> mount(
         auth: auth ?? FakeDriveAuth(),
         repository: drive,
         clientId: 'synthetic-client',
-        supportsNativeAuthorization: true,
+        supportsNativeAuthorization: supportsNativeAuthorization,
+        openWebSetup: openWebSetup ?? (_) async => true,
         prepareAuthorization: () async {},
         authorize: (_) async => 'synthetic-code',
       ),
@@ -193,6 +196,30 @@ void main() {
     expect(find.textContaining('Ask a Family administrator'), findsOneWidget);
     expect(find.text('Verify identity to manage Drive'), findsNothing);
     expect(find.text('Connect Google Drive'), findsNothing);
+  });
+  testWidgets('Windows starts Drive setup in the browser before MFA', (
+    tester,
+  ) async {
+    Uri? opened;
+    await mount(
+      tester,
+      FakeDrive(),
+      supportsNativeAuthorization: false,
+      openWebSetup: (url) async {
+        opened = url;
+        return true;
+      },
+    );
+    expect(find.text('Verify identity to manage Drive'), findsNothing);
+    await tester.tap(find.text('Continue Drive setup in browser'));
+    await tester.pumpAndSettle();
+    expect(opened, isNotNull);
+    expect(opened!.host, 'familydocuments.app');
+    expect(opened!.queryParameters['setup'], 'drive');
+    expect(
+      find.text('Finish setup in the browser, then return to this app.'),
+      findsOneWidget,
+    );
   });
   testWidgets('failed status can be refreshed without false success', (
     tester,

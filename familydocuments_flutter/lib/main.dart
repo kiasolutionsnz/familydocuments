@@ -91,6 +91,7 @@ class _AppState extends State<FamilyDocumentsApp> {
   late final bool ownsDestinationState;
   bool checking = true, signingIn = false, busy = false;
   bool offlineMode = false;
+  bool _pendingDriveSetup = Uri.base.queryParameters['setup'] == 'drive';
   String? error, registrationMessage, message, retryAction;
   String? composerCategory;
   SearchResponse? searchResponse;
@@ -179,7 +180,10 @@ class _AppState extends State<FamilyDocumentsApp> {
         offlineTravelStore = null;
       }
     }
-    if (mounted) setState(() => checking = false);
+    if (mounted) {
+      setState(() => checking = false);
+      _openRequestedDriveSetup();
+    }
   }
 
   Future<void> signIn(String e, String p) async {
@@ -199,12 +203,29 @@ class _AppState extends State<FamilyDocumentsApp> {
           error = null;
           offlineMode = false;
         });
+        _openRequestedDriveSetup();
       }
     } on AuthException catch (x) {
       if (mounted) setState(() => error = x.message);
     } finally {
       if (mounted) setState(() => signingIn = false);
     }
+  }
+
+  void _openRequestedDriveSetup() {
+    if (!_pendingDriveSetup ||
+        auth.session == null ||
+        conversationController.familySelectionRequired ||
+        conversationController.familySetupRequired) {
+      return;
+    }
+    _pendingDriveSetup = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      navigatorKey.currentState?.push(
+        MaterialPageRoute<void>(builder: (_) => DrivePage(auth: auth)),
+      );
+    });
   }
 
   Future<void> _createFamily(String name) async {

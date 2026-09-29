@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -8,6 +10,10 @@ import 'drive_oauth.dart';
 import 'drive_service.dart';
 
 const driveClientId = String.fromEnvironment('GOOGLE_DRIVE_CLIENT_ID');
+const _webDriveSetupUrl = 'https://familydocuments.app/app/?setup=drive';
+
+Future<bool> launchWebDriveSetup(Uri url) =>
+    launchUrl(url, mode: LaunchMode.externalApplication);
 
 class DrivePage extends StatefulWidget {
   DrivePage({
@@ -17,6 +23,7 @@ class DrivePage extends StatefulWidget {
     this.prepareAuthorization = prepareDriveAuthorization,
     this.authorize = requestDriveAuthorization,
     this.clientId = driveClientId,
+    this.openWebSetup = launchWebDriveSetup,
     bool? supportsNativeAuthorization,
   }) : supportsNativeAuthorization =
            supportsNativeAuthorization ?? supportsNativeDriveAuthorization;
@@ -25,22 +32,39 @@ class DrivePage extends StatefulWidget {
   final Future<void> Function() prepareAuthorization;
   final Future<String> Function(String) authorize;
   final String clientId;
+  final Future<bool> Function(Uri url) openWebSetup;
   final bool supportsNativeAuthorization;
   @override
   State<DrivePage> createState() => _DrivePageState();
 }
 
-class _DrivePageState extends State<DrivePage> {
+class _DrivePageState extends State<DrivePage> with WidgetsBindingObserver {
   late final DriveRepository service =
       widget.repository ?? DriveService(widget.auth);
   DriveConnection? connection;
   List<DriveFolder> folders = [];
   bool busy = false, identityVerified = false, googleReady = false;
+  bool webSetupOpened = false;
   String? error;
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     load();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && webSetupOpened) {
+      webSetupOpened = false;
+      unawaited(load());
+    }
   }
 
   Future<void> run(Future<void> Function() operation) async {
@@ -122,15 +146,13 @@ class _DrivePageState extends State<DrivePage> {
   }
 
   Future<void> openWebDriveSetup() async {
-    final opened = await launchUrl(
-      Uri.parse('https://familydocuments.app/app/'),
-      mode: LaunchMode.externalApplication,
-    );
+    setState(() => webSetupOpened = true);
+    final opened = await widget.openWebSetup(Uri.parse(_webDriveSetupUrl));
     if (!opened && mounted) {
-      setState(
-        () => error =
-            'Could not open the FamilyDocuments web app. Open familydocuments.app/app/ in your browser.',
-      );
+      setState(() {
+        webSetupOpened = false;
+        error = 'Could not open the FamilyDocuments web app. Open familydocuments.app/app/?setup=drive in your browser.';
+      });
     }
   }
 
@@ -225,25 +247,33 @@ class _DrivePageState extends State<DrivePage> {
                 ),
               if (current?.canManage == true) ...[
                 const SizedBox(height: 16),
-                if (!identityVerified)
-                  FilledButton(
-                    onPressed: busy ? null : verifyIdentity,
-                    child: const Text('Verify identity to manage Drive'),
+                if (!widget.supportsNativeAuthorization) ...[
+                  const Text(
+                    'Google Drive setup happens in your browser, where you can sign in once and choose the Family folder. Return here when you are finished; this screen will refresh automatically.',
                   ),
-                if (identityVerified &&
-                    current?.state != DriveConnectionState.chooseFolder &&
-                    current?.canSave != true) ...[
-                  if (!widget.supportsNativeAuthorization) ...[
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: busy ? null : openWebDriveSetup,
+                    icon: const Icon(Icons.open_in_new),
+                    label: Text(
+                      current?.state == DriveConnectionState.connected
+                          ? 'Manage Google Drive in browser'
+                          : 'Continue Drive setup in browser',
+                    ),
+                  ),
+                  if (webSetupOpened)
                     const Text(
-                      'Connect Google Drive in the FamilyDocuments web app. Once connected, this Windows app will use the same Family Drive.',
+                      'Finish setup in the browser, then return to this app.',
                     ),
-                    const SizedBox(height: 12),
-                    FilledButton.icon(
-                      onPressed: busy ? null : openWebDriveSetup,
-                      icon: const Icon(Icons.open_in_new),
-                      label: const Text('Open web Drive setup'),
+                ] else ...[
+                  if (!identityVerified)
+                    FilledButton(
+                      onPressed: busy ? null : verifyIdentity,
+                      child: const Text('Verify identity to manage Drive'),
                     ),
-                  ] else ...[
+                  if (identityVerified &&
+                      current?.state != DriveConnectionState.chooseFolder &&
+                      current?.canSave != true) ...[
                     if (widget.clientId.isEmpty)
                       const Text(
                         'Google Drive authorization is not configured for this environment. Contact the app administrator.',
@@ -254,68 +284,68 @@ class _DrivePageState extends State<DrivePage> {
                         child: const Text('Connect Google Drive'),
                       ),
                   ],
-                ],
-                if (identityVerified &&
-                    (current?.state == DriveConnectionState.chooseFolder ||
-                        current?.canSave == true)) ...[
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Choose an app-accessible folder, or create a new one. Existing documents will not be moved.',
-                  ),
-                  for (final folder in folders)
-                    ListTile(
-                      title: Text(folder.name),
-                      leading: const Icon(Icons.folder_outlined),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: busy
-                          ? null
-                          : () => run(() async {
-                              await service.selectFolder(folder.id);
-                              await refreshStatus();
-                            }),
+                  if (identityVerified &&
+                      (current?.state == DriveConnectionState.chooseFolder ||
+                          current?.canSave == true)) ...[
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Choose an app-accessible folder, or create a new one. Existing documents will not be moved.',
                     ),
-                  if (folders.isEmpty)
-                    const Text('No app-accessible folders yet.'),
-                  TextButton.icon(
-                    onPressed: busy ? null : createFolder,
-                    icon: const Icon(Icons.create_new_folder_outlined),
-                    label: const Text('Create folder'),
-                  ),
-                  TextButton(
-                    onPressed: busy
-                        ? null
-                        : () async {
-                            final confirmed = await showDialog<bool>(
-                              context: context,
-                              builder: (context) => AlertDialog(
-                                title: const Text('Disconnect Google Drive?'),
-                                content: const Text(
-                                  'Your files will remain in Google Drive. Saving and opening Drive documents will be unavailable until you reconnect.',
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(context, false),
-                                    child: const Text('Cancel'),
-                                  ),
-                                  FilledButton(
-                                    onPressed: () =>
-                                        Navigator.pop(context, true),
-                                    child: const Text('Disconnect'),
-                                  ),
-                                ],
-                              ),
-                            );
-                            if (confirmed == true && mounted) {
-                              await run(() async {
-                                await service.disconnect();
-                                folders = [];
+                    for (final folder in folders)
+                      ListTile(
+                        title: Text(folder.name),
+                        leading: const Icon(Icons.folder_outlined),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: busy
+                            ? null
+                            : () => run(() async {
+                                await service.selectFolder(folder.id);
                                 await refreshStatus();
-                              });
-                            }
-                          },
-                    child: const Text('Disconnect'),
-                  ),
+                              }),
+                      ),
+                    if (folders.isEmpty)
+                      const Text('No app-accessible folders yet.'),
+                    TextButton.icon(
+                      onPressed: busy ? null : createFolder,
+                      icon: const Icon(Icons.create_new_folder_outlined),
+                      label: const Text('Create folder'),
+                    ),
+                    TextButton(
+                      onPressed: busy
+                          ? null
+                          : () async {
+                              final confirmed = await showDialog<bool>(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('Disconnect Google Drive?'),
+                                  content: const Text(
+                                    'Your files will remain in Google Drive. Saving and opening Drive documents will be unavailable until you reconnect.',
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(context, false),
+                                      child: const Text('Cancel'),
+                                    ),
+                                    FilledButton(
+                                      onPressed: () =>
+                                          Navigator.pop(context, true),
+                                      child: const Text('Disconnect'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                              if (confirmed == true && mounted) {
+                                await run(() async {
+                                  await service.disconnect();
+                                  folders = [];
+                                  await refreshStatus();
+                                });
+                              }
+                            },
+                      child: const Text('Disconnect'),
+                    ),
+                  ],
                 ],
               ],
             ],
